@@ -27,7 +27,7 @@ Read [contracts](docs/contracts.md), [evaluation](docs/evaluation.md), [commands
 ## Install
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://tenet-contracts.com/install.sh | sh
+curl -fsSL https://tenet-contracts.com/install.sh | bash
 ```
 
 Prebuilt binaries support macOS and Linux on ARM64 and x86-64.

@@ -3,7 +3,7 @@
 Install the latest release on macOS or Linux, on ARM64 or x86-64:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://tenet-contracts.com/install.sh | sh
+curl -fsSL https://tenet-contracts.com/install.sh | bash
 tenet --version
 ```
 
