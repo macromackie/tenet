@@ -1,0 +1,54 @@
+name: Release smoke tests
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: artifacts-build-local-*
+          path: artifacts
+          merge-multiple: true
+      - name: Run packaged binary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          PLAN: ${{ inputs.plan }}
+        run: |
+          set -euo pipefail
+          archive="artifacts/tenet-$TARGET.tar.xz"
+          expected=$(awk '{print $1}' "$archive.sha256")
+          actual=$(shasum -a 256 "$archive" | awk '{print $1}')
+          test "$actual" = "$expected"
+          mkdir unpacked
+          tar -xJf "$archive" -C unpacked
+          binary="$PWD/unpacked/tenet-$TARGET/tenet"
+          version=$(printf '%s' "$PLAN" | jq -r '.releases[] | select(.app_name == "tenet") | .app_version')
+          test "$("$binary" --version)" = "tenet $version"
+          "$binary" --help
+          mkdir -p fixture/.contracts/001-errors
+          printf '%s\n' '---' 'name: errors' 'message: Preserve failures.' '---' '## Rules' 'Preserve failures.' > fixture/.contracts/001-errors/CONTRACT.md
+          printf 'fn main() {}\n' > fixture/sample.rs
+          "$binary" --root fixture validate
+          "$binary" --root fixture check --dry-run --json > output.jsonl
+          jq -s -e '[.[] | select(.type == "selected")] | length == 1' output.jsonl
