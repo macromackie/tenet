@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use std::{
-    collections::BTreeSet,
+    collections::BTreeMap,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -29,9 +29,8 @@ pub(crate) fn head(root: &Path) -> Option<String> {
 }
 
 pub(crate) struct Changes {
-    pub paths: BTreeSet<PathBuf>,
+    pub paths: BTreeMap<PathBuf, Option<PathBuf>>,
     pub base: String,
-    pub broaden: bool,
 }
 
 pub(crate) fn changed(root: &Path, reference: &str) -> Result<Changes> {
@@ -39,37 +38,89 @@ pub(crate) fn changed(root: &Path, reference: &str) -> Result<Changes> {
         !reference.starts_with('-'),
         "Git reference cannot start with '-'"
     );
-    let top = String::from_utf8(output(root, &["rev-parse", "--show-toplevel"])?)?;
-    let top = PathBuf::from(top.trim());
-    let base = String::from_utf8(output(root, &["merge-base", "HEAD", reference])?)?
-        .trim()
-        .to_owned();
-    let mut names = output(
+    let top = top(root)?;
+    let base = String::from_utf8(output(
+        root,
+        &["rev-parse", "--verify", &format!("{reference}^{{commit}}")],
+    )?)?
+    .trim()
+    .to_owned();
+    let names = output(
         &top,
-        &["diff", "--name-only", "--no-renames", "-z", &base, "--"],
+        &["diff", "--name-status", "--find-renames", "-z", &base, "--"],
     )?;
-    names.extend(output(
-        &top,
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-    )?);
-    let mut paths = BTreeSet::new();
-    let mut broaden = false;
-    for name in names.split(|b| *b == 0).filter(|s| !s.is_empty()) {
-        let path = top.join(std::str::from_utf8(name).context("Git path is not UTF-8")?);
-        let ignore = path
-            .file_name()
-            .is_some_and(|s| s == ".gitignore" || s == ".ignore");
-        if ignore && path.parent().is_some_and(|parent| root.starts_with(parent)) {
-            broaden = true;
-        }
-        if let Ok(relative) = path.strip_prefix(root) {
-            broaden |= ignore || relative.components().any(|p| p.as_os_str() == ".contracts");
-            paths.insert(relative.to_owned());
+    let mut entries = names.split(|b| *b == 0).filter(|s| !s.is_empty());
+    let mut paths = BTreeMap::new();
+    while let Some(status) = entries.next() {
+        let first = entries.next().context("missing Git path")?;
+        let first = top.join(std::str::from_utf8(first)?);
+        let second = if status.starts_with(b"R") {
+            Some(top.join(std::str::from_utf8(
+                entries.next().context("missing rename path")?,
+            )?))
+        } else {
+            None
+        };
+        if let Some(second) = second {
+            match (first.strip_prefix(root), second.strip_prefix(root)) {
+                (Ok(old), Ok(new)) => {
+                    paths.insert(new.to_owned(), Some(old.to_owned()));
+                }
+                (Ok(old), Err(_)) => {
+                    paths.insert(old.to_owned(), None);
+                }
+                (Err(_), Ok(new)) => {
+                    paths.insert(new.to_owned(), None);
+                }
+                _ => {}
+            }
+        } else if let Ok(path) = first.strip_prefix(root) {
+            paths.insert(path.to_owned(), None);
         }
     }
-    Ok(Changes {
-        paths,
-        base,
-        broaden,
-    })
+    for name in output(&top, &["ls-files", "--others", "--exclude-standard", "-z"])?
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+    {
+        if let Ok(path) = top.join(std::str::from_utf8(name)?).strip_prefix(root) {
+            paths.entry(path.to_owned()).or_insert(None);
+        }
+    }
+    Ok(Changes { paths, base })
+}
+
+fn top(root: &Path) -> Result<PathBuf> {
+    Ok(PathBuf::from(
+        String::from_utf8(output(root, &["rev-parse", "--show-toplevel"])?)?.trim(),
+    ))
+}
+
+pub(crate) fn before(root: &Path, base: &str, path: &Path) -> Result<Option<String>> {
+    let top = top(root)?;
+    let full = root.join(path);
+    let relative = full
+        .strip_prefix(&top)?
+        .to_str()
+        .context("path is not UTF-8")?;
+    let listing = output(&top, &["ls-tree", "-z", base, "--", relative])?;
+    if listing.is_empty() {
+        return Ok(None);
+    }
+    ensure!(
+        listing.starts_with(b"100644 ") || listing.starts_with(b"100755 "),
+        "base input must be a regular file: {relative}"
+    );
+    let object = format!("{base}:{relative}");
+    let size: usize = String::from_utf8(output(&top, &["cat-file", "-s", &object])?)?
+        .trim()
+        .parse()?;
+    ensure!(
+        size <= ev_grep_core::MAX_FILE_BYTES,
+        "base file exceeds 64 KiB: {relative}"
+    );
+    let bytes = output(&top, &["cat-file", "blob", &object])?;
+    ensure!(!bytes.contains(&0), "binary base file: {relative}");
+    Ok(Some(
+        String::from_utf8(bytes).context("base file is not UTF-8")?,
+    ))
 }

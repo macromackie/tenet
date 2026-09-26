@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Result, bail, ensure};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
 
-use crate::{Example, Verdict};
+use crate::{Example, ExampleChange, Verdict};
 
 pub(crate) struct Markdown {
     pub sections: BTreeMap<String, Range<usize>>,
@@ -94,7 +94,9 @@ pub(crate) fn parse(body: &str, offset: usize, document: &str) -> Result<Markdow
 fn parse_example(info: &str, source: String, index: usize, line: usize) -> Result<Example> {
     let words: Vec<_> = info.split_whitespace().collect();
     ensure!(
-        words.len() >= 4 && words[1] == "tenet:example" && !words[0].contains(':'),
+        words.len() >= 4
+            && matches!(words[1], "tenet:example" | "tenet:change")
+            && !words[0].contains(':'),
         "expected LANGUAGE tenet:example expect=VERDICT path=PATH"
     );
     let mut fields = BTreeMap::new();
@@ -130,7 +132,22 @@ fn parse_example(info: &str, source: String, index: usize, line: usize) -> Resul
         "example path must stay within its scope"
     );
     ensure!(!source.trim().is_empty(), "example source is empty");
+    let change = if words[1] == "tenet:change" {
+        ensure!(
+            words[0] == "json",
+            "change examples use JSON with before and after fields"
+        );
+        let change: ExampleChange = serde_json::from_str(&source)?;
+        ensure!(
+            change.before.is_some() || change.after.is_some(),
+            "change requires before or after contents"
+        );
+        Some(change)
+    } else {
+        None
+    };
     Ok(Example {
+        change,
         name: fields
             .get("name")
             .map_or_else(|| format!("example-{index}"), |s| (*s).to_owned()),

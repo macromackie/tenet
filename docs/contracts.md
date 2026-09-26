@@ -69,3 +69,21 @@ The path is relative to the contract's scope and cannot escape it. Examples are 
 
 Expectations are `pass`, `fail`, `not_applicable`, and `uncertain`.
 See [evaluation](./evaluation.md) for interpreting the results.
+
+## Change examples
+
+Use a JSON `tenet:change` fence to evaluate a before/after change under the assumption that the base satisfies the contract:
+
+````markdown
+```json tenet:change expect=fail path=src/users.ts name=swallowed-error
+{
+  "before": "async function users() { return await db.users.list(); }",
+  "after": "async function users() { try { return await db.users.list(); } catch { return []; } }"
+}
+```
+````
+
+Use `null` for `before` when adding a file, or for `after` when deleting one. At least one side must have contents.
+Expectations remain `pass`, `fail`, `not_applicable`, and `uncertain`; `not_applicable` means the change is unaffected by this requirement.
+A regular `tenet:example` fence uses full mode with no baseline assumption.
+These examples test individual inputs, not repository-wide coverage.

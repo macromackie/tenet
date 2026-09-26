@@ -1,16 +1,18 @@
 # Limits
 
-Each judgment receives one complete file and one contract's rules and applicability guidance.
-Tenet does not retrieve imports, inspect a call graph, or prove a repository-wide architectural claim.
-Use uncertainty to identify checks that need more context.
+File judgments receive a contract's rules and applicability guidance plus a record containing the path, change kind, and before/after contents.
+Full checks use additions from an empty starting point. Diff checks assume the base satisfies the selected contracts.
 
-Source files are limited to 64 KiB, queries to 8 KiB, encoded requests to 96 KiB, and responses to 64 KiB.
-Inputs are never silently truncated. Oversized selected text files produce errors.
+Contract assessment receives the scoped file inventory, current source contents, change records, and file judgments. It can detect missing required files and inspect cross-file requirements when the context fits.
+It does not retrieve external dependencies, execute the commands written in contracts, or run an agent investigation.
+
+Each source file and encoded change or repository context is limited to 64 KiB. Queries are limited to 8 KiB, encoded provider requests to 96 KiB, and responses to 64 KiB.
+Oversized selected inputs produce errors. Repository context that cannot be supplied completely leaves the contract unresolved. Inputs are never silently truncated.
+Large scopes may therefore need a reviewing agent to complete the assessment.
+
+The shared request budget covers applicability, verification, and repository assessments, including failed attempts.
+A file uses one request when excluded and up to two otherwise. A contract may use one additional repository request.
+File requests run concurrently within the jobs limit; contracts finish sequentially in scope and numeric order.
+
 The provider adapter uses a 10-second connection timeout and a 60-second request timeout, with no automatic retries.
-
-The request limit counts both applicability and verification, including attempted requests that fail.
-A contract/file pair uses one request when excluded and up to two otherwise.
-Exhausting the budget leaves remaining checks incomplete. Concurrency bounds requests, not billing.
-
-The adapter currently maps confidence below 0.8 to uncertainty. This threshold is provisional, not a measured guarantee of accuracy.
-A passing judgment is model evidence about the supplied file, not proof of correctness.
+Confidence below 0.8 maps to uncertainty. This provisional threshold is not a measured guarantee of accuracy.

@@ -1,26 +1,23 @@
 # Reviews
 
-A reviewing agent runs Tenet, reads the report, and investigates findings with its ordinary tools.
+The reviewing agent owns when to establish or refresh the baseline:
 
 ```sh
-tenet check --changed-since origin/main --reporter jsonl
+# First adoption
+tenet check --reporter jsonl
+
+# New or changed requirement
+tenet check --contract cache-values --reporter jsonl
+
+# Routine code review, assuming the base satisfies the contracts
+tenet check --base origin/main --reporter jsonl
 ```
 
-Capture stdout and the exit status even when the command returns nonzero.
-Each result identifies the assessed source and contract by content hash.
-If the checkout changes, rerun affected checks before relying on earlier assessments.
+Capture stdout and exit status even when the command returns nonzero.
+Focus investigation on failed and unresolved contracts. Preserved and unaffected conclusions rely on the caller's baseline assumption.
+A failed model judgment is a candidate finding; inspect the code before publishing a review comment.
 
-| Result | Review action |
-| --- | --- |
-| fail | Inspect the code and confirm or dismiss a candidate finding |
-| uncertain | Gather the context needed to decide |
-| pass | Spend less attention on this contract/file pair |
-| not_applicable | Usually skip this pair |
-| error or incomplete | Retry when appropriate or report missing coverage |
+Each report identifies inputs with hashes. Rerun after changing source or contracts; keep the checkout stable during a run.
+An unresolved conclusion names a coverage limit, unavailable context, low confidence, or operational failure. Use ordinary repository tools to investigate it.
 
-For a database-error finding, read the contract, function, caller, and diff. Check whether an exception applies and whether the PR introduced the behavior.
-A model failure is a candidate finding, not a ready-to-publish review comment.
-Architecture questions may require imports, dependency metadata, or multiple files that Tenet did not inspect.
-
-The harness owns investigation notes and the final review. It does not call `tenet record`, maintain a Tenet review ID, or expose dedicated Tenet tools.
-It should also review concerns outside the available contracts.
+Tenet has no internal agent loop, persistent review ID, or automatic LLM escalation. The harness owns follow-up, baseline validity, notes, and the final review, including concerns outside the contracts.

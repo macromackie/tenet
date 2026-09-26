@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -14,7 +14,7 @@ use crate::git;
 #[derive(Default)]
 pub struct Selection {
     pub paths: Vec<PathBuf>,
-    pub changed_since: Option<String>,
+    pub base: Option<String>,
     pub contract: Option<String>,
 }
 
@@ -26,10 +26,13 @@ pub struct Plan {
     pub deleted: Vec<PathBuf>,
     pub base: Option<String>,
     pub head: Option<String>,
-    pub broadened: bool,
+    pub partial: bool,
+    pub mode: crate::Mode,
+    pub inventory: Vec<PathBuf>,
+    pub previous_paths: BTreeMap<PathBuf, PathBuf>,
 }
 
-fn paths(root: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) fn paths(root: &Path) -> Result<Vec<PathBuf>> {
     let walker = WalkBuilder::new(root)
         .hidden(false)
         .require_git(false)
@@ -37,8 +40,18 @@ fn paths(root: &Path) -> Result<Vec<PathBuf>> {
         .filter_entry(|entry| {
             let name = entry.file_name().to_string_lossy();
             entry.depth() == 0
-                || ((!name.starts_with('.') || name == ".contracts")
-                    && !matches!(name.as_ref(), "target" | "node_modules" | "dist" | "out"))
+                || (!matches!(
+                    name.as_ref(),
+                    ".git"
+                        | ".context"
+                        | ".agents"
+                        | ".tenet"
+                        | ".env"
+                        | "target"
+                        | "node_modules"
+                        | "dist"
+                        | "out"
+                ) && !name.starts_with(".env."))
         })
         .build();
     let mut paths = Vec::new();
@@ -132,40 +145,119 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
         selectors.push(full.strip_prefix(&root)?.to_owned());
     }
     let changes = selection
-        .changed_since
+        .base
         .as_ref()
         .map(|r| git::changed(&root, r))
         .transpose()?;
-    let broadened = changes.as_ref().is_some_and(|c| c.broaden);
-    let files: Vec<_> = paths(&root)?
+    let inventory: Vec<_> = paths(&root)?
         .into_iter()
-        .filter(|p| {
-            !p.components().any(|c| c.as_os_str() == ".contracts")
-                && (broadened || selectors.is_empty() || selectors.iter().any(|s| p.starts_with(s)))
-                && changes
-                    .as_ref()
-                    .is_none_or(|c| broadened || c.paths.contains(p))
-                && contracts.iter().any(|c| p.starts_with(&c.scope))
-        })
+        .filter(|p| !is_contract(p))
         .collect();
-    let deleted = changes
+    let candidates: Vec<_> = if let Some(changes) = &changes {
+        changes
+            .paths
+            .keys()
+            .filter(|p| !is_contract(p) && allowed(p))
+            .cloned()
+            .collect()
+    } else {
+        inventory.clone()
+    };
+    let previous_paths: BTreeMap<_, _> = changes
         .as_ref()
         .map(|c| {
             c.paths
                 .iter()
-                .filter(|p| !root.join(p).exists())
-                .cloned()
+                .filter_map(|(p, old)| old.as_ref().map(|old| (p.clone(), old.clone())))
                 .collect()
         })
         .unwrap_or_default();
+    let files: Vec<_> = candidates
+        .into_iter()
+        .filter(|p| {
+            let old = previous_paths.get(p);
+            (selectors.is_empty()
+                || selectors
+                    .iter()
+                    .any(|s| p.starts_with(s) || old.is_some_and(|p| p.starts_with(s))))
+                && contracts.iter().any(|c| {
+                    p.starts_with(&c.scope) || old.is_some_and(|p| p.starts_with(&c.scope))
+                })
+        })
+        .collect();
+    let deleted = files
+        .iter()
+        .filter(|p| !root.join(p).exists())
+        .cloned()
+        .collect();
     let head = git::head(&root);
+    let mode = if changes.is_some() {
+        crate::Mode::Diff
+    } else {
+        crate::Mode::Full
+    };
     Ok(Plan {
         root,
         contracts,
         files,
         deleted,
         head,
+        mode,
+        inventory,
+        previous_paths,
         base: changes.map(|c| c.base),
-        broadened,
+        partial: !selectors.is_empty() && !selectors.iter().any(|p| p.as_os_str().is_empty()),
+    })
+}
+
+fn is_contract(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str() == ".contracts")
+}
+
+impl Plan {
+    pub(crate) fn in_scope(&self, path: &Path, scope: &Path) -> bool {
+        path.starts_with(scope)
+            || self
+                .previous_paths
+                .get(path)
+                .is_some_and(|old| old.starts_with(scope))
+    }
+
+    pub(crate) fn change(&self, path: &Path) -> Result<crate::Change> {
+        let old = self.previous_paths.get(path);
+        let before = if let Some(base) = &self.base {
+            git::before(&self.root, base, old.map_or(path, PathBuf::as_path))?
+        } else {
+            None
+        };
+        let after = if self.root.join(path).symlink_metadata().is_ok() {
+            Some(crate::change::text(&self.root, path)?)
+        } else {
+            None
+        };
+        let mut change = crate::Change::new(path.to_owned(), before, after);
+        if let Some(old) = old {
+            change.previous_path = Some(old.clone());
+            change.kind = crate::ChangeKind::Renamed;
+        }
+        Ok(change)
+    }
+}
+
+fn allowed(path: &Path) -> bool {
+    !path.components().any(|part| {
+        let name = part.as_os_str().to_string_lossy();
+        matches!(
+            name.as_ref(),
+            ".git"
+                | ".context"
+                | ".agents"
+                | ".tenet"
+                | ".env"
+                | "target"
+                | "node_modules"
+                | "dist"
+                | "out"
+        ) || name.starts_with(".env.")
     })
 }

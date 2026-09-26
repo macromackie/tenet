@@ -2,15 +2,10 @@ use annotate_snippets::{AnnotationKind, Level, Renderer, Snippet};
 use anyhow::Result;
 use std::{io::Write, path::Path};
 use tenet_contracts::{Contract, DocumentError};
-use tenet_engine::CheckResult;
 
-pub(crate) fn finding(
-    contract: &Contract,
-    result: &CheckResult,
-    out: &mut impl Write,
-) -> Result<()> {
+pub(crate) fn requirement(contract: &Contract, out: &mut impl Write) -> Result<()> {
     let path = contract.path.display().to_string();
-    let report = Level::WARNING.primary_title(&contract.message).element(
+    let report = Level::ERROR.primary_title(&contract.message).element(
         Snippet::source(&contract.document).path(&path).annotation(
             AnnotationKind::Context
                 .span(contract.rules_span.clone())
@@ -18,15 +13,6 @@ pub(crate) fn finding(
         ),
     );
     writeln!(out, "{}", Renderer::plain().render(&[report]))?;
-    if let Some(reason) = &result.reason {
-        writeln!(out, "  {}: {reason}\n", result.path)?;
-    } else {
-        writeln!(
-            out,
-            "  Assessed file: {} (file-level judgment)\n",
-            result.path
-        )?;
-    }
     Ok(())
 }
 
@@ -52,4 +38,55 @@ pub(crate) fn error(root: &Path, error: &anyhow::Error, out: &mut impl Write) ->
         writeln!(out, "error: {error:#}")?;
     }
     Ok(())
+}
+
+pub(crate) struct Failure {
+    pub contract: String,
+    pub reason: Option<String>,
+    pub issues: Vec<tenet_engine::CheckResult>,
+    pub evaluation: bool,
+}
+
+impl Failure {
+    pub(crate) fn write(&self, contracts: &[Contract], out: &mut impl Write) -> Result<()> {
+        use crate::report_format::status_name;
+        use tenet_engine::Status;
+
+        writeln!(out, "\n── Failed: {} ──\n", self.contract)?;
+        if let Some(contract) = contracts.iter().find(|c| c.name == self.contract) {
+            requirement(contract, out)?;
+        }
+        if let Some(reason) = &self.reason {
+            writeln!(out, "  {reason}")?;
+        }
+        for result in &self.issues {
+            if !matches!(
+                result.status,
+                Status::Fail | Status::Error | Status::Incomplete
+            ) && !self.evaluation
+            {
+                continue;
+            }
+            let label = result.example.as_deref().unwrap_or(&result.path);
+            let fallback = if self.evaluation {
+                "example did not match its expectation"
+            } else {
+                "file evidence supports a violation"
+            };
+            writeln!(
+                out,
+                "  {label}: {}",
+                result.reason.as_deref().unwrap_or(fallback)
+            )?;
+            if let Some(expected) = result.expected {
+                writeln!(
+                    out,
+                    "    expected {} · received {}",
+                    status_name(Status::from(expected)),
+                    status_name(result.status)
+                )?;
+            }
+        }
+        Ok(())
+    }
 }

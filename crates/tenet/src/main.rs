@@ -1,6 +1,11 @@
 mod cli;
 mod commands;
 mod diagnostics;
+mod fixture_report;
+mod fixture_run;
+mod fixtures;
+mod progress;
+mod report_format;
 mod reporter;
 
 use clap::Parser;
@@ -15,7 +20,7 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
     let json = match &cli.command {
         Command::Check(c) => c.run.json || c.run.reporter == ReporterKind::Jsonl,
-        Command::Eval(r) => r.json || r.reporter == ReporterKind::Jsonl,
+        Command::Eval(e) => e.run.json || e.run.reporter == ReporterKind::Jsonl,
         _ => false,
     };
     match commands::execute(&cli).await {

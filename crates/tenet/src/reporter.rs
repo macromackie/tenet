@@ -1,13 +1,15 @@
 use std::{
     collections::BTreeMap,
     io::{self, Write},
+    time::Instant,
 };
 
 use anyhow::Result;
 use console::Term;
 use tenet_contracts::Contract;
-use tenet_engine::{Event, Stage, Status, Summary};
+use tenet_engine::{CheckResult, ContractStatus, Event, Stage, Status, Summary};
 
+use crate::report_format::{contract_counts, counts, marker, paint, status, suite};
 use crate::{cli::ReporterKind, diagnostics};
 
 pub(crate) struct Reporter<'a> {
@@ -16,35 +18,43 @@ pub(crate) struct Reporter<'a> {
     evaluation: bool,
     term: Term,
     live: bool,
-    drawn: bool,
+    running: bool,
+    progress: crate::progress::Progress,
+    started: Instant,
+    contract_started: Instant,
+    failures: Vec<diagnostics::Failure>,
     current: String,
     total: usize,
     done: usize,
-    active: usize,
-    relevance: usize,
-    verification: usize,
+    completing: bool,
+    issues: Vec<CheckResult>,
     pub summary: Summary,
     contract_statuses: BTreeMap<&'static str, usize>,
 }
 
 impl<'a> Reporter<'a> {
     pub(crate) fn new(kind: ReporterKind, contracts: &'a [Contract], evaluation: bool) -> Self {
-        let term = Term::stderr();
-        let live =
-            term.is_term() && std::env::var_os("CI").is_none() && kind == ReporterKind::Default;
+        let term = Term::buffered_stderr();
+        let live = term.is_term()
+            && std::env::var_os("CI").is_none()
+            && std::env::var("TERM").as_deref() != Ok("dumb")
+            && kind == ReporterKind::Default;
         Self {
             kind,
             contracts,
             evaluation,
             term,
             live,
-            drawn: false,
+            running: false,
+            progress: crate::progress::Progress::default(),
+            started: Instant::now(),
+            contract_started: Instant::now(),
+            failures: Vec::new(),
             current: String::new(),
             total: 0,
             done: 0,
-            active: 0,
-            relevance: 0,
-            verification: 0,
+            completing: false,
+            issues: Vec::new(),
             summary: Summary::default(),
             contract_statuses: BTreeMap::new(),
         }
@@ -61,105 +71,169 @@ impl<'a> Reporter<'a> {
             out.flush()?;
             return Ok(());
         }
-        self.clear()?;
+        let redraw = matches!(
+            event,
+            Event::ContractStarted { .. }
+                | Event::ContractFinished { .. }
+                | Event::Skipped { .. }
+                | Event::Error { .. }
+        );
+        if matches!(
+            event,
+            Event::Begin { .. }
+                | Event::ContractFinished { .. }
+                | Event::Skipped { .. }
+                | Event::Summary { .. }
+                | Event::Error { .. }
+        ) {
+            self.progress.clear(&self.term)?;
+        }
         match event {
             Event::Begin { run } => {
+                self.started = Instant::now();
                 self.term
                     .write_line(&format!("TENET {}  {}\n", run.version, run.root))?;
-                if run.broadened {
-                    self.term.write_line(
-                        "Contract or ignore changes: checking the full selected scope.\n",
-                    )?;
+                self.term.write_line(&format!("Mode: {}", run.mode))?;
+                if let Some(assumption) = run.assumption {
+                    self.term.write_line(&format!("Assumption: {assumption}"))?;
                 }
             }
             Event::ContractStarted {
                 contract, total, ..
             } => {
+                self.running = true;
                 self.current = contract;
+                self.contract_started = Instant::now();
                 self.total = total;
                 self.done = 0;
-                self.active = 0;
-                self.relevance = 0;
-                self.verification = 0;
+                self.completing = false;
+                self.issues.clear();
             }
-            Event::CheckStarted { .. } => self.active += 1,
-            Event::StageStarted { .. } => {}
-            Event::StageCompleted { stage, .. } => match stage {
-                Stage::Applicability => self.relevance += 1,
-                Stage::Verification => self.verification += 1,
-            },
+            Event::CheckStarted { .. } | Event::StageCompleted { .. } => {}
+            Event::StageStarted { stage, .. } => {
+                self.completing = stage == Stage::Completeness;
+            }
             Event::Result { result } => {
-                self.active = self.active.saturating_sub(1);
                 self.done += 1;
                 let mismatch = result
                     .expected
                     .is_some_and(|expected| Status::from(expected) != result.status);
-                let problem = mismatch
-                    || (!self.evaluation
-                        && matches!(
-                            result.status,
-                            Status::Fail | Status::Uncertain | Status::Error | Status::Incomplete
-                        ));
-                if problem || self.kind == ReporterKind::Verbose {
+                if self.kind == ReporterKind::Verbose {
                     let label = result.example.as_deref().unwrap_or(&result.path);
-                    let status = if self.evaluation {
+                    let state = if self.evaluation {
                         if mismatch { "FAIL" } else { "PASS" }
                     } else {
                         status(result.status)
                     };
                     self.term.write_line(&format!(
                         "  {} {} > {label} ({}ms)",
-                        paint(status),
+                        paint(state),
                         result.contract,
                         result.elapsed_ms
                     ))?;
-                    if let Some(expected) = result.expected {
-                        self.term.write_line(&format!(
-                            "    expected {} · received {}",
-                            status_name(Status::from(expected)),
-                            status_name(result.status)
-                        ))?;
-                    }
-                    if problem
-                        && let Some(contract) =
-                            self.contracts.iter().find(|c| c.name == result.contract)
-                    {
-                        diagnostics::finding(contract, &result, &mut self.term)?;
+                    if let Some(reason) = &result.reason {
+                        self.term.write_line(&format!("    {reason}"))?;
                     }
                 }
+                if mismatch
+                    || (!self.evaluation
+                        && matches!(
+                            result.status,
+                            Status::Fail | Status::Uncertain | Status::Error | Status::Incomplete
+                        ))
+                {
+                    self.issues.push(*result);
+                }
             }
-            Event::ContractFinished { contract, summary } => {
-                let state = suite(&summary, self.evaluation);
+            Event::ContractFinished {
+                contract,
+                summary,
+                conclusion,
+            } => {
+                let state = conclusion.as_ref().map_or_else(
+                    || suite(&summary, self.evaluation),
+                    |c| match c.status {
+                        ContractStatus::Verified => "VERIFIED",
+                        ContractStatus::Preserved => "PRESERVED",
+                        ContractStatus::Unaffected => "UNAFFECTED",
+                        ContractStatus::Failed => "FAILED",
+                        ContractStatus::Unresolved => "UNRESOLVED",
+                    },
+                );
                 *self.contract_statuses.entry(state).or_default() += 1;
-                let text = counts(&summary, self.evaluation);
-                self.term
-                    .write_line(&format!("{} {contract}  {text}\n", paint(state)))?;
+                let text = format!(
+                    "{} {}",
+                    self.done,
+                    if self.evaluation { "examples" } else { "files" }
+                );
+                self.term.write_line(&format!(
+                    " {} {contract} ({text}) {}  {:.1}s",
+                    marker(state),
+                    paint(&state.to_lowercase()),
+                    self.contract_started.elapsed().as_secs_f64()
+                ))?;
+                let failed = conclusion
+                    .as_ref()
+                    .is_some_and(|c| c.status == ContractStatus::Failed)
+                    || (self.evaluation && summary.examples_failed > 0);
+                if failed {
+                    self.failures.push(diagnostics::Failure {
+                        contract,
+                        reason: conclusion.as_ref().map(|c| c.reason.clone()),
+                        issues: std::mem::take(&mut self.issues),
+                        evaluation: self.evaluation,
+                    });
+                } else if let Some(conclusion) = &conclusion
+                    && conclusion.status == ContractStatus::Unresolved
+                {
+                    if let Some(error) = &conclusion.error {
+                        self.term.write_line(&format!("  {error}"))?;
+                    } else if self.kind == ReporterKind::Verbose {
+                        self.term.write_line(&format!("  {}", conclusion.reason))?;
+                    }
+                }
+                if let Some(issue) = self
+                    .issues
+                    .iter()
+                    .find(|r| matches!(r.status, Status::Error | Status::Incomplete))
+                {
+                    self.term.write_line(&format!(
+                        "  {}: {}",
+                        issue.path,
+                        issue
+                            .reason
+                            .as_deref()
+                            .unwrap_or("check could not complete")
+                    ))?;
+                }
                 self.current.clear();
             }
             Event::Skipped { path, reason } => {
                 self.term.write_line(&format!("SKIP {path}: {reason}"))?
             }
-            Event::Summary { summary, exit_code } => {
+            Event::Summary { summary, .. } => {
+                self.running = false;
                 self.current.clear();
+                for failure in &self.failures {
+                    failure.write(self.contracts, &mut self.term)?;
+                }
                 self.term.write_line(&format!(
-                    "Contracts  {}",
-                    self.contract_statuses
-                        .iter()
-                        .map(|(k, v)| format!("{v} {}", k.to_lowercase()))
-                        .collect::<Vec<_>>()
-                        .join(" · ")
+                    "\n Contracts  {}",
+                    contract_counts(&self.contract_statuses, self.contracts.len())
                 ))?;
+                if self.evaluation || self.kind == ReporterKind::Verbose {
+                    self.term.write_line(&format!(
+                        "{}  {}",
+                        if self.evaluation {
+                            "Examples"
+                        } else {
+                            "File evidence"
+                        },
+                        counts(&summary, self.evaluation)
+                    ))?;
+                }
                 self.term.write_line(&format!(
-                    "{}  {}",
-                    if self.evaluation {
-                        "Examples"
-                    } else {
-                        "Checks"
-                    },
-                    counts(&summary, self.evaluation)
-                ))?;
-                self.term.write_line(&format!(
-                    "Requests   {}\nDuration   {:.2}s\nExit       {exit_code}",
+                    " Requests   {}\n Duration   {:.2}s",
                     summary.requests,
                     summary.elapsed_ms as f64 / 1000.0
                 ))?;
@@ -170,20 +244,40 @@ impl<'a> Reporter<'a> {
             }
             Event::Error { message } => self.term.write_line(&format!("ERROR {message}"))?,
         }
-        if self.live && !self.current.is_empty() {
-            self.term.write_line(&format!(
-                "❯ {}  {}/{} complete · {} running · relevance {} · verification {}",
-                self.current, self.done, self.total, self.active, self.relevance, self.verification
-            ))?;
-            self.drawn = true;
+        if redraw {
+            self.refresh()?;
         }
+        self.term.flush()?;
         Ok(())
     }
 
-    fn clear(&mut self) -> Result<()> {
-        if self.drawn {
-            self.term.clear_last_lines(1)?;
-            self.drawn = false;
+    pub(crate) fn is_live(&self) -> bool {
+        self.live
+    }
+
+    pub(crate) fn refresh(&mut self) -> Result<()> {
+        if self.live && self.running {
+            let phase = if self.completing {
+                " · assessing contract"
+            } else {
+                ""
+            };
+            let active = format!(
+                "{} {}/{} {}{phase}",
+                self.current,
+                self.done,
+                self.total,
+                if self.evaluation { "examples" } else { "files" }
+            );
+            self.progress.draw(
+                &mut self.term,
+                if self.current.is_empty() { "" } else { &active },
+                &format!(
+                    "Contracts  {}",
+                    contract_counts(&self.contract_statuses, self.contracts.len())
+                ),
+                self.started.elapsed(),
+            )?;
         }
         Ok(())
     }
@@ -207,73 +301,7 @@ impl<'a> Reporter<'a> {
 
 impl Drop for Reporter<'_> {
     fn drop(&mut self) {
-        let _ = self.clear();
-    }
-}
-
-fn status(state: Status) -> &'static str {
-    match state {
-        Status::Pass => "PASS",
-        Status::Fail => "FAIL",
-        Status::NotApplicable => "EXCLUDED",
-        Status::Uncertain => "UNCERTAIN",
-        Status::Error => "ERROR",
-        Status::Incomplete => "INCOMPLETE",
-    }
-}
-fn status_name(state: Status) -> &'static str {
-    match state {
-        Status::Pass => "pass",
-        Status::Fail => "fail",
-        Status::NotApplicable => "not_applicable",
-        Status::Uncertain => "uncertain",
-        Status::Error => "error",
-        Status::Incomplete => "incomplete",
-    }
-}
-fn suite(s: &Summary, evaluation: bool) -> &'static str {
-    if s.errors > 0 {
-        "ERROR"
-    } else if s.incomplete > 0 {
-        "INCOMPLETE"
-    } else if evaluation {
-        if s.examples_failed > 0 {
-            "FAIL"
-        } else if s.examples_passed > 0 {
-            "PASS"
-        } else {
-            "EMPTY"
-        }
-    } else if s.failed > 0 {
-        "FAIL"
-    } else if s.uncertain > 0 {
-        "UNCERTAIN"
-    } else if s.passed > 0 {
-        "PASS"
-    } else {
-        "EMPTY"
-    }
-}
-fn counts(s: &Summary, evaluation: bool) -> String {
-    if evaluation {
-        format!(
-            "{} passed · {} failed · {} errors · {} incomplete",
-            s.examples_passed, s.examples_failed, s.errors, s.incomplete
-        )
-    } else {
-        format!(
-            "{} passed · {} failed · {} uncertain · {} not applicable · {} errors · {} incomplete",
-            s.passed, s.failed, s.uncertain, s.not_applicable, s.errors, s.incomplete
-        )
-    }
-}
-
-fn paint(state: &str) -> String {
-    let styled = console::style(state).for_stderr();
-    match state {
-        "PASS" => styled.green().to_string(),
-        "FAIL" | "ERROR" => styled.red().bold().to_string(),
-        "UNCERTAIN" | "INCOMPLETE" => styled.yellow().to_string(),
-        _ => styled.dim().to_string(),
+        let _ = self.progress.clear(&self.term);
+        let _ = self.term.flush();
     }
 }

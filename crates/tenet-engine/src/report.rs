@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tenet_contracts::Verdict;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -6,6 +6,7 @@ use tenet_contracts::Verdict;
 pub enum Stage {
     Applicability,
     Verification,
+    Completeness,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -30,8 +31,13 @@ impl From<Verdict> for Status {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct CheckResult {
+    pub mode: crate::Mode,
+    pub change_kind: Option<crate::ChangeKind>,
+    pub previous_path: Option<String>,
+    pub before_hash: Option<String>,
+    pub after_hash: Option<String>,
     pub contract: String,
     pub contract_path: String,
     pub contract_hash: String,
@@ -60,6 +66,11 @@ pub struct Summary {
     pub requests: usize,
     pub elapsed_ms: u128,
     pub cancelled: bool,
+    pub contracts_verified: usize,
+    pub contracts_preserved: usize,
+    pub contracts_unaffected: usize,
+    pub contracts_failed: usize,
+    pub contracts_unresolved: usize,
 }
 
 impl Summary {
@@ -90,10 +101,8 @@ impl Summary {
             3
         } else if evaluation {
             u8::from(self.examples_failed > 0)
-        } else if self.uncertain > 0 {
-            3
         } else {
-            u8::from(self.failed > 0)
+            u8::from(self.failed > 0 || self.contracts_failed > 0)
         }
     }
 }
@@ -107,7 +116,10 @@ pub struct RunInfo {
     pub mode: String,
     pub base: Option<String>,
     pub head: Option<String>,
-    pub broadened: bool,
+    pub assumption: Option<String>,
+    pub partial: bool,
+    pub snapshot: Option<String>,
+    pub patch_hash: Option<String>,
     pub jobs: usize,
     pub max_requests: usize,
 }
@@ -144,6 +156,7 @@ pub enum Event {
     ContractFinished {
         contract: String,
         summary: Summary,
+        conclusion: Option<ContractResult>,
     },
     Skipped {
         path: String,
@@ -156,4 +169,38 @@ pub enum Event {
     Error {
         message: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContractStatus {
+    Verified,
+    Preserved,
+    Unaffected,
+    Failed,
+    Unresolved,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContractResult {
+    pub status: ContractStatus,
+    pub reason: String,
+    pub assessment: Option<ev_grep_core::Assessment>,
+    pub evidence_hash: Option<String>,
+    pub error: Option<String>,
+}
+
+impl Summary {
+    pub(crate) fn conclude(&mut self, conclusion: &ContractResult) {
+        match conclusion.status {
+            ContractStatus::Verified => self.contracts_verified += 1,
+            ContractStatus::Preserved => self.contracts_preserved += 1,
+            ContractStatus::Unaffected => self.contracts_unaffected += 1,
+            ContractStatus::Failed => self.contracts_failed += 1,
+            ContractStatus::Unresolved => self.contracts_unresolved += 1,
+        }
+        if conclusion.error.is_some() {
+            self.errors += 1;
+        }
+    }
 }

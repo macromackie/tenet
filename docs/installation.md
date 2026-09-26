@@ -7,7 +7,7 @@ curl -fsSL https://tenet-contracts.com/install.sh | bash
 tenet --version
 ```
 
-For version 0.2.0 specifically, use `/v0.2.0/install.sh`.
+For version 0.3.0 specifically, use `/v0.3.0/install.sh`.
 Archives and SHA-256 checksums are also available on [GitHub Releases](https://github.com/macromackie/tenet/releases).
 
 To build from a source checkout:
@@ -20,7 +20,7 @@ cargo install --path crates/tenet --locked
 
 ```sh
 export OPENROUTER_API_KEY='your-key'
-tenet check src/
+tenet check
 ```
 
 To use TypeSafe directly:

@@ -112,6 +112,7 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
     );
     let rules_start = rules_span.start + document[rules_span.clone()].len()
         - document[rules_span.clone()].trim_start().len();
+    let rules_end = rules_start + rules.len();
     Ok(Contract {
         name: metadata.name,
         message: metadata.message,
@@ -126,7 +127,7 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
             .filter(|b| *b == b'\n')
             .count()
             + 1,
-        rules_span: rules_start..rules_span.end,
+        rules_span: rules_start..rules_end,
         hash: blake3::hash(document.as_bytes()).to_hex().to_string(),
         document: document.to_owned(),
     })

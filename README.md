@@ -1,37 +1,50 @@
 # Tenet
 
-Check code against Markdown contracts.
-
-```sh
-tenet validate
-tenet eval
-tenet check --changed-since origin/main
-```
-
-A contract contains a requirement and examples of passing and failing code. `eval` tests those examples through the same relevance and verification passes used by `check`.
-
-Tenet uses Jev through OpenRouter or TypeSafe. Set `OPENROUTER_API_KEY`, or use `--provider typesafe` with `TYPESAFE_API_KEY`.
-
-```sh
-tenet contracts list
-tenet contracts view database-failures
-tenet check src/ --jobs 4
-tenet check --reporter jsonl
-```
-
-A reviewing agent investigates failures and unresolved checks using its normal tools. Tenet does not manage a persistent review.
-Changed-file checks evaluate current contents; findings may predate the diff.
-
-Read [contracts](docs/contracts.md), [evaluation](docs/evaluation.md), [commands](docs/cli.md), and [output](docs/output.md).
+Check code against requirements written in Markdown.
 
 ## Install
 
 ```sh
 curl -fsSL https://tenet-contracts.com/install.sh | bash
+export OPENROUTER_API_KEY='your-key'
 ```
 
-Prebuilt binaries support macOS and Linux on ARM64 and x86-64.
-See [installation](docs/installation.md) for provider setup and versioned releases.
+Binaries support macOS and Linux on ARM64 and x86-64. [Provider setup](docs/installation.md) also covers TypeSafe.
+
+## Check code
+
+Write numbered [contracts](docs/contracts.md) under `.contracts/`, then run:
+
+```sh
+tenet validate                     # Check contract documents offline
+tenet check                        # Assess the current repository
+tenet check --base origin/main     # Assess changes, assuming a valid base
+```
+
+For example, a contract can require database failures to reach the caller rather than become empty results.
+Tenet checks relevant files and their combined context, then reports one conclusion per contract.
+Failures include evidence. Unresolved contracts need follow-up but do not fail the command.
+
+## Test contracts
+
+```sh
+tenet eval --contract database-failures
+tenet eval fixtures/cache --case broken-cache-hit --strict
+```
+
+[Evaluations](docs/evaluation.md) compare judgments with expected answers. Use inline examples for a small code fragment, or repository fixtures for a full directory and optional patch. Expected answers are never sent to the model.
+
+## Review changes
+
+```sh
+tenet check --base origin/main --json > review.jsonl
+```
+
+A reviewer investigates failures and unresolved contracts with ordinary repository tools. Model judgments can be wrong; a successful exit does not mean every contract was verified.
+Selected code and contract rules go to the configured provider, using your API key.
+
+Read [commands](docs/cli.md), [output](docs/output.md), and [reviewing with an agent](docs/reviews.md).
+The same docs are at [tenet-contracts.com/docs](https://tenet-contracts.com/docs).
 
 ## Build
 
@@ -39,7 +52,5 @@ See [installation](docs/installation.md) for provider setup and versioned releas
 cargo build --release --locked -p tenet
 cargo install --path crates/tenet --locked
 ```
-
-## License
 
 [MIT](LICENSE).

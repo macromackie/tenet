@@ -1,0 +1,46 @@
+name: Start release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  actions: write
+  contents: write
+concurrency:
+  group: start-release
+  cancel-in-progress: false
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Release the version commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          tag="v$version"
+          if [ "$(git log -1 --format=%B)" != "$tag" ]; then
+            echo "Not a version commit; nothing to release."
+            exit 0
+          fi
+          existing=$(git ls-remote --tags origin "refs/tags/$tag" | cut -f1)
+          if [ -n "$existing" ] && [ "$existing" != "$GITHUB_SHA" ]; then
+            echo "::error::$tag already points to a different commit. Use a new version."
+            exit 1
+          fi
+          if [ -z "$existing" ]; then
+            gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
+          fi
+          published=$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null || true)
+          if [ "$published" = false ]; then
+            echo "$tag is already published."
+            exit 0
+          fi
+          gh workflow run release.yml --ref "$tag" -f tag="$tag"
+          echo "Started $tag at $GITHUB_SHA."

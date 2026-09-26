@@ -20,6 +20,7 @@ pub enum Verdict {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Example {
+    pub change: Option<ExampleChange>,
     pub name: String,
     pub path: PathBuf,
     pub expected: Verdict,
@@ -42,4 +43,11 @@ pub struct Contract {
     pub hash: String,
     #[serde(skip)]
     pub document: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExampleChange {
+    pub before: Option<String>,
+    pub after: Option<String>,
 }

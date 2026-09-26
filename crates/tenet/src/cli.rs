@@ -13,10 +13,10 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Evaluate current file contents against contracts.
+    /// Assess a repository, or whether a change preserves its contracts.
     Check(Check),
-    /// Test contract examples through the same evaluator.
-    Eval(Run),
+    /// Evaluate repository fixtures, or inline contract examples when no path is given.
+    Eval(Eval),
     /// Validate contract documents without calling a model.
     Validate,
     /// Browse contract requirements and scope.
@@ -40,9 +40,14 @@ pub(crate) enum Contracts {
 #[derive(Args)]
 pub(crate) struct Check {
     pub paths: Vec<PathBuf>,
-    /// Select changed files, including working-tree changes; findings may predate the diff.
-    #[arg(long)]
-    pub changed_since: Option<String>,
+    /// Compare this exact revision with the working tree, assuming base compliance.
+    #[arg(long, conflicts_with = "snapshot")]
+    pub base: Option<String>,
+    /// Check an isolated copy of this directory, optionally applying a patch.
+    #[arg(long, conflicts_with = "base")]
+    pub snapshot: Option<PathBuf>,
+    #[arg(long, requires = "snapshot")]
+    pub patch: Option<PathBuf>,
     /// Show candidate pairs without calling a model.
     #[arg(long)]
     pub dry_run: bool,
@@ -74,4 +79,25 @@ pub(crate) enum ReporterKind {
     Default,
     Verbose,
     Jsonl,
+}
+
+#[derive(Args)]
+pub(crate) struct Eval {
+    /// Fixture directory, parent directory, or eval.toml.
+    pub fixtures: Option<PathBuf>,
+    #[arg(long, requires = "fixtures")]
+    pub case: Option<String>,
+    #[arg(long, default_value = "development", value_parser = ["development", "heldout", "all"])]
+    pub split: String,
+    /// Validate fixtures and patches without model calls.
+    #[arg(long, requires = "fixtures")]
+    pub validate: bool,
+    /// Exit 1 when an expectation does not match.
+    #[arg(long)]
+    pub strict: bool,
+    /// Save the complete fixture evaluation as JSONL.
+    #[arg(long, requires = "fixtures")]
+    pub output: Option<PathBuf>,
+    #[command(flatten)]
+    pub run: Run,
 }

@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use ev_grep_jev::Jev;
-use tenet_engine::{Event, Options, RunInfo, Selection};
+use tenet_engine::{Event, Mode, Options, PreparedSnapshot, RunInfo, Selection};
 
 use crate::{
     cli::{Cli, Command, Contracts, ReporterKind, Run},
@@ -50,15 +50,39 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
             Ok(0)
         }
         Command::Check(check) => {
+            let snapshot = check
+                .snapshot
+                .as_ref()
+                .map(|base| PreparedSnapshot::new(base, check.patch.as_deref()))
+                .transpose()?;
+            let root = snapshot
+                .as_ref()
+                .map_or(cli.root.as_path(), PreparedSnapshot::root);
             let selection = Selection {
                 paths: check.paths.clone(),
-                changed_since: check.changed_since.clone(),
+                base: if check.patch.is_some() {
+                    Some("HEAD".into())
+                } else {
+                    check.base.clone()
+                },
                 contract: check.run.contract.clone(),
             };
-            let plan = tenet_engine::plan(&cli.root, &selection)?;
-            evaluate(&plan, &check.run, false, check.dry_run).await
+            let plan = tenet_engine::plan(root, &selection)?;
+            evaluate(
+                &plan,
+                &check.run,
+                false,
+                check.dry_run,
+                snapshot.as_ref(),
+                true,
+            )
+            .await
         }
-        Command::Eval(run) => {
+        Command::Eval(eval) => {
+            if let Some(path) = &eval.fixtures {
+                return crate::fixture_run::execute(path, eval).await;
+            }
+            let run = &eval.run;
             let plan = tenet_engine::plan(
                 &cli.root,
                 &Selection {
@@ -66,12 +90,19 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
                     ..Selection::default()
                 },
             )?;
-            evaluate(&plan, run, true, false).await
+            evaluate(&plan, run, true, false, None, eval.strict).await
         }
     }
 }
 
-async fn evaluate(plan: &tenet_engine::Plan, run: &Run, evaluation: bool, dry: bool) -> Result<u8> {
+async fn evaluate(
+    plan: &tenet_engine::Plan,
+    run: &Run,
+    evaluation: bool,
+    dry: bool,
+    snapshot: Option<&PreparedSnapshot>,
+    strict: bool,
+) -> Result<u8> {
     let kind = if run.json {
         ReporterKind::Jsonl
     } else {
@@ -80,7 +111,13 @@ async fn evaluate(plan: &tenet_engine::Plan, run: &Run, evaluation: bool, dry: b
     let reporter = RefCell::new(Reporter::new(kind, &plan.contracts, evaluation));
     if dry {
         for c in &plan.contracts {
-            for path in plan.files.iter().filter(|p| p.starts_with(&c.scope)) {
+            for path in plan.files.iter().filter(|p| {
+                p.starts_with(&c.scope)
+                    || plan
+                        .previous_paths
+                        .get(*p)
+                        .is_some_and(|old| old.starts_with(&c.scope))
+            }) {
                 if kind == ReporterKind::Jsonl {
                     writeln!(
                         io::stdout(),
@@ -96,7 +133,7 @@ async fn evaluate(plan: &tenet_engine::Plan, run: &Run, evaluation: bool, dry: b
             writeln!(
                 io::stdout(),
                 "{}",
-                serde_json::json!({"version":1,"type":"summary","dry_run":true,"files":plan.files.len(),"broadened":plan.broadened,"deleted":plan.deleted})
+                serde_json::json!({"version":1,"type":"summary","dry_run":true,"files":plan.files.len(),"mode":plan.mode,"assume_base_valid":plan.mode == Mode::Diff,"partial":plan.partial,"deleted":plan.deleted})
             )?;
         }
         return Ok(0);
@@ -116,10 +153,21 @@ async fn evaluate(plan: &tenet_engine::Plan, run: &Run, evaluation: bool, dry: b
             root: plan.root.display().to_string(),
             provider: run.provider.to_string(),
             model,
-            mode: if evaluation { "eval" } else { "check" }.into(),
+            mode: if evaluation {
+                "eval"
+            } else if plan.mode == Mode::Diff {
+                "diff"
+            } else {
+                "full"
+            }
+            .into(),
             base: plan.base.clone(),
             head: plan.head.clone(),
-            broadened: plan.broadened,
+            assumption: (plan.mode == Mode::Diff && !evaluation)
+                .then(|| "The base satisfies the selected contracts.".into()),
+            partial: plan.partial,
+            snapshot: snapshot.map(|s| s.snapshot.display().to_string()),
+            patch_hash: snapshot.and_then(|s| s.patch_hash.clone()),
             jobs: run.jobs.into(),
             max_requests: run.max_requests as usize,
         },
@@ -135,16 +183,28 @@ async fn evaluate(plan: &tenet_engine::Plan, run: &Run, evaluation: bool, dry: b
             tenet_engine::run(plan, options, &evaluator, &emit).await
         }
     };
-    let summary = tokio::select! {
-        result = future => result?,
-        signal = tokio::signal::ctrl_c() => {
-            signal?;
-            let mut summary = reporter.borrow().summary.clone();
-            summary.cancelled = true;
-            summary
+    tokio::pin!(future);
+    let mut refresh = tokio::time::interval(std::time::Duration::from_millis(100));
+    refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let live = reporter.borrow().is_live();
+    let summary = loop {
+        tokio::select! {
+            result = &mut future => break result?,
+            _ = refresh.tick(), if live => reporter.borrow_mut().refresh()?,
+            signal = tokio::signal::ctrl_c() => {
+                signal?;
+                let mut summary = reporter.borrow().summary.clone();
+                summary.cancelled = true;
+                break summary;
+            }
         }
     };
     let code = summary.exit_code(evaluation);
+    let code = if evaluation && code == 1 && !strict {
+        0
+    } else {
+        code
+    };
     emit(Event::Summary {
         summary,
         exit_code: code,
