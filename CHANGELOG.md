@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3.1
+
+- Use `--endpoint` or `TENET_ENDPOINT` to run checks through a trusted provider proxy.
+
 ## v0.3.0
 
 - `check --base REF` assesses before/after changes under a valid-base assumption. It replaces `--changed-since`. Full checks also assess repository context, including missing required files.

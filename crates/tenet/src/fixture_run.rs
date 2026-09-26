@@ -115,7 +115,15 @@ pub(crate) async fn execute(path: &Path, args: &Eval) -> Result<u8> {
         )
     })?;
     ensure!(!key.is_empty(), "provider key is empty");
-    let evaluator = Jev::new(args.run.provider, &model, &key)?;
+    let evaluator = Jev::with_endpoint(
+        args.run.provider,
+        &model,
+        &key,
+        args.run
+            .endpoint
+            .as_deref()
+            .unwrap_or(args.run.provider.endpoint()),
+    )?;
     let destination = if let Some(path) = &args.output {
         path.clone()
     } else {

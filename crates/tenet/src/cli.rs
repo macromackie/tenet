@@ -63,6 +63,9 @@ pub(crate) struct Run {
     pub provider: Provider,
     #[arg(long, env = "TENET_MODEL")]
     pub model: Option<String>,
+    /// Send requests and the provider credential to a trusted protocol-compatible proxy.
+    #[arg(long, env = "TENET_ENDPOINT")]
+    pub endpoint: Option<String>,
     #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u16).range(1..=256))]
     pub jobs: u16,
     #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..))]

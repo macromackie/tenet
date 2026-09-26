@@ -39,3 +39,7 @@ Tenet uses the same provider adapter as ev-grep. Supported model IDs are pinned:
 
 `--provider` and `--model` override `TENET_PROVIDER` and `TENET_MODEL`, then the defaults.
 Credentials come from the provider's environment variable. File contents are sent to that provider.
+
+## Provider proxy
+
+Use `--endpoint URL` or `TENET_ENDPOINT` for a trusted proxy that implements the selected provider protocol. Requests and the provider credential go to that URL. Use HTTPS for remote services; HTTP is supported for local development. Redirects are disabled.

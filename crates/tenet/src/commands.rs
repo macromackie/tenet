@@ -145,7 +145,12 @@ async fn evaluate(
             run.provider.key_variable()
         )
     })?;
-    let evaluator = Jev::new(run.provider, &model, &key)?;
+    let evaluator = Jev::with_endpoint(
+        run.provider,
+        &model,
+        &key,
+        run.endpoint.as_deref().unwrap_or(run.provider.endpoint()),
+    )?;
     let emit = |event| reporter.borrow_mut().emit(event);
     emit(Event::Begin {
         run: RunInfo {
