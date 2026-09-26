@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.1
+
+- Avoid duplicating complete added files as patches in model inputs.
+
+
 ## v0.4.0
 
 - Read whole contract documents, including exceptions and project check instructions.

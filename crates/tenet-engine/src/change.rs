@@ -37,13 +37,13 @@ impl Change {
             (_, None) => ChangeKind::Deleted,
             _ => ChangeKind::Modified,
         };
-        let patch = similar::TextDiff::from_lines(
-            before.as_deref().unwrap_or_default(),
-            after.as_deref().unwrap_or_default(),
-        )
-        .unified_diff()
-        .context_radius(3)
-        .to_string();
+        let patch = match (&before, &after) {
+            (Some(before), Some(after)) => similar::TextDiff::from_lines(before, after)
+                .unified_diff()
+                .context_radius(3)
+                .to_string(),
+            _ => String::new(),
+        };
         Self {
             path,
             patch,
