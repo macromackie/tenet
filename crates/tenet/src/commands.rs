@@ -24,7 +24,7 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
         Command::Contracts { command } => {
             let contracts = tenet_engine::discover_contracts(&cli.root)?;
             match command {
-                Contracts::List { path } => {
+                Contracts::List { path, base, json } => {
                     if let Some(path) = path {
                         ensure!(
                             path.components()
@@ -32,11 +32,36 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
                             "--for path must be relative to the project root"
                         );
                     }
-                    for c in contracts
+                    let plan = base
+                        .as_ref()
+                        .map(|base| {
+                            tenet_engine::plan(
+                                &cli.root,
+                                &Selection {
+                                    base: Some(base.clone()),
+                                    ..Selection::default()
+                                },
+                            )
+                        })
+                        .transpose()?;
+                    let contracts = plan
+                        .as_ref()
+                        .map_or(contracts.as_slice(), |plan| plan.contracts.as_slice());
+                    let selected: Vec<_> = contracts
                         .iter()
                         .filter(|c| path.as_ref().is_none_or(|p| p.starts_with(&c.scope)))
-                    {
-                        writeln!(io::stdout(), "{}  {}", c.name, c.path.display())?;
+                        .collect();
+                    if *json {
+                        let entries: Vec<_> = selected.iter().map(|c| serde_json::json!({"name":c.name,"path":c.path,"scope":c.scope,"message":c.message})).collect();
+                        writeln!(
+                            io::stdout(),
+                            "{}",
+                            serde_json::json!({"version":1,"contracts":entries,"contract_changes":plan.as_ref().map(|p| p.contract_changes.as_slice()).unwrap_or(&[])})
+                        )?;
+                    } else {
+                        for c in selected {
+                            writeln!(io::stdout(), "{}  {}", c.name, c.path.display())?;
+                        }
                     }
                 }
                 Contracts::View { name } => {
@@ -67,7 +92,7 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
                 },
                 contract: check.run.contract.clone(),
             };
-            let plan = tenet_engine::plan(root, &selection)?;
+            let plan = tenet_engine::plan(root, &selection)?.with_context(&check.context)?;
             evaluate(
                 &plan,
                 &check.run,
@@ -122,7 +147,7 @@ async fn evaluate(
                     writeln!(
                         io::stdout(),
                         "{}",
-                        serde_json::json!({"version":1,"type":"selected","contract":c.name,"path":path,"contract_hash":c.hash})
+                        serde_json::json!({"version":2,"type":"selected","contract":c.name,"path":path,"contract_hash":c.hash})
                     )?;
                 } else {
                     writeln!(io::stdout(), "{}  {}", c.name, path.display())?;
@@ -133,7 +158,7 @@ async fn evaluate(
             writeln!(
                 io::stdout(),
                 "{}",
-                serde_json::json!({"version":1,"type":"summary","dry_run":true,"files":plan.files.len(),"mode":plan.mode,"assume_base_valid":plan.mode == Mode::Diff,"partial":plan.partial,"deleted":plan.deleted})
+                serde_json::json!({"version":2,"type":"summary","dry_run":true,"files":plan.files.len(),"mode":plan.mode,"assume_base_valid":plan.mode == Mode::Diff,"partial":plan.partial,"deleted":plan.deleted})
             )?;
         }
         return Ok(0);

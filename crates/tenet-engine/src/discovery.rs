@@ -30,6 +30,8 @@ pub struct Plan {
     pub mode: crate::Mode,
     pub inventory: Vec<PathBuf>,
     pub previous_paths: BTreeMap<PathBuf, PathBuf>,
+    pub context: Vec<crate::Change>,
+    pub contract_changes: Vec<PathBuf>,
 }
 
 pub(crate) fn paths(root: &Path) -> Result<Vec<PathBuf>> {
@@ -122,7 +124,7 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
         ensure!(!contracts.is_empty(), "unknown contract: {name}");
     }
     ensure!(
-        !contracts.is_empty(),
+        !contracts.is_empty() || selection.base.is_some(),
         "no contracts found under {}",
         root.display()
     );
@@ -172,6 +174,34 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
                 .collect()
         })
         .unwrap_or_default();
+    let contract_changes: Vec<_> = changes
+        .as_ref()
+        .map(|changes| {
+            changes
+                .paths
+                .iter()
+                .flat_map(|(path, old)| std::iter::once(path).chain(old.as_ref()))
+                .filter(|path| {
+                    is_contract(path) && path.file_name().is_some_and(|name| name == "CONTRACT.md")
+                })
+                .cloned()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        })
+        .unwrap_or_default();
+    if selection.contract.is_none()
+        && let Some(changes) = &changes
+    {
+        contracts.retain(|contract| {
+            changes.paths.iter().any(|(path, old)| {
+                path.starts_with(&contract.scope)
+                    || old
+                        .as_ref()
+                        .is_some_and(|path| path.starts_with(&contract.scope))
+            })
+        });
+    }
     let files: Vec<_> = candidates
         .into_iter()
         .filter(|p| {
@@ -205,46 +235,18 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
         mode,
         inventory,
         previous_paths,
+        context: Vec::new(),
+        contract_changes,
         base: changes.map(|c| c.base),
         partial: !selectors.is_empty() && !selectors.iter().any(|p| p.as_os_str().is_empty()),
     })
 }
 
-fn is_contract(path: &Path) -> bool {
+pub(crate) fn is_contract(path: &Path) -> bool {
     path.components().any(|c| c.as_os_str() == ".contracts")
 }
 
-impl Plan {
-    pub(crate) fn in_scope(&self, path: &Path, scope: &Path) -> bool {
-        path.starts_with(scope)
-            || self
-                .previous_paths
-                .get(path)
-                .is_some_and(|old| old.starts_with(scope))
-    }
-
-    pub(crate) fn change(&self, path: &Path) -> Result<crate::Change> {
-        let old = self.previous_paths.get(path);
-        let before = if let Some(base) = &self.base {
-            git::before(&self.root, base, old.map_or(path, PathBuf::as_path))?
-        } else {
-            None
-        };
-        let after = if self.root.join(path).symlink_metadata().is_ok() {
-            Some(crate::change::text(&self.root, path)?)
-        } else {
-            None
-        };
-        let mut change = crate::Change::new(path.to_owned(), before, after);
-        if let Some(old) = old {
-            change.previous_path = Some(old.clone());
-            change.kind = crate::ChangeKind::Renamed;
-        }
-        Ok(change)
-    }
-}
-
-fn allowed(path: &Path) -> bool {
+pub(crate) fn allowed(path: &Path) -> bool {
     !path.components().any(|part| {
         let name = part.as_os_str().to_string_lossy();
         matches!(

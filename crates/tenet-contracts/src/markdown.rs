@@ -12,6 +12,7 @@ use crate::{Example, ExampleChange, Verdict};
 pub(crate) struct Markdown {
     pub sections: BTreeMap<String, Range<usize>>,
     pub examples: Vec<Example>,
+    pub body: String,
 }
 
 pub(crate) fn parse(body: &str, offset: usize, document: &str) -> Result<Markdown> {
@@ -21,6 +22,7 @@ pub(crate) fn parse(body: &str, offset: usize, document: &str) -> Result<Markdow
     let mut current: Option<(String, usize)> = None;
     let mut nesting = 0usize;
     let mut example: Option<(String, usize, String)> = None;
+    let mut excluded = Vec::new();
     for (event, span) in Parser::new(body).into_offset_iter() {
         match event {
             Event::Start(Tag::BlockQuote(_) | Tag::List(_) | Tag::Item) => {
@@ -52,10 +54,6 @@ pub(crate) fn parse(body: &str, offset: usize, document: &str) -> Result<Markdow
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info)))
                 if info.contains("tenet:") =>
             {
-                ensure!(
-                    current.as_ref().is_some_and(|(name, _)| name == "Examples"),
-                    "Tenet examples belong in ## Examples"
-                );
                 example = Some((info.to_string(), offset + span.start, String::new()));
             }
             Event::Text(text) if example.is_some() => {
@@ -65,6 +63,7 @@ pub(crate) fn parse(body: &str, offset: usize, document: &str) -> Result<Markdow
             }
             Event::End(TagEnd::CodeBlock) => {
                 if let Some((info, start, source)) = example.take() {
+                    excluded.push(start - offset..span.end);
                     examples.push(parse_example(
                         &info,
                         source,
@@ -88,7 +87,18 @@ pub(crate) fn parse(body: &str, offset: usize, document: &str) -> Result<Markdow
             example.name
         );
     }
-    Ok(Markdown { sections, examples })
+    let mut authored = String::new();
+    let mut cursor = 0;
+    for range in excluded {
+        authored.push_str(&body[cursor..range.start]);
+        cursor = range.end;
+    }
+    authored.push_str(&body[cursor..]);
+    Ok(Markdown {
+        sections,
+        examples,
+        body: authored.trim().to_owned(),
+    })
 }
 
 fn parse_example(info: &str, source: String, index: usize, line: usize) -> Result<Example> {

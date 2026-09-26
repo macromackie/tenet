@@ -4,6 +4,7 @@ mod change;
 mod conclusion;
 mod discovery;
 mod git;
+mod plan;
 mod report;
 mod runner;
 mod snapshot;

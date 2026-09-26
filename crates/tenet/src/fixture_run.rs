@@ -100,7 +100,7 @@ pub(crate) async fn execute(path: &Path, args: &Eval) -> Result<u8> {
         if kind == ReporterKind::Jsonl {
             println!(
                 "{}",
-                json!({"version":1,"type":"fixtures_validated","cases":cases.len()})
+                json!({"version":2,"type":"fixtures_validated","cases":cases.len()})
             );
         } else {
             println!("{} fixture cases valid", cases.len());
@@ -147,7 +147,7 @@ pub(crate) async fn execute(path: &Path, args: &Eval) -> Result<u8> {
     let binary_hash = blake3::hash(&fs::read(std::env::current_exe()?)?)
         .to_hex()
         .to_string();
-    record.borrow_mut().emit(&json!({"version":1,"type":"eval_begin","cases":cases.len(),"provider":args.run.provider.to_string(),"model":model,"binary_blake3":binary_hash,"split":args.split,"max_requests":args.run.max_requests,"jobs":args.run.jobs}))?;
+    record.borrow_mut().emit(&json!({"version":2,"type":"eval_begin","cases":cases.len(),"provider":args.run.provider.to_string(),"model":model,"binary_blake3":binary_hash,"split":args.split,"max_requests":args.run.max_requests,"jobs":args.run.jobs}))?;
     let started = Instant::now();
     for case in &cases {
         display.borrow_mut().start(&case.id)?;
@@ -157,7 +157,7 @@ pub(crate) async fn execute(path: &Path, args: &Eval) -> Result<u8> {
         let future = async {
             ensure!(remaining > 0, "evaluation request budget exhausted");
             let prepared = case.prepare()?;
-            record.borrow_mut().emit(&json!({"version":1,"type":"case_begin","case":case.id,"fixture_blake3":prepared.hash,"mode":prepared.plan.mode,"expected":case.case.expect,"snapshot":prepared.snapshot.snapshot,"patch_hash":prepared.snapshot.patch_hash}))?;
+            record.borrow_mut().emit(&json!({"version":2,"type":"case_begin","case":case.id,"fixture_blake3":prepared.hash,"mode":prepared.plan.mode,"expected":case.case.expect,"snapshot":prepared.snapshot.snapshot,"patch_hash":prepared.snapshot.patch_hash}))?;
             assess(
                 case,
                 &prepared,
@@ -169,7 +169,7 @@ pub(crate) async fn execute(path: &Path, args: &Eval) -> Result<u8> {
                 &|event| {
                     display.borrow_mut().event(&event)?;
                     record.borrow_mut().emit(
-                        &json!({"version":1,"type":"case_event","case":case.id,"event":event}),
+                        &json!({"version":2,"type":"case_event","case":case.id,"event":event}),
                     )
                 },
             )
@@ -204,12 +204,12 @@ pub(crate) async fn execute(path: &Path, args: &Eval) -> Result<u8> {
             },
         };
         record.borrow_mut().emit(
-            &json!({"version":1,"type":"case_finished","matched":result.matched(),"result":result}),
+            &json!({"version":2,"type":"case_finished","matched":result.matched(),"result":result}),
         )?;
         display.borrow_mut().finish(&result)?;
     }
     let code = display.borrow().totals.exit_code(args.strict);
-    record.borrow_mut().emit(&json!({"version":1,"type":"eval_summary","summary":display.borrow().totals,"elapsed_ms":started.elapsed().as_millis(),"exit_code":code}))?;
+    record.borrow_mut().emit(&json!({"version":2,"type":"eval_summary","summary":display.borrow().totals,"elapsed_ms":started.elapsed().as_millis(),"exit_code":code}))?;
     display.borrow_mut().summary()?;
     if kind != ReporterKind::Jsonl {
         eprintln!(" Report        {}", destination.display());

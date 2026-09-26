@@ -22,6 +22,8 @@ pub(crate) struct Case {
     pub name: String,
     pub patch: Option<PathBuf>,
     pub contract: Option<String>,
+    #[serde(default)]
+    pub context: Vec<PathBuf>,
     #[serde(default = "development")]
     pub split: String,
     pub expect: BTreeMap<String, ContractStatus>,
@@ -159,6 +161,7 @@ impl FixtureCase {
                 ..Selection::default()
             },
         )?;
+        let plan = plan.with_context(&self.case.context)?;
         let actual: BTreeSet<_> = plan.contracts.iter().map(|c| &c.name).collect();
         let expected: BTreeSet<_> = self.case.expect.keys().collect();
         ensure!(

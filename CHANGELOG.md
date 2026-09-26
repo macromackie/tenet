@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.0
+
+- Read whole contract documents, including exceptions and project check instructions.
+- Report contract assessments with model confidence in JSONL v2.
+- List scoped contracts as JSON and add related files with `check --context`.
+- Combine source across files before deciding a contract failed.
+- Evaluate repository fixtures with optional related-file context.
+
+
 ## v0.3.1
 
 - Use `--endpoint` or `TENET_ENDPOINT` to run checks through a trusted provider proxy.

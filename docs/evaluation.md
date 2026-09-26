@@ -96,3 +96,12 @@ Do not change an expectation just to match a model response.
 
 Evaluation makes live provider calls. Ordinary Rust tests run offline with a deterministic evaluator.
 Passing software tests verifies program behavior; it does not establish model accuracy.
+
+## Architecture requirements
+
+Use repository fixtures when an example needs several files: a route and its ownership query, a transaction and its
+effects, or an entry point and its consumers. Pair a working baseline with a patch that breaks one requirement.
+Add `context = ["src/query.ts"]` to a fixture case to test a reviewer-supplied helper in diff mode.
+
+Keep bug families together when dividing development and held-out cases. Count wrong favorable answers separately
+from unresolved results. A confidence score is useful for routing review attention; this small corpus does not calibrate it.

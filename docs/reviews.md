@@ -1,23 +1,42 @@
 # Reviews
 
-The reviewing agent owns when to establish or refresh the baseline:
+Tenet supplies fast, model-based checks. The reviewing agent reads the contracts, investigates the code,
+runs appropriate project checks, and writes the final review.
 
 ```sh
-# First adoption
-tenet check --reporter jsonl
-
-# New or changed requirement
-tenet check --contract cache-values --reporter jsonl
-
-# Routine code review, assuming the base satisfies the contracts
-tenet check --base origin/main --reporter jsonl
+tenet contracts list --base origin/main --json
+tenet contracts view database-failures
+tenet check --base origin/main --json > report.jsonl
 ```
 
-Capture stdout and exit status even when the command returns nonzero.
-Focus investigation on failed and unresolved contracts. Preserved and unaffected conclusions rely on the caller's baseline assumption.
-A failed model judgment is a candidate finding; inspect the code before publishing a review comment.
+Read every contract in the inventory. Use failed, unresolved, and lower-confidence assessments to decide where
+to investigate first. A favorable assessment can save time; it does not remove the contract from the review.
+Confirm suspected violations before commenting on code. Exit 0 means no final failures, not complete verification.
 
-Each report identifies inputs with hashes. Rerun after changing source or contracts; keep the checkout stable during a run.
-An unresolved conclusion names a coverage limit, unavailable context, low confidence, or operational failure. Use ordinary repository tools to investigate it.
+## Add context
 
-Tenet has no internal agent loop, persistent review ID, or automatic LLM escalation. The harness owns follow-up, baseline validity, notes, and the final review, including concerns outside the contracts.
+If a helper owns the error handling, supply it and rerun the relevant contract:
+
+```sh
+tenet check --base origin/main --contract database-failures \
+  --context src/storage/query.ts --json
+```
+
+Context files supplement the input; they do not expand the contract's scope. Tenet retains their before/after identity.
+Keep the checkout stable during a run. Capture stdout and exit status even when the command returns nonzero.
+
+## Establish the baseline
+
+A diff check assumes the base satisfies its contracts. On first adoption, run a full check. New or changed contracts
+also need a full check of their scope:
+
+```sh
+tenet check --json
+tenet check --contract database-failures --json
+```
+
+`contracts list --base ... --json` includes changed contract paths, including deleted ones. Inspect those changes;
+a removed or weakened requirement must not silently disappear from the review.
+
+The outer agent owns baseline validity, follow-up, and concerns outside the contracts. Tenet has no internal agent loop
+or automatic escalation to a larger model.

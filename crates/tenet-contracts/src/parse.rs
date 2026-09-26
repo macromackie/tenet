@@ -98,10 +98,10 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
     let rules_span = markdown
         .sections
         .get("Rules")
-        .context("contract requires ## Rules")?
-        .clone();
+        .cloned()
+        .unwrap_or(offset..document.len());
     let rules = document[rules_span.clone()].trim().to_owned();
-    ensure!(!rules.is_empty(), "## Rules must not be empty");
+    ensure!(!markdown.body.is_empty(), "contract body must not be empty");
     let applies_to = markdown
         .sections
         .get("Applies to")
@@ -120,6 +120,7 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
         path: path.to_owned(),
         scope: parent.parent().context("missing scope")?.to_owned(),
         rules,
+        body: markdown.body,
         applies_to,
         examples: markdown.examples,
         rules_line: document[..rules_start]

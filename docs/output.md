@@ -17,7 +17,7 @@ tenet check --base origin/main --reporter jsonl > report.jsonl
 | preserved | Relevant changes preserve compliance, assuming a valid base |
 | unaffected | No relevant changes found, assuming a valid base |
 | failed | Evidence supports a violation |
-| unresolved | Evidence, coverage, confidence, or execution is insufficient |
+| unresolved | The model cannot decide, or required evidence or execution is incomplete |
 
 A full check cannot conclude unaffected or preserved. A diff check cannot newly verify the baseline.
 These are model judgments, not formal proofs. No findings alone is insufficient for verification.
@@ -27,11 +27,19 @@ The verbose reporter shows uncertain file judgments as `UNRESOLVED`. A repositor
 
 ## JSONL
 
-Each event has `version: 1` and a `type`. The `begin` event records `full`, `diff`, or `eval` mode, provider/model, root, base and HEAD when available, and the baseline assumption. Snapshot runs include the original snapshot path and patch hash.
+Each event has `version: 2` and a `type`. The `begin` event records `full`, `diff`, or `eval` mode, provider/model, root, base and HEAD when available, and the baseline assumption. Snapshot runs include the original snapshot path and patch hash.
 
 `result` contains file evidence: mode, change kind, previous path for renames, before/after hashes, contract hash, judgments, and timing. `source_hash` identifies the complete encoded change input.
 
-`contract_finished` includes a `conclusion` with status, reason, optional repository assessment, evidence hash, and operational error. For example evaluation, this field is null; expected file judgments determine success.
+`contract_finished` includes a small `conclusion`:
+
+```json
+{"assessment": "preserved", "confidence": 0.7}
+```
+
+Confidence is the model's score for its selected answer, not a measured probability that the contract holds.
+A low score does not change the answer to unresolved. An explicit uncertain answer does. When there is no final
+model assessment, confidence is null. Errors add an `error` field. Example evaluations have no contract conclusion.
 
 Other events include `contract_started`, `check_started`, `stage_started`, `stage_completed`, `summary`, and `error`. Stages are `applicability`, `verification`, and `completeness`.
 The summary includes file counts, contract counts, request count, and exit code. Source contents and credentials are not printed.

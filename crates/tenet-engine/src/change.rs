@@ -25,6 +25,7 @@ pub struct Change {
     pub path: PathBuf,
     pub previous_path: Option<PathBuf>,
     pub kind: ChangeKind,
+    pub patch: String,
     pub before: Option<String>,
     pub after: Option<String>,
 }
@@ -36,8 +37,16 @@ impl Change {
             (_, None) => ChangeKind::Deleted,
             _ => ChangeKind::Modified,
         };
+        let patch = similar::TextDiff::from_lines(
+            before.as_deref().unwrap_or_default(),
+            after.as_deref().unwrap_or_default(),
+        )
+        .unified_diff()
+        .context_radius(3)
+        .to_string();
         Self {
             path,
+            patch,
             previous_path: None,
             kind,
             before,

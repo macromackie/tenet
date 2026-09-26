@@ -64,7 +64,7 @@ impl<'a> Reporter<'a> {
         self.track(&event);
         if self.kind == ReporterKind::Jsonl {
             let mut value = serde_json::to_value(event)?;
-            value["version"] = 1.into();
+            value["version"] = 2.into();
             let mut out = io::stdout().lock();
             serde_json::to_writer(&mut out, &value)?;
             writeln!(out)?;
@@ -167,9 +167,14 @@ impl<'a> Reporter<'a> {
                     if self.evaluation { "examples" } else { "files" }
                 );
                 self.term.write_line(&format!(
-                    " {} {contract} ({text}) {}  {:.1}s",
+                    " {} {contract} ({text}) {}{}  {:.1}s",
                     marker(state),
                     paint(&state.to_lowercase()),
+                    conclusion
+                        .as_ref()
+                        .and_then(|c| c.confidence)
+                        .map(|score| format!(" ({:.0}% confidence)", score * 100.0))
+                        .unwrap_or_default(),
                     self.contract_started.elapsed().as_secs_f64()
                 ))?;
                 let failed = conclusion

@@ -36,6 +36,7 @@ pub struct Contract {
     pub path: PathBuf,
     pub scope: PathBuf,
     pub rules: String,
+    pub body: String,
     pub applies_to: Option<String>,
     pub examples: Vec<Example>,
     pub rules_line: usize,

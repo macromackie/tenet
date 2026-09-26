@@ -5,7 +5,7 @@ tenet check
 tenet check --base origin/main
 tenet eval
 tenet validate
-tenet contracts list [--for PATH]
+tenet contracts list [--for PATH] [--base REF] [--json]
 tenet contracts view NAME
 ```
 
@@ -34,7 +34,8 @@ Assume the base satisfies the selected contracts, then assess whether the change
 Each input includes before/after contents and the change kind. Deletions and renames are checked too. An unrelated change can leave a contract unaffected; relevant changes need evidence of preservation.
 The caller owns establishing the baseline and running full checks when contracts change. Tenet does not silently switch modes.
 
-This replaces the former `--changed-since` changed-file selector.
+`contracts list --base REF --json` returns the containing contract scopes in evaluation order, plus changed contract paths.
+It needs no model credentials. New and old paths participate, including deletions and moves.
 
 ## Snapshot and patch
 
@@ -53,6 +54,7 @@ Without a patch this is a full check. With a patch it is a diff check. `--base` 
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `--contract NAME` | all contracts | Select one requirement |
+| `--context PATH` | none | Add a repository file to check inputs; repeat for multiple files |
 | `--jobs N` | 4 | Maximum simultaneous model requests |
 | `--max-requests N` | 1000 | Request budget, including repository assessments |
 | `--provider NAME` | openrouter | Select provider |

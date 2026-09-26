@@ -30,7 +30,7 @@ async fn main() -> ExitCode {
                 let _ = writeln!(
                     io::stdout(),
                     "{}",
-                    serde_json::json!({"version": 1, "type": "error", "message": error.to_string(), "exit_code": 2})
+                    serde_json::json!({"version": 2, "type": "error", "message": error.to_string(), "exit_code": 2})
                 );
             } else {
                 let _ = diagnostics::error(&cli.root, &error, &mut io::stderr());

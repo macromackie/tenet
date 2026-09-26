@@ -31,6 +31,11 @@ pub(crate) enum Contracts {
     List {
         #[arg(long = "for")]
         path: Option<PathBuf>,
+        /// Select scopes touched since this revision, including contract changes.
+        #[arg(long)]
+        base: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
     View {
         name: String,
@@ -40,6 +45,9 @@ pub(crate) enum Contracts {
 #[derive(Args)]
 pub(crate) struct Check {
     pub paths: Vec<PathBuf>,
+    /// Supply related repository files without changing contract scope; repeat as needed.
+    #[arg(long)]
+    pub context: Vec<PathBuf>,
     /// Compare this exact revision with the working tree, assuming base compliance.
     #[arg(long, conflicts_with = "snapshot")]
     pub base: Option<String>,

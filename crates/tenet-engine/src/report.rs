@@ -102,7 +102,7 @@ impl Summary {
         } else if evaluation {
             u8::from(self.examples_failed > 0)
         } else {
-            u8::from(self.failed > 0 || self.contracts_failed > 0)
+            u8::from(self.contracts_failed > 0)
         }
     }
 }
@@ -183,10 +183,16 @@ pub enum ContractStatus {
 
 #[derive(Debug, Serialize)]
 pub struct ContractResult {
+    #[serde(rename = "assessment")]
     pub status: ContractStatus,
+    pub confidence: Option<f64>,
+    #[serde(skip)]
     pub reason: String,
+    #[serde(skip)]
     pub assessment: Option<ev_grep_core::Assessment>,
+    #[serde(skip)]
     pub evidence_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 

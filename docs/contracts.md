@@ -19,9 +19,13 @@ message: Preserve database failures for the caller.
 If a database operation fails, preserve that failure for the caller.
 Do not return a successful empty result.
 
-## Applies to
+## Checks
 
-Code that performs database operations or handles their failures.
+From the package directory:
+
+```sh
+mise run test
+```
 
 ## Examples
 
@@ -42,12 +46,16 @@ async function listUsers() {
 ```
 ````
 
-`name`, `message`, and a nonempty `Rules` section are required. Names are unique throughout the selected project.
+`name`, `message`, and a nonempty body are required. Names are unique throughout the project.
 Numbers have at least three digits, start at 001, and are unique within a scope. Unknown frontmatter fields are errors.
 
-`Applies to` is optional guidance for relevance. Both decision passes receive the rules and this guidance.
-Rationale, examples, expected answers, and other sections do not enter the model prompt.
-Write exceptions in `Rules`. Shell commands in prose are not executed.
+Use `Rules` and `Checks` for ordinary contracts. Other headings are welcome; Tenet reads the whole body,
+including rationale, exceptions, and ordinary code examples. Keep these inline where possible.
+Only tagged evaluation fences are withheld from the model, so expected answers cannot leak into checks.
+
+Commands under `Checks` are instructions for the reviewer. Include the working directory and use project-owned scripts.
+Tenet does not run these commands or assume they succeeded. Linked resources are not expanded automatically;
+keep required context in the contract or supply repository files with `check --context`.
 
 ## Scope
 
