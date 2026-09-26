@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.2
+
+- Reserve context space for required source and JSON metadata before adding optional neighboring files. Small changes in larger repositories can now reach the final assessment without optional context exhausting the request limit.
+
 ## v0.4.1
 
 - Avoid duplicating complete added files as patches in model inputs.

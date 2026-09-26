@@ -158,46 +158,64 @@ impl Completion<'_> {
         } else {
             Vec::new()
         };
-        let mut files = Vec::new();
-        let mut bytes = 0;
-        let mut omitted = Vec::new();
-        for path in &inventory {
-            if changes.iter().any(|change| &change.path == *path) {
-                continue;
-            }
-            if self.plan.context.iter().any(|change| &change.path == *path) {
-                continue;
-            }
-
-            let required = self.plan.mode == Mode::Full
-                && !self.results.iter().any(|result| {
-                    result.path == path.to_string_lossy() && result.status == Status::NotApplicable
-                });
-            let content = match crate::change::text(&self.plan.root, path) {
-                Ok(content) if bytes + content.len() <= MAX_FILE_BYTES => content,
-                _ if !required => {
-                    omitted.push(path);
-                    continue;
-                }
-                result => result?,
-            };
-            bytes += content.len();
-            ensure!(
-                bytes <= MAX_FILE_BYTES,
-                "scoped repository exceeds 64 KiB; context was not truncated"
-            );
-            files.push(serde_json::json!({"path": path, "contents": content}));
-        }
         let evidence: Vec<_> = self
             .results
             .iter()
             .map(|r| serde_json::json!({"path":r.path, "status":r.status, "reason":r.reason}))
             .collect();
-        let state = serde_json::json!({"contract":self.contract.body,"inventory": inventory, "files": files, "changes": changes, "context": self.plan.context, "file_assessments":evidence, "omitted_source":omitted});
-        let text = serde_json::to_vec(&state)?;
+        let mut files = Vec::new();
+        let mut required_bytes = 0;
+        let mut optional = Vec::new();
+        for path in &inventory {
+            if changes.iter().any(|change| &change.path == *path)
+                || self.plan.context.iter().any(|change| &change.path == *path)
+            {
+                continue;
+            }
+            let required = self.plan.mode == Mode::Full
+                && !self.results.iter().any(|result| {
+                    result.path == path.to_string_lossy() && result.status == Status::NotApplicable
+                });
+            if required {
+                let content = crate::change::text(&self.plan.root, path)?;
+                required_bytes += content.len();
+                ensure!(
+                    required_bytes <= MAX_FILE_BYTES,
+                    "required source exceeds 64 KiB"
+                );
+                files.push(serde_json::json!({"path": path, "contents": content}));
+            } else {
+                optional.push(*path);
+            }
+        }
+        let mut state = serde_json::json!({"contract":self.contract.body,"inventory": inventory, "files": files, "changes": changes, "context": self.plan.context, "file_assessments":evidence, "omitted_source":optional});
+        let mut bytes = serde_json::to_vec(&state)?.len();
         ensure!(
-            text.len() <= MAX_FILE_BYTES,
-            "encoded repository context exceeds 64 KiB; context was not truncated"
+            bytes <= MAX_FILE_BYTES,
+            "required repository context exceeds 64 KiB; context was not truncated"
+        );
+        let mut omitted = optional.clone();
+        for path in optional {
+            let Ok(content) = crate::change::text(&self.plan.root, path) else {
+                continue;
+            };
+            let file = serde_json::json!({"path": path, "contents": content});
+            // Account for encoded strings and both array separators, not just source bytes.
+            let added = serde_json::to_vec(&file)?.len() + usize::from(!files.is_empty());
+            let removed = serde_json::to_vec(path)?.len() + usize::from(omitted.len() > 1);
+            if bytes + added - removed > MAX_FILE_BYTES {
+                continue;
+            }
+            bytes += added;
+            bytes -= removed;
+            files.push(file);
+            omitted.retain(|candidate| *candidate != path);
+        }
+        state["files"] = serde_json::to_value(files)?;
+        state["omitted_source"] = serde_json::to_value(omitted)?;
+        ensure!(
+            serde_json::to_vec(&state)?.len() <= MAX_FILE_BYTES,
+            "repository context exceeds 64 KiB"
         );
         Ok(state)
     }
