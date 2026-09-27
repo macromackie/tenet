@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.3
+
+- Use ev-grep 0.4.0 for the shared provider adapter.
+
 ## v0.4.2
 
 - Reserve context space for required source and JSON metadata before adding optional neighboring files. Small changes in larger repositories can now reach the final assessment without optional context exhausting the request limit.
