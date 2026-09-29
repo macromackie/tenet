@@ -10,14 +10,10 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-blake3.workspace = true
-toml.workspace = true
 annotate-snippets.workspace = true
 clap.workspace = true
 console.workspace = true
-ev-grep-core.workspace = true
 ev-grep-jev.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 tenet-contracts.workspace = true
 tenet-engine.workspace = true

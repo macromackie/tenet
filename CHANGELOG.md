@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.4
+
+- Ask relevance and violation questions together, with shared before/after context.
+- Check independent contracts concurrently within one worker limit. Print final summaries in contract order.
+- Keep unrelated source out of repository assessments and surface conflicting file assessments as unresolved.
+- Include request attempts, hedges, timing, and available usage in JSON reports.
+
 ## v0.4.3
 
 - Use ev-grep 0.4.0 for the shared provider adapter.

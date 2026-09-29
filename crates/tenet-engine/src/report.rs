@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use tenet_contracts::Verdict;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,17 +19,6 @@ pub enum Status {
     Incomplete,
 }
 
-impl From<Verdict> for Status {
-    fn from(v: Verdict) -> Self {
-        match v {
-            Verdict::Pass => Self::Pass,
-            Verdict::Fail => Self::Fail,
-            Verdict::NotApplicable => Self::NotApplicable,
-            Verdict::Uncertain => Self::Uncertain,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize)]
 pub struct CheckResult {
     pub mode: crate::Mode,
@@ -43,13 +31,12 @@ pub struct CheckResult {
     pub contract_hash: String,
     pub path: String,
     pub source_hash: Option<String>,
-    pub example: Option<String>,
-    pub expected: Option<Verdict>,
     pub status: Status,
     pub message: String,
     pub reason: Option<String>,
     pub applicability: Option<ev_grep_core::Assessment>,
     pub verification: Option<ev_grep_core::Assessment>,
+    pub request: Option<ev_grep_core::RequestInfo>,
     pub elapsed_ms: u128,
 }
 
@@ -61,9 +48,11 @@ pub struct Summary {
     pub not_applicable: usize,
     pub errors: usize,
     pub incomplete: usize,
-    pub examples_passed: usize,
-    pub examples_failed: usize,
     pub requests: usize,
+    pub attempts: usize,
+    pub hedges: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
     pub elapsed_ms: u128,
     pub cancelled: bool,
     pub contracts_verified: usize,
@@ -74,7 +63,36 @@ pub struct Summary {
 }
 
 impl Summary {
+    pub(crate) fn merge(&mut self, other: &Self) {
+        self.passed += other.passed;
+        self.failed += other.failed;
+        self.uncertain += other.uncertain;
+        self.not_applicable += other.not_applicable;
+        self.errors += other.errors;
+        self.incomplete += other.incomplete;
+        self.requests += other.requests;
+        self.attempts += other.attempts;
+        self.hedges += other.hedges;
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+        self.contracts_verified += other.contracts_verified;
+        self.contracts_preserved += other.contracts_preserved;
+        self.contracts_unaffected += other.contracts_unaffected;
+        self.contracts_failed += other.contracts_failed;
+        self.contracts_unresolved += other.contracts_unresolved;
+    }
+
+    fn record_request(&mut self, request: Option<&ev_grep_core::RequestInfo>) {
+        if let Some(request) = request {
+            self.attempts += request.attempts;
+            self.hedges += request.hedges;
+            self.input_tokens += request.input_tokens;
+            self.output_tokens += request.output_tokens;
+        }
+    }
+
     pub(crate) fn add(&mut self, result: &CheckResult) {
+        self.record_request(result.request.as_ref());
         match result.status {
             Status::Pass => self.passed += 1,
             Status::Fail => self.failed += 1,
@@ -83,24 +101,15 @@ impl Summary {
             Status::Error => self.errors += 1,
             Status::Incomplete => self.incomplete += 1,
         }
-        if let Some(expected) = result.expected {
-            if result.status == Status::from(expected) {
-                self.examples_passed += 1;
-            } else {
-                self.examples_failed += 1;
-            }
-        }
     }
 
-    pub fn exit_code(&self, evaluation: bool) -> u8 {
+    pub fn exit_code(&self) -> u8 {
         if self.cancelled {
             130
         } else if self.errors > 0 {
             2
         } else if self.incomplete > 0 {
             3
-        } else if evaluation {
-            u8::from(self.examples_failed > 0)
         } else {
             u8::from(self.contracts_failed > 0)
         }
@@ -156,7 +165,7 @@ pub enum Event {
     ContractFinished {
         contract: String,
         summary: Summary,
-        conclusion: Option<ContractResult>,
+        conclusion: Option<Box<ContractResult>>,
     },
     Skipped {
         path: String,
@@ -194,10 +203,14 @@ pub struct ContractResult {
     pub evidence_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub conflicting_files: Vec<String>,
+    pub request: Option<ev_grep_core::RequestInfo>,
 }
 
 impl Summary {
     pub(crate) fn conclude(&mut self, conclusion: &ContractResult) {
+        self.record_request(conclusion.request.as_ref());
         match conclusion.status {
             ContractStatus::Verified => self.contracts_verified += 1,
             ContractStatus::Preserved => self.contracts_preserved += 1,

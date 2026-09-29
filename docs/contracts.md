@@ -29,13 +29,13 @@ mise run test
 
 ## Examples
 
-```typescript tenet:example expect=pass path=src/users.ts name=propagated-error
+```typescript
 async function listUsers() {
   return await db.users.list();
 }
 ```
 
-```typescript tenet:example expect=fail path=src/users.ts name=swallowed-error
+```typescript
 async function listUsers() {
   try {
     return await db.users.list();
@@ -51,7 +51,7 @@ Numbers have at least three digits, start at 001, and are unique within a scope.
 
 Use `Rules` and `Checks` for ordinary contracts. Other headings are welcome; Tenet reads the whole body,
 including rationale, exceptions, and ordinary code examples. Keep these inline where possible.
-Only tagged evaluation fences are withheld from the model, so expected answers cannot leak into checks.
+Legacy tagged evaluation fences are withheld from the model.
 
 Commands under `Checks` are instructions for the reviewer. Include the working directory and use project-owned scripts.
 Tenet does not run these commands or assume they succeeded. Linked resources are not expanded automatically;
@@ -72,26 +72,7 @@ tenet contracts view database-failures
 
 ## Examples
 
-`tenet:example` fences require a language, `path`, and `expect`. An optional `name` identifies the case in reports.
-The path is relative to the contract's scope and cannot escape it. Examples are evaluated independently, without sibling file contents.
-
-Expectations are `pass`, `fail`, `not_applicable`, and `uncertain`.
-See [evaluation](./evaluation.md) for interpreting the results.
-
-## Change examples
-
-Use a JSON `tenet:change` fence to evaluate a before/after change under the assumption that the base satisfies the contract:
-
-````markdown
-```json tenet:change expect=fail path=src/users.ts name=swallowed-error
-{
-  "before": "async function users() { return await db.users.list(); }",
-  "after": "async function users() { try { return await db.users.list(); } catch { return []; } }"
-}
-```
-````
-
-Use `null` for `before` when adding a file, or for `after` when deleting one. At least one side must have contents.
-Expectations remain `pass`, `fail`, `not_applicable`, and `uncertain`; `not_applicable` means the change is unaffected by this requirement.
-A regular `tenet:example` fence uses full mode with no baseline assumption.
-These examples test individual inputs, not repository-wide coverage.
+Use ordinary fenced code blocks to explain allowed and disallowed behavior. Label them in prose.
+Examples are documentation; evaluate real project snapshots and patches through `tenet check`.
+See [evaluation](./evaluation.md). Legacy `tenet:` fences are withheld from model context to avoid leaking
+old expected-answer labels; convert them to ordinary examples when editing a contract.

@@ -56,7 +56,7 @@ impl Plan {
                 .is_some_and(|old| old.starts_with(scope))
     }
 
-    pub(crate) fn change(&self, path: &Path) -> Result<crate::Change> {
+    pub fn change(&self, path: &Path) -> Result<crate::Change> {
         let old = self.previous_paths.get(path);
         let before = if let Some(base) = &self.base {
             git::before(&self.root, base, old.map_or(path, PathBuf::as_path))?

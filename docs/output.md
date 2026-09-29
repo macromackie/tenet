@@ -27,7 +27,7 @@ The verbose reporter shows uncertain file judgments as `UNRESOLVED`. A repositor
 
 ## JSONL
 
-Each event has `version: 2` and a `type`. The `begin` event records `full`, `diff`, or `eval` mode, provider/model, root, base and HEAD when available, and the baseline assumption. Snapshot runs include the original snapshot path and patch hash.
+Each event has `version: 2` and a `type`. The `begin` event records `full` or `diff` mode, provider/model, root, base and HEAD when available, and the baseline assumption. Snapshot runs include the original snapshot path and patch hash.
 
 `result` contains file evidence: mode, change kind, previous path for renames, before/after hashes, contract hash, judgments, and timing. `source_hash` identifies the complete encoded change input.
 
@@ -39,7 +39,7 @@ Each event has `version: 2` and a `type`. The `begin` event records `full`, `dif
 
 Confidence is the model's score for its selected answer, not a measured probability that the contract holds.
 A low score does not change the answer to unresolved. An explicit uncertain answer does. When there is no final
-model assessment, confidence is null. Errors add an `error` field. Example evaluations have no contract conclusion.
+model assessment, confidence is null. Errors add an `error` field.
 
 Other events include `contract_started`, `check_started`, `stage_started`, `stage_completed`, `summary`, and `error`. Stages are `applicability`, `verification`, and `completeness`.
 The summary includes file counts, contract counts, request count, and exit code. Source contents and credentials are not printed.
@@ -48,15 +48,13 @@ The summary includes file counts, contract counts, request count, and exit code.
 
 | Code | Meaning |
 | --- | --- |
-| 0 | No contract failures; eval completed, with mismatches allowed unless `--strict` |
-| 1 | Contract failures, or eval expectation mismatches with `--strict` |
+| 0 | No contract failures |
+| 1 | Contract failures |
 | 2 | Invalid input or execution error |
 | 3 | File checks could not complete, such as when the request budget is exhausted |
 | 130 | Cancelled |
 
 Unresolved contracts do not fail a check. They remain unresolved in the report; exit code 0 does not mean every contract was verified.
 Execution errors and incomplete file checks still exit nonzero and take precedence over contract failures. Findings remain available in all cases.
-For `eval`, mismatches exit 0 unless `--strict` is set. An explicitly expected uncertain judgment can match an example.
-Fixture evaluation uses `eval_begin`, `case_begin`, `case_event`, `case_finished`, and `eval_summary` records; see [Evaluation](evaluation.md).
 
 File diagnostics highlight the contract requirement; Tenet does not invent an exact source span for a file-level judgment. The reviewing agent locates actionable code.

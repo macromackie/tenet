@@ -122,7 +122,6 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
         rules,
         body: markdown.body,
         applies_to,
-        examples: markdown.examples,
         rules_line: document[..rules_start]
             .bytes()
             .filter(|b| *b == b'\n')

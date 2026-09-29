@@ -27,15 +27,6 @@ Each model conclusion includes confidence. Unresolved contracts need follow-up b
 
 Read every applicable contract during a review. Tenet helps choose where to investigate first; the outer reviewer owns the final judgment. See [Reviews](docs/reviews.md).
 
-## Test contracts
-
-```sh
-tenet eval --contract database-failures
-tenet eval fixtures/cache --case broken-cache-hit --strict
-```
-
-[Evaluations](docs/evaluation.md) compare judgments with expected answers. Use inline examples for a small code fragment, or repository fixtures for a full directory and optional patch. Expected answers are never sent to the model.
-
 ## Review changes
 
 ```sh

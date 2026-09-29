@@ -20,7 +20,6 @@ tenet-contracts.workspace = true
 tempfile.workspace = true
 similar.workspace = true
 
-[dev-dependencies]
 tokio.workspace = true
 
 [lints]

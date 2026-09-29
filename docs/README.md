@@ -31,14 +31,14 @@ Each contract finishes with one result:
 
 Failures include the requirement and evidence. Unresolved results need follow-up; they do not fail the command. These are model judgments, so inspect findings before acting on them. See [Output](./output.md).
 
-## Test a contract
+## Try a contract
 
 ```sh
-tenet eval --contract database-failures
-tenet eval fixtures/cache --case broken-cache-hit --strict
+tenet check --snapshot fixtures/cache/project
+tenet check --snapshot fixtures/cache/project --patch fixtures/cache/patches/broken-hit.patch
 ```
 
-`eval` compares judgments with expected answers. It runs either examples inside contracts or [repository fixtures](./evaluation.md) containing a base directory, a patch, and expectations.
+Compare a working project with a small change that breaks its contract. See [Evaluation](./evaluation.md).
 
 ## Use in a review
 

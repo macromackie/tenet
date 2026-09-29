@@ -66,6 +66,13 @@ impl Change {
             focus: None,
         })
     }
+
+    pub(crate) fn current_input(&self) -> serde_json::Value {
+        serde_json::json!({
+            "path": self.path,
+            "contents": self.after,
+        })
+    }
 }
 
 pub(crate) fn text(root: &Path, path: &Path) -> Result<String> {

@@ -10,29 +10,11 @@ pub(super) fn status(state: Status) -> &'static str {
         Status::Incomplete => "INCOMPLETE",
     }
 }
-pub(super) fn status_name(state: Status) -> &'static str {
-    match state {
-        Status::Pass => "pass",
-        Status::Fail => "fail",
-        Status::NotApplicable => "not_applicable",
-        Status::Uncertain => "uncertain",
-        Status::Error => "error",
-        Status::Incomplete => "incomplete",
-    }
-}
-pub(super) fn suite(s: &Summary, evaluation: bool) -> &'static str {
+pub(super) fn suite(s: &Summary) -> &'static str {
     if s.errors > 0 {
         "ERROR"
     } else if s.incomplete > 0 {
         "INCOMPLETE"
-    } else if evaluation {
-        if s.examples_failed > 0 {
-            "FAIL"
-        } else if s.examples_passed > 0 {
-            "PASS"
-        } else {
-            "EMPTY"
-        }
     } else if s.failed > 0 {
         "FAIL"
     } else if s.uncertain > 0 {
@@ -43,24 +25,15 @@ pub(super) fn suite(s: &Summary, evaluation: bool) -> &'static str {
         "EMPTY"
     }
 }
-pub(super) fn counts(s: &Summary, evaluation: bool) -> String {
-    let entries = if evaluation {
-        vec![
-            (s.examples_passed, "passed"),
-            (s.examples_failed, "failed"),
-            (s.errors, "errors"),
-            (s.incomplete, "incomplete"),
-        ]
-    } else {
-        vec![
-            (s.passed, "passed"),
-            (s.failed, "failed"),
-            (s.uncertain, "uncertain"),
-            (s.not_applicable, "not applicable"),
-            (s.errors, "errors"),
-            (s.incomplete, "incomplete"),
-        ]
-    };
+pub(super) fn counts(s: &Summary) -> String {
+    let entries = [
+        (s.passed, "passed"),
+        (s.failed, "failed"),
+        (s.uncertain, "uncertain"),
+        (s.not_applicable, "not applicable"),
+        (s.errors, "errors"),
+        (s.incomplete, "incomplete"),
+    ];
     let counts = entries
         .into_iter()
         .filter(|(count, _)| *count > 0)

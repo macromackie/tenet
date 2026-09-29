@@ -12,7 +12,7 @@ Large scopes may therefore need a reviewing agent to complete the assessment.
 
 The shared request budget covers applicability, verification, and repository assessments, including failed attempts.
 A file uses one request when excluded and up to two otherwise. A contract may use one additional repository request.
-File requests run concurrently within the jobs limit; contracts finish sequentially in scope and numeric order.
+File and repository assessments share the jobs limit across independent contracts. Final summaries retain scope and numeric order.
 
-The provider adapter uses a 10-second connection timeout and a 60-second request timeout, with no automatic retries.
+Jev requests share a 15-second budget across at most three attempts, with a five-second limit per attempt. One slow request may use a spare worker to race a duplicate after one second. Rate limits pause new requests; the first valid answer wins. Duplicate or interrupted requests may still incur charges.
 Confidence below 0.8 maps to uncertainty. This provisional threshold is not a measured guarantee of accuracy.

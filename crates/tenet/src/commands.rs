@@ -93,29 +93,7 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
                 contract: check.run.contract.clone(),
             };
             let plan = tenet_engine::plan(root, &selection)?.with_context(&check.context)?;
-            evaluate(
-                &plan,
-                &check.run,
-                false,
-                check.dry_run,
-                snapshot.as_ref(),
-                true,
-            )
-            .await
-        }
-        Command::Eval(eval) => {
-            if let Some(path) = &eval.fixtures {
-                return crate::fixture_run::execute(path, eval).await;
-            }
-            let run = &eval.run;
-            let plan = tenet_engine::plan(
-                &cli.root,
-                &Selection {
-                    contract: run.contract.clone(),
-                    ..Selection::default()
-                },
-            )?;
-            evaluate(&plan, run, true, false, None, eval.strict).await
+            evaluate(&plan, &check.run, check.dry_run, snapshot.as_ref()).await
         }
     }
 }
@@ -123,17 +101,15 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
 async fn evaluate(
     plan: &tenet_engine::Plan,
     run: &Run,
-    evaluation: bool,
     dry: bool,
     snapshot: Option<&PreparedSnapshot>,
-    strict: bool,
 ) -> Result<u8> {
     let kind = if run.json {
         ReporterKind::Jsonl
     } else {
         run.reporter
     };
-    let reporter = RefCell::new(Reporter::new(kind, &plan.contracts, evaluation));
+    let reporter = RefCell::new(Reporter::new(kind, &plan.contracts));
     if dry {
         for c in &plan.contracts {
             for path in plan.files.iter().filter(|p| {
@@ -175,7 +151,8 @@ async fn evaluate(
         &model,
         &key,
         run.endpoint.as_deref().unwrap_or(run.provider.endpoint()),
-    )?;
+    )?
+    .with_jobs(usize::from(run.jobs))?;
     let emit = |event| reporter.borrow_mut().emit(event);
     emit(Event::Begin {
         run: RunInfo {
@@ -183,9 +160,7 @@ async fn evaluate(
             root: plan.root.display().to_string(),
             provider: run.provider.to_string(),
             model,
-            mode: if evaluation {
-                "eval"
-            } else if plan.mode == Mode::Diff {
+            mode: if plan.mode == Mode::Diff {
                 "diff"
             } else {
                 "full"
@@ -193,7 +168,7 @@ async fn evaluate(
             .into(),
             base: plan.base.clone(),
             head: plan.head.clone(),
-            assumption: (plan.mode == Mode::Diff && !evaluation)
+            assumption: (plan.mode == Mode::Diff)
                 .then(|| "The base satisfies the selected contracts.".into()),
             partial: plan.partial,
             snapshot: snapshot.map(|s| s.snapshot.display().to_string()),
@@ -206,13 +181,7 @@ async fn evaluate(
         jobs: run.jobs.into(),
         max_requests: run.max_requests as usize,
     };
-    let future = async {
-        if evaluation {
-            tenet_engine::run_examples(plan, options, &evaluator, &emit).await
-        } else {
-            tenet_engine::run(plan, options, &evaluator, &emit).await
-        }
-    };
+    let future = tenet_engine::run(plan, options, &evaluator, &emit);
     tokio::pin!(future);
     let mut refresh = tokio::time::interval(std::time::Duration::from_millis(100));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -229,12 +198,7 @@ async fn evaluate(
             }
         }
     };
-    let code = summary.exit_code(evaluation);
-    let code = if evaluation && code == 1 && !strict {
-        0
-    } else {
-        code
-    };
+    let code = summary.exit_code();
     emit(Event::Summary {
         summary,
         exit_code: code,

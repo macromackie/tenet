@@ -44,12 +44,10 @@ pub(crate) struct Failure {
     pub contract: String,
     pub reason: Option<String>,
     pub issues: Vec<tenet_engine::CheckResult>,
-    pub evaluation: bool,
 }
 
 impl Failure {
     pub(crate) fn write(&self, contracts: &[Contract], out: &mut impl Write) -> Result<()> {
-        use crate::report_format::status_name;
         use tenet_engine::Status;
 
         writeln!(out, "\n── Failed: {} ──\n", self.contract)?;
@@ -63,29 +61,18 @@ impl Failure {
             if !matches!(
                 result.status,
                 Status::Fail | Status::Error | Status::Incomplete
-            ) && !self.evaluation
-            {
+            ) {
                 continue;
             }
-            let label = result.example.as_deref().unwrap_or(&result.path);
-            let fallback = if self.evaluation {
-                "example did not match its expectation"
-            } else {
-                "file evidence supports a violation"
-            };
             writeln!(
                 out,
-                "  {label}: {}",
-                result.reason.as_deref().unwrap_or(fallback)
+                "  {}: {}",
+                result.path,
+                result
+                    .reason
+                    .as_deref()
+                    .unwrap_or("file evidence supports a violation")
             )?;
-            if let Some(expected) = result.expected {
-                writeln!(
-                    out,
-                    "    expected {} · received {}",
-                    status_name(Status::from(expected)),
-                    status_name(result.status)
-                )?;
-            }
         }
         Ok(())
     }

@@ -309,8 +309,8 @@ dependencies = [
 
 [[package]]
 name = "ev-grep-core"
-version = "0.4.0"
-source = "git+https://github.com/macromackie/ev-grep?rev=355bd9256fe787fc6b8bea238438a5b21f9a2e99#355bd9256fe787fc6b8bea238438a5b21f9a2e99"
+version = "0.4.3"
+source = "git+https://github.com/macromackie/ev-grep?rev=9d2ae6da7cfad86249449571225ce9a75639ef70#9d2ae6da7cfad86249449571225ce9a75639ef70"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -321,14 +321,18 @@ dependencies = [
 
 [[package]]
 name = "ev-grep-jev"
-version = "0.4.0"
-source = "git+https://github.com/macromackie/ev-grep?rev=355bd9256fe787fc6b8bea238438a5b21f9a2e99#355bd9256fe787fc6b8bea238438a5b21f9a2e99"
+version = "0.4.3"
+source = "git+https://github.com/macromackie/ev-grep?rev=9d2ae6da7cfad86249449571225ce9a75639ef70#9d2ae6da7cfad86249449571225ce9a75639ef70"
 dependencies = [
  "anyhow",
  "ev-grep-core",
+ "fastrand",
+ "futures-util",
+ "httpdate",
  "reqwest",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -496,6 +500,12 @@ name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
+
+[[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "hyper"
@@ -1109,15 +1119,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_spanned"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
-dependencies = [
- "serde_core",
-]
-
-[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1250,41 +1251,34 @@ dependencies = [
 
 [[package]]
 name = "tenet"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "annotate-snippets",
  "anyhow",
- "blake3",
  "clap",
  "console",
- "ev-grep-core",
  "ev-grep-jev",
- "serde",
  "serde_json",
  "tempfile",
  "tenet-contracts",
  "tenet-engine",
  "tokio",
- "toml",
 ]
 
 [[package]]
 name = "tenet-contracts"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "blake3",
  "pulldown-cmark",
  "serde",
- "serde_json",
  "serde_yaml",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
 name = "tenet-engine"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1371,45 +1365,6 @@ dependencies = [
  "rustls",
  "tokio",
 ]
-
-[[package]]
-name = "toml"
-version = "0.9.12+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
-dependencies = [
- "indexmap",
- "serde_core",
- "serde_spanned",
- "toml_datetime",
- "toml_parser",
- "toml_writer",
- "winnow 0.7.15",
-]
-
-[[package]]
-name = "toml_datetime"
-version = "0.7.5+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
-dependencies = [
- "serde_core",
-]
-
-[[package]]
-name = "toml_parser"
-version = "1.1.3+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
-dependencies = [
- "winnow 1.0.4",
-]
-
-[[package]]
-name = "toml_writer"
-version = "1.1.2+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "tower"
@@ -1741,18 +1696,6 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
-
-[[package]]
-name = "winnow"
-version = "0.7.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
-
-[[package]]
-name = "winnow"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 
 [[package]]
 name = "writeable"

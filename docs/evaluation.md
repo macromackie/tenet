@@ -1,107 +1,25 @@
 # Evaluation
 
-`check` assesses code. `eval` compares Tenet's answers with expectations you wrote.
-A correctly detected violation makes an evaluation match.
-
-## Repository fixtures
-
-```text
-fixtures/cache/
-  .contracts/001-cache-values/CONTRACT.md
-  base/src/cache.ts
-  patches/broken-cache-hit.patch
-  eval.toml
-```
-
-```toml
-[[cases]]
-name = "baseline"
-
-[cases.expect]
-cache-values = "verified"
-
-[[cases]]
-name = "broken-cache-hit"
-patch = "patches/broken-cache-hit.patch"
-
-[cases.expect]
-cache-values = "failed"
-```
-
-Save the TOML above as `fixtures/cache/eval.toml`. The contract and base files are ordinary project files; create the patch with `git diff`.
+Try a contract against code that follows it, then make a small change that breaks it.
 
 ```sh
-tenet eval fixtures/cache --validate
-tenet eval fixtures/cache
-tenet eval fixtures/cache --case broken-cache-hit
-tenet eval fixtures
+tenet check --snapshot fixtures/cache/project
+tenet check --snapshot fixtures/cache/project --patch fixtures/cache/patches/broken-hit.patch
 ```
 
-Each case checks a fresh copy of `base/` with its sibling `.contracts/`. Without a patch, it runs a full check.
-With a patch, it runs a diff check assuming the base satisfies the contracts. Patches never accumulate.
-Expected answers stay outside the repository sent to the model.
+The first command checks the whole project. The second assumes the original project satisfied the
+contracts and checks whether the patch breaks them. Each run uses an isolated copy.
 
-Name every selected contract in `expect`. Set `contract = "cache-values"` on a case to check just that contract.
-Full checks expect `verified`, `failed`, or `unresolved`. Diff checks expect `preserved`, `unaffected`, `failed`, or `unresolved`.
-Use `--contract NAME` to narrow a run further.
+Keep `.contracts` inside the project. Use ordinary code examples in the contract to explain the rule;
+they are documentation, not a separate test language.
 
-Cases default to `split = "development"`. Mark held-out cases with `split = "heldout"` and run them with
-`--split heldout`; `--split all` runs both. `--validate` checks the selected cases and applies their patches without model calls.
+To evaluate an agent workflow, have the agent review the project with its ordinary tools and Tenet. Grade the final
+review against the code and a separate rubric. Keep grading instructions outside the agent's checkout.
 
-## Results
+Compare a plain review with one that receives contracts and Tenet. Use the same model and budget, and give each run
+fresh history. This measures the combined effect of contracts and tools; it does not isolate the CLI's contribution.
+Include allowed changes, violations, missing context, and requirements spanning several files.
 
-Illustrative output:
-
-```text
- ✓ cache/baseline (1/1 expectations matched) 0.8s
- ? cache/broken-cache-hit (0/1 expectations matched) 0.6s
-
- cache/broken-cache-hit
-   cache-values: expected failed, received unresolved
-
- Cases         1 matched | 1 mismatched | 0 errors (2)
- Expectations  1 matched | 1 mismatched
-```
-
-Mismatches exit 0 by default. Add `--strict` to exit 1 when any expectation differs.
-Execution errors exit nonzero and never count as matches. Unresolved is a match only when it was expected.
-
-```sh
-tenet eval fixtures --strict --output results/run.jsonl
-tenet eval fixtures --json
-```
-
-Fixture runs save a JSONL report under `.tenet/evals/` unless `--output` names another file.
-Reports include expected and actual conclusions, model and fixture identities, and intermediate engine events.
-`--json` also streams these records to stdout. Existing report files are not overwritten.
-
-Cases run in order; file checks use `--jobs`. `--max-requests` limits the entire fixture run.
-Provider and model options are the same as `check`.
-
-## Inline examples
-
-Small examples inside contracts remain useful for testing individual file judgments:
-
-```sh
-tenet eval --contract database-failures
-tenet eval --contract database-failures --strict
-```
-
-Without a fixture path, `eval` runs inline examples through relevance and verification.
-It does not perform repository assessment. Regular examples use full-mode file judgments;
-`tenet:change` examples use diff-mode file judgments. Expected labels never enter the prompt.
-
-Keep direct violations, allowed exceptions, unrelated code, and missing context in the fixture set.
-Do not change an expectation just to match a model response.
-
-Evaluation makes live provider calls. Ordinary Rust tests run offline with a deterministic evaluator.
-Passing software tests verifies program behavior; it does not establish model accuracy.
-
-## Architecture requirements
-
-Use repository fixtures when an example needs several files: a route and its ownership query, a transaction and its
-effects, or an entry point and its consumers. Pair a working baseline with a patch that breaks one requirement.
-Add `context = ["src/query.ts"]` to a fixture case to test a reviewer-supplied helper in diff mode.
-
-Keep bug families together when dividing development and held-out cases. Count wrong favorable answers separately
-from unresolved results. A confidence score is useful for routing review attention; this small corpus does not calibrate it.
+Score missed defects, invented findings, useful explanations, and appropriate uncertainty. Track project-specific
+rules separately from general correctness. Save tool traces to understand why the agent missed something.
+A model grade helps compare runs; it does not prove correctness. Keep the judge and rubric fixed when comparing changes.

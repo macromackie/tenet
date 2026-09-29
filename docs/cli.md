@@ -3,7 +3,6 @@
 ```sh
 tenet check
 tenet check --base origin/main
-tenet eval
 tenet validate
 tenet contracts list [--for PATH] [--base REF] [--json]
 tenet contracts view NAME
@@ -31,7 +30,7 @@ tenet check --base HEAD --dry-run --json
 
 Assume the base satisfies the selected contracts, then assess whether the change preserves them. `--base REF` compares that exact commit with the working tree, including staged, unstaged, and untracked files. It does not choose a merge base automatically.
 
-Each input includes before/after contents and the change kind. Deletions and renames are checked too. An unrelated change can leave a contract unaffected; relevant changes need evidence of preservation.
+Relevance checks compare before/after contents, including deletions and renames. Violation checks then assess current code. The final repository assessment combines current source and the file inventory. An unrelated change can leave a contract unaffected; relevant changes need evidence of preservation.
 The caller owns establishing the baseline and running full checks when contracts change. Tenet does not silently switch modes.
 
 `contracts list --base REF --json` returns the containing contract scopes in evaluation order, plus changed contract paths.
@@ -71,13 +70,3 @@ Tracked changes to ordinary files are assessed even if current ignore rules hide
 
 Symlinks are not followed. Selected symlinks, binary files, unreadable inputs, and oversized inputs do not count as passing checks.
 There is no configuration file, baseline database, generated verifier, or automatic fixer.
-
-## Fixture evaluations
-
-```sh
-tenet eval fixtures/cache --validate
-tenet eval fixtures/cache --case broken-cache-hit
-tenet eval fixtures --split all --strict
-```
-
-See [Evaluation](evaluation.md) for the fixture format and saved reports.
