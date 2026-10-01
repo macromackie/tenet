@@ -6,13 +6,13 @@ pub(crate) fn query(stage: Stage, mode: Mode) -> String {
             "Could this change affect the contract? Assume the base satisfied it. Match means potentially affected, not broken. No match means clearly unaffected. Changes to indentation, block membership, execution order, deletions, and paths can affect behavior even when calls are unchanged."
         }
         (Mode::Full, Stage::Applicability) => {
-            "Does this file implement or configure behavior governed by the contract? Match means potentially relevant, not broken. No match means unrelated. A related name or general-purpose helper alone does not establish that a scoped feature exists."
+            "Does the contract govern this file? Use the contract's stated scope; a contract may govern code, configuration, tests, or documentation. Match means potentially relevant, not broken. No match means clearly outside that scope. A related name or general-purpose helper alone does not establish that a scoped feature exists."
         }
         (Mode::Diff, _) => {
-            "Does the current code violate an applicable rule in the contract? Assess the change against a compliant baseline. Use before/after and paths to understand the change; judge the resulting code, not removed violations. The files field is the resulting state; null contents means the file was deleted. Match means a violation, no_match means the applicable rules hold."
+            "Does the current content violate an applicable rule in the contract? Assess the change against a compliant baseline. Use the change's before contents, patch, and paths to understand it; judge the resulting contents in files, not removed violations. Null contents in files means the file was deleted. Match means a violation, no_match means the applicable rules hold."
         }
         (Mode::Full, _) => {
-            "Does the resulting code violate the contract? Match means a supported violation. No match means the code satisfies the applicable requirements, including when a conditional rule has no applicable implementation. There is no baseline compliance assumption."
+            "Does the resulting file violate the contract? Match means a supported violation. No match means the file satisfies the applicable requirements, including when a conditional rule has no applicable implementation. There is no baseline compliance assumption."
         }
     };
     let mut query = format!(
@@ -20,7 +20,7 @@ pub(crate) fn query(stage: Stage, mode: Mode) -> String {
     );
     if stage != Stage::Applicability {
         query.push_str(
-            "\nFollow actual control flow, including indentation, block exit, and failure paths. Use dependency semantics stated in the contract.",
+            "\nFor code, follow actual control flow, including indentation, block exit, and failure paths. Use dependency semantics stated in the contract.",
         );
     }
     if stage == Stage::Completeness {

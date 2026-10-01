@@ -51,6 +51,13 @@ Numbers have at least three digits, start at 001, and are unique within a scope.
 
 Use `Rules` and `Checks` for ordinary contracts. Other headings are welcome; Tenet reads the whole body,
 including rationale, exceptions, and ordinary code examples. Keep these inline where possible.
+
+A contract can govern code, configuration, tests, or documentation. State its scope in the body, such as
+"Markdown notes under `docs/`", and Tenet judges each file in that scope against the contract.
+
+Give each contract one concern. Tenet asks one question about the whole contract per file, so a single clause in a
+long contract can be missed. Move a mechanical requirement, such as a required metadata field or an import rule, into a
+project script and name that script under `Checks`.
 Legacy tagged evaluation fences are withheld from the model.
 
 Commands under `Checks` are instructions for the reviewer. Include the working directory and use project-owned scripts.
@@ -60,8 +67,8 @@ keep required context in the contract or supply repository files with `check --c
 ## Scope
 
 A `.contracts` directory covers files beneath its parent directory.
-Root contracts run first, followed by deeper scopes. Contracts within each scope run in numeric order.
-Each contract finishes before the next starts; file checks within a contract run concurrently.
+Root contracts come first, followed by deeper scopes, and contracts within each scope follow numeric order.
+Independent checks may run concurrently; results are reported in that order.
 Numbers do not override contradictory requirements.
 
 ```sh

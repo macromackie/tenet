@@ -67,3 +67,18 @@ Tenet reports `unresolved` with `conflicting_files`. The reviewer decides whethe
 
 Request metadata includes attempts, hedges, elapsed time, and available usage. Recovered transport failures do not
 change the meaning of a model answer. Unresolved assessments remain guidance; execution errors remain errors.
+
+## Agent skill
+
+Download the [tenet skill](https://tenet-contracts.com/skill.md) into your agent's project skill directory. For agents that read `.agents/skills`:
+
+```sh
+mkdir -p .agents/skills/tenet
+curl -fsSL https://tenet-contracts.com/skill.md -o .agents/skills/tenet/SKILL.md
+```
+
+Inspect the downloaded instructions before adopting them. The skill covers input selection, interpreting results,
+and investigating findings. It also describes a focused curation loop for authorized code and contract changes.
+Local code-curation and architecture-curation skills can supply project conventions; they are optional.
+
+For code and contract maintenance workflows, see [Guidance](./guidance.md).

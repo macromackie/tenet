@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.5
+
+- Judge each file against the contract's stated scope, which may cover code, configuration, tests, or documentation.
+  Notes that describe a product no longer fall outside a documentation contract.
+- Send each resulting file to the model once. File-level inputs are 13–38% smaller on the evaluation fixtures.
+- Use ev-grep 0.4.4, which retries a model response that fails validation, such as probabilities that do not sum to
+  one, instead of ending the check with an execution error.
+- Stop parsing `## Applies to` separately. The model reads it with the rest of the contract, and an empty section
+  no longer fails validation.
+- Document optional agent guidance, targeted questions with ast-grep and ev-grep, run-to-run variation, one concern
+  per contract, and a JSONL gate that also fails on unresolved contracts.
+
 ## v0.4.4
 
 - Ask relevance and violation questions together, with shared before/after context.

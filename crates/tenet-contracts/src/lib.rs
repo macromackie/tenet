@@ -18,7 +18,6 @@ pub struct Contract {
     pub scope: PathBuf,
     pub rules: String,
     pub body: String,
-    pub applies_to: Option<String>,
     pub rules_line: usize,
     pub rules_span: Range<usize>,
     pub hash: String,

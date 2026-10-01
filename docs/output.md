@@ -55,6 +55,12 @@ The summary includes file counts, contract counts, request count, and exit code.
 | 130 | Cancelled |
 
 Unresolved contracts do not fail a check. They remain unresolved in the report; exit code 0 does not mean every contract was verified.
+To also fail when any contract is unresolved, read the JSONL summary. The pipe hides Tenet's own exit status, so
+check it there too:
+
+```sh
+tenet check --json | jq -e 'select(.type == "summary") | .exit_code == 0 and .summary.contracts_unresolved == 0'
+```
 Execution errors and incomplete file checks still exit nonzero and take precedence over contract failures. Findings remain available in all cases.
 
 File diagnostics highlight the contract requirement; Tenet does not invent an exact source span for a file-level judgment. The reviewing agent locates actionable code.

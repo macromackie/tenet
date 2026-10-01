@@ -27,6 +27,8 @@ pub struct Change {
     pub kind: ChangeKind,
     pub patch: String,
     pub before: Option<String>,
+    /// Sent once, as the resulting file in model inputs.
+    #[serde(skip_serializing)]
     pub after: Option<String>,
 }
 
@@ -55,7 +57,10 @@ impl Change {
     }
 
     pub(crate) fn source(&self) -> Result<Source> {
-        let text = serde_json::to_string(self)?;
+        let text = serde_json::to_string(&serde_json::json!({
+            "change": self,
+            "file": self.current_input(),
+        }))?;
         ensure!(
             text.len() <= MAX_FILE_BYTES,
             "before/after input exceeds 64 KiB; input was not truncated"

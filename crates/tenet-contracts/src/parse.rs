@@ -102,14 +102,6 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
         .unwrap_or(offset..document.len());
     let rules = document[rules_span.clone()].trim().to_owned();
     ensure!(!markdown.body.is_empty(), "contract body must not be empty");
-    let applies_to = markdown
-        .sections
-        .get("Applies to")
-        .map(|r| document[r.clone()].trim().to_owned());
-    ensure!(
-        applies_to.as_ref().is_none_or(|s| !s.is_empty()),
-        "## Applies to must not be empty"
-    );
     let rules_start = rules_span.start + document[rules_span.clone()].len()
         - document[rules_span.clone()].trim_start().len();
     let rules_end = rules_start + rules.len();
@@ -121,7 +113,6 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
         scope: parent.parent().context("missing scope")?.to_owned(),
         rules,
         body: markdown.body,
-        applies_to,
         rules_line: document[..rules_start]
             .bytes()
             .filter(|b| *b == b'\n')

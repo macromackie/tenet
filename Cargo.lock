@@ -309,8 +309,8 @@ dependencies = [
 
 [[package]]
 name = "ev-grep-core"
-version = "0.4.3"
-source = "git+https://github.com/macromackie/ev-grep?rev=9d2ae6da7cfad86249449571225ce9a75639ef70#9d2ae6da7cfad86249449571225ce9a75639ef70"
+version = "0.4.4"
+source = "git+https://github.com/macromackie/ev-grep?rev=8efd07132f04ef738143148ab64930e6c8f05a3d#8efd07132f04ef738143148ab64930e6c8f05a3d"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -321,8 +321,8 @@ dependencies = [
 
 [[package]]
 name = "ev-grep-jev"
-version = "0.4.3"
-source = "git+https://github.com/macromackie/ev-grep?rev=9d2ae6da7cfad86249449571225ce9a75639ef70#9d2ae6da7cfad86249449571225ce9a75639ef70"
+version = "0.4.4"
+source = "git+https://github.com/macromackie/ev-grep?rev=8efd07132f04ef738143148ab64930e6c8f05a3d#8efd07132f04ef738143148ab64930e6c8f05a3d"
 dependencies = [
  "anyhow",
  "ev-grep-core",
@@ -1251,7 +1251,7 @@ dependencies = [
 
 [[package]]
 name = "tenet"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "annotate-snippets",
  "anyhow",
@@ -1267,7 +1267,7 @@ dependencies = [
 
 [[package]]
 name = "tenet-contracts"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1278,7 +1278,7 @@ dependencies = [
 
 [[package]]
 name = "tenet-engine"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "anyhow",
  "blake3",
