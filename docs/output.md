@@ -31,15 +31,28 @@ Each event has `version: 2` and a `type`. The `begin` event records `full` or `d
 
 `result` contains file evidence: mode, change kind, previous path for renames, before/after hashes, contract hash, judgments, and timing. `source_hash` identifies the complete encoded change input.
 
-`contract_finished` includes a small `conclusion`:
+`contract_finished` includes a `conclusion`:
 
 ```json
-{"assessment": "preserved", "confidence": 0.7}
+{
+  "assessment": "unresolved",
+  "confidence": null,
+  "reason": "Only selected paths were checked; contract-wide coverage is incomplete.",
+  "request": null
+}
 ```
 
 Confidence is the model's score for its selected answer, not a measured probability that the contract holds.
 A low score does not change the answer to unresolved. An explicit uncertain answer does. When there is no final
 model assessment, confidence is null. Errors add an `error` field.
+
+`reason` explains the conclusion, including selected-path coverage, unavailable context, model uncertainty, and
+conflicting judgments. When a repository assessment ran, `model_assessment` preserves its answer and probabilities,
+and `evidence_hash` identifies its encoded input without printing source. `conflicting_files` lists file failures
+that contradict a favorable repository answer. Those disagreements remain unresolved.
+
+These diagnostic fields are additive within JSONL version 2. Consumers should retain useful diagnostics and ignore
+unknown fields. A reason describes the evidence limit; it does not turn an unresolved assessment into a pass.
 
 Other events include `contract_started`, `check_started`, `stage_started`, `stage_completed`, `summary`, and `error`. Stages are `applicability`, `verification`, and `completeness`.
 The summary includes file counts, contract counts, request count, and exit code. Source contents and credentials are not printed.

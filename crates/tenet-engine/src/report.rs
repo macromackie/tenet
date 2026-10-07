@@ -195,11 +195,10 @@ pub struct ContractResult {
     #[serde(rename = "assessment")]
     pub status: ContractStatus,
     pub confidence: Option<f64>,
-    #[serde(skip)]
     pub reason: String,
-    #[serde(skip)]
+    #[serde(rename = "model_assessment", skip_serializing_if = "Option::is_none")]
     pub assessment: Option<ev_grep_core::Assessment>,
-    #[serde(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,

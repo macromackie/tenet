@@ -3,7 +3,10 @@
 File judgments receive the contract plus a record containing the path, change kind, patch, and prior contents, with the resulting file supplied once.
 Full checks use additions from an empty starting point. Diff checks assume the base satisfies the selected contracts.
 
-Contract assessment receives the scoped file inventory, current source contents, change records, and file judgments. It can detect missing required files and inspect cross-file requirements when the context fits.
+Contract assessment receives the scoped file inventory, relevant current source, explicit context, and changed-file
+paths and kinds. Prior contents and patches are supplied to file checks, not the final repository assessment.
+It can detect missing required files and inspect cross-file requirements when the context fits. File judgments determine relevance; conflicting file failures
+remain visible after the repository assessment.
 It does not retrieve external dependencies, execute the commands written in contracts, or run an agent investigation.
 
 Each source file and encoded change or repository context is limited to 64 KiB. Queries are limited to 8 KiB, encoded provider requests to 96 KiB, and responses to 64 KiB.

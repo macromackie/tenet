@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.6
+
+- Include conclusion reasons, raw model assessments, and evidence hashes in JSONL. Consumers can distinguish
+  limited coverage, missing context, model uncertainty, and conflicting judgments without losing the original answer.
+- Explain how to investigate unresolved results and preserve reports when supplying related context.
+
 ## v0.4.5
 
 - Judge each file against the contract's stated scope, which may cover code, configuration, tests, or documentation.
