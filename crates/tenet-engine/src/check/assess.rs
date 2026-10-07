@@ -32,6 +32,7 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
         contract_hash: contract.hash.clone(),
         path: path.display().to_string(),
         source_hash: None,
+        input_bytes: None,
         status: Status::Error,
         message: contract.message.clone(),
         reason: None,
@@ -78,6 +79,8 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
     change: &crate::Change,
     result: &mut CheckResult,
 ) -> Result<()> {
+    let state = context.plan.file_input(context.contract, change)?;
+    result.input_bytes = Some(serde_json::to_vec(&state)?.len());
     if context.requests.get() >= context.max_requests {
         result.status = Status::Incomplete;
         result.reason = Some("request budget exhausted".into());
@@ -90,12 +93,6 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
         path: result.path.clone(),
         stage: Stage::Applicability,
     })?;
-    let state = serde_json::json!({
-        "contract": context.contract.body,
-        "change": change,
-        "files": [change.current_input()],
-        "context": context.plan.context.iter().map(crate::Change::current_input).collect::<Vec<_>>(),
-    });
     let relevance = super::prompt::query(Stage::Applicability, result.mode);
     let violation = super::prompt::query(Stage::Verification, result.mode);
     let mut batch = context

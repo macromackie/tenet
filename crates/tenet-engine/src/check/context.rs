@@ -1,7 +1,7 @@
 use super::conclusion::Completion;
+use crate::change::check_size;
 use crate::{Mode, Status};
-use anyhow::{Result, ensure};
-use ev_grep_core::MAX_FILE_BYTES;
+use anyhow::Result;
 
 impl Completion<'_> {
     pub(super) fn evidence(&self) -> Result<serde_json::Value> {
@@ -54,10 +54,7 @@ impl Completion<'_> {
             if required {
                 let content = crate::change::text(&self.plan.root, path)?;
                 required_bytes += content.len();
-                ensure!(
-                    required_bytes <= MAX_FILE_BYTES,
-                    "required source exceeds 64 KiB"
-                );
+                check_size("required source", required_bytes)?;
                 files.push(serde_json::json!({"path": path, "contents": content}));
             } else {
                 optional.push(*path);
@@ -80,10 +77,10 @@ impl Completion<'_> {
             "changes": changes,
             "omitted_source": optional,
         });
-        ensure!(
-            serde_json::to_vec(&state)?.len() <= MAX_FILE_BYTES,
-            "required repository context exceeds 64 KiB; context was not truncated"
-        );
+        check_size(
+            "required repository context",
+            serde_json::to_vec(&state)?.len(),
+        )?;
         Ok(state)
     }
 }

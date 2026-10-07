@@ -31,6 +31,7 @@ pub struct CheckResult {
     pub contract_hash: String,
     pub path: String,
     pub source_hash: Option<String>,
+    pub input_bytes: Option<usize>,
     pub status: Status,
     pub message: String,
     pub reason: Option<String>,
@@ -196,6 +197,9 @@ pub struct ContractResult {
     pub status: ContractStatus,
     pub confidence: Option<f64>,
     pub reason: String,
+    pub reason_code: ConclusionReason,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextSummary>,
     #[serde(rename = "model_assessment", skip_serializing_if = "Option::is_none")]
     pub assessment: Option<ev_grep_core::Assessment>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -205,6 +209,30 @@ pub struct ContractResult {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub conflicting_files: Vec<String>,
     pub request: Option<ev_grep_core::RequestInfo>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConclusionReason {
+    FileChecksIncomplete,
+    PartialScope,
+    NoRelevantChanges,
+    RequestBudget,
+    ContextTooLarge,
+    ContextUnavailable,
+    AssessmentFailed,
+    Violation,
+    Compliance,
+    ModelUncertain,
+    ConflictingAssessments,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContextSummary {
+    pub input_bytes: usize,
+    pub limit_bytes: usize,
+    pub included_files: usize,
+    pub omitted_files: Vec<std::path::PathBuf>,
 }
 
 impl Summary {

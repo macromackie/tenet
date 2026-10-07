@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.7
+
+- Validate complete file inputs during credential-free dry runs and before counting model requests. Oversized inputs report byte limits without truncating source.
+- Add structured conclusion reasons and repository context sizes and omitted paths to JSONL reports, including provider failures.
+- Clarify how reviewers combine targeted behavioral search, related implementations, and deterministic checks. Model questions and judgment policy are unchanged.
+
 ## v0.4.6
 
 - Include conclusion reasons, raw model assessments, and evidence hashes in JSONL. Consumers can distinguish

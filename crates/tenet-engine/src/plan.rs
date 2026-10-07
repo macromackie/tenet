@@ -12,6 +12,21 @@ use crate::{
 };
 
 impl Plan {
+    pub fn file_input(
+        &self,
+        contract: &tenet_contracts::Contract,
+        change: &crate::Change,
+    ) -> Result<serde_json::Value> {
+        let state = serde_json::json!({
+            "contract": contract.body,
+            "change": change,
+            "files": [change.current_input()],
+            "context": self.context.iter().map(crate::Change::current_input).collect::<Vec<_>>(),
+        });
+        crate::change::check_size("complete file input", serde_json::to_vec(&state)?.len())?;
+        Ok(state)
+    }
+
     pub fn with_context(mut self, paths: &[PathBuf]) -> Result<Self> {
         let mut seen = BTreeSet::new();
         for path in paths {

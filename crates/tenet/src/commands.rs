@@ -111,6 +111,7 @@ async fn evaluate(
     };
     let reporter = RefCell::new(Reporter::new(kind, &plan.contracts));
     if dry {
+        let mut errors = 0;
         for c in &plan.contracts {
             for path in plan.files.iter().filter(|p| {
                 p.starts_with(&c.scope)
@@ -119,14 +120,27 @@ async fn evaluate(
                         .get(*p)
                         .is_some_and(|old| old.starts_with(&c.scope))
             }) {
+                let input = plan
+                    .change(path)
+                    .and_then(|change| plan.file_input(c, &change));
+                let (input_bytes, error) = match input {
+                    Ok(state) => (Some(serde_json::to_vec(&state)?.len()), None),
+                    Err(error) => {
+                        errors += 1;
+                        (None, Some(error.to_string()))
+                    }
+                };
                 if kind == ReporterKind::Jsonl {
                     writeln!(
                         io::stdout(),
                         "{}",
-                        serde_json::json!({"version":2,"type":"selected","contract":c.name,"path":path,"contract_hash":c.hash})
+                        serde_json::json!({"version":2,"type":"selected","contract":c.name,"path":path,"contract_hash":c.hash,"input_bytes":input_bytes,"input_limit_bytes":tenet_engine::MAX_FILE_BYTES,"error":error})
                     )?;
                 } else {
                     writeln!(io::stdout(), "{}  {}", c.name, path.display())?;
+                    if let Some(error) = error {
+                        writeln!(io::stderr(), "  {error}")?;
+                    }
                 }
             }
         }
@@ -134,10 +148,10 @@ async fn evaluate(
             writeln!(
                 io::stdout(),
                 "{}",
-                serde_json::json!({"version":2,"type":"summary","dry_run":true,"files":plan.files.len(),"mode":plan.mode,"assume_base_valid":plan.mode == Mode::Diff,"partial":plan.partial,"deleted":plan.deleted})
+                serde_json::json!({"version":2,"type":"summary","dry_run":true,"files":plan.files.len(),"mode":plan.mode,"assume_base_valid":plan.mode == Mode::Diff,"partial":plan.partial,"deleted":plan.deleted,"errors":errors,"exit_code":if errors > 0 { 2 } else { 0 }})
             )?;
         }
-        return Ok(0);
+        return Ok(if errors > 0 { 2 } else { 0 });
     }
     let model = run.provider.model(run.model.as_deref())?;
     let key = std::env::var(run.provider.key_variable()).with_context(|| {

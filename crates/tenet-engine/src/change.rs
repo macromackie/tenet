@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use ev_grep_core::{MAX_FILE_BYTES, Source, SourceRead};
 use serde::Serialize;
 
@@ -61,10 +61,7 @@ impl Change {
             "change": self,
             "file": self.current_input(),
         }))?;
-        ensure!(
-            text.len() <= MAX_FILE_BYTES,
-            "before/after input exceeds 64 KiB; input was not truncated"
-        );
+        check_size("before/after input", text.len())?;
         Ok(Source {
             path: self.path.display().to_string(),
             text,
@@ -78,6 +75,31 @@ impl Change {
             "contents": self.after,
         })
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct InputLimit {
+    label: &'static str,
+    bytes: usize,
+}
+
+impl std::fmt::Display for InputLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} is {} bytes; limit is {} bytes; input was not truncated",
+            self.label, self.bytes, MAX_FILE_BYTES
+        )
+    }
+}
+
+impl std::error::Error for InputLimit {}
+
+pub(crate) fn check_size(label: &'static str, bytes: usize) -> Result<()> {
+    if bytes > MAX_FILE_BYTES {
+        return Err(InputLimit { label, bytes }.into());
+    }
+    Ok(())
 }
 
 pub(crate) fn text(root: &Path, path: &Path) -> Result<String> {

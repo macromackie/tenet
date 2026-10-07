@@ -29,7 +29,7 @@ The verbose reporter shows uncertain file judgments as `UNRESOLVED`. A repositor
 
 Each event has `version: 2` and a `type`. The `begin` event records `full` or `diff` mode, provider/model, root, base and HEAD when available, and the baseline assumption. Snapshot runs include the original snapshot path and patch hash.
 
-`result` contains file evidence: mode, change kind, previous path for renames, before/after hashes, contract hash, judgments, and timing. `source_hash` identifies the complete encoded change input.
+`result` contains file evidence: mode, change kind, previous path for renames, before/after hashes, contract hash, judgments, and timing. `source_hash` identifies the complete encoded change input. `input_bytes` measures the encoded state including contract and explicit context, before provider instructions and question wrappers; it is not a token count.
 
 `contract_finished` includes a `conclusion`:
 
@@ -38,6 +38,7 @@ Each event has `version: 2` and a `type`. The `begin` event records `full` or `d
   "assessment": "unresolved",
   "confidence": null,
   "reason": "Only selected paths were checked; contract-wide coverage is incomplete.",
+  "reason_code": "partial_scope",
   "request": null
 }
 ```
@@ -50,6 +51,26 @@ model assessment, confidence is null. Errors add an `error` field.
 conflicting judgments. When a repository assessment ran, `model_assessment` preserves its answer and probabilities,
 and `evidence_hash` identifies its encoded input without printing source. `conflicting_files` lists file failures
 that contradict a favorable repository answer. Those disagreements remain unresolved.
+
+`reason_code` supports routing without parsing prose:
+
+| Code | Next step |
+| --- | --- |
+| `file_checks_incomplete` | Inspect file errors or incomplete results |
+| `partial_scope` | Review the remaining scope |
+| `no_relevant_changes` | Retain the compliant-base assumption |
+| `request_budget` | Account for unassessed work before increasing the budget |
+| `context_too_large` | Use bounded evidence and manual review; do not silently omit required source |
+| `context_unavailable` | Inspect the source-read error |
+| `assessment_failed` | Inspect the provider error |
+| `model_uncertain` | Investigate missing evidence and the raw assessment |
+| `conflicting_assessments` | Trace the flagged files against the combined evidence |
+| `violation` / `compliance` | Review the model's conclusion and evidence |
+
+When repository context was assembled, `context` reports `input_bytes`, `limit_bytes`, `included_files`, and
+`omitted_files` (paths only). These describe the supplied state, not proof that it contains every necessary implementation.
+The same diagnostics and evidence hash remain available if the provider fails. Oversize reasons give measured bytes;
+the required-source subtotal can exceed the limit before the complete state is assembled.
 
 These diagnostic fields are additive within JSONL version 2. Consumers should retain useful diagnostics and ignore
 unknown fields. A reason describes the evidence limit; it does not turn an unresolved assessment into a pass.

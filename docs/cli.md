@@ -61,7 +61,10 @@ Without a patch this is a full check. With a patch it is a diff check. `--base` 
 | `--reporter KIND` | default | `default`, `verbose`, or `jsonl` |
 | `--json` | off | Shorthand for JSONL |
 
-`check --dry-run` lists candidate pairs without judging relevance or making model requests. `validate` and `contracts` also work without credentials.
+`check --dry-run` lists candidate pairs and validates each complete file input, including the contract and explicit context,
+without credentials or model requests. JSON records include encoded `input_bytes`, `input_limit_bytes`, and any `error`;
+invalid or oversized inputs exit 2. It does not judge relevance or predict the final repository context, which depends
+on the file assessments. `validate` and `contracts` also work without credentials.
 
 ## Discovery
 
