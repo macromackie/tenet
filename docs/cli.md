@@ -36,7 +36,10 @@ tenet check --base HEAD --dry-run --json
 
 Assume the base satisfies the selected contracts, then assess whether the change preserves them. `--base REF` compares that exact commit with the working tree, including staged, unstaged, and untracked files. It does not choose a merge base automatically.
 
-Relevance checks compare before/after contents, including deletions and renames. Violation checks then assess current code. The final combined assessment receives current source, before contents, patches, and the file inventory. An unrelated change can leave a contract unaffected; relevant changes need evidence of preservation.
+Relevance and violation questions share one request: relevance concerns the before/after change, including deletions
+and renames, while violation concerns the resulting code. The final combined assessment retains all captured selected
+source in the contract scope, regardless of relevance answers, plus before contents, patches, explicit context, and
+the file inventory. An unrelated change can leave a contract unaffected; relevant changes need evidence of preservation.
 The caller owns establishing the baseline and running full checks when contracts change. Tenet does not silently switch modes.
 
 `contracts list --base REF --json` returns the containing contract scopes in evaluation order, plus changed contract paths.
@@ -76,8 +79,8 @@ size limits, and examples of preparing a focused question.
 
 `check --dry-run` lists candidate pairs and validates each complete file input, including the contract and explicit context,
 without credentials or model requests. JSON records include encoded `input_bytes`, `input_limit_bytes`, and any `error`;
-invalid or oversized inputs exit 2. It does not judge relevance or predict the final repository context, which depends
-on the file assessments. `validate` and `contracts` also work without credentials.
+invalid or oversized inputs exit 2. It does not judge relevance or validate the combined assessment input. Individual
+inputs can fit while their combined context exceeds the limit. `validate` and `contracts` also work without credentials.
 
 ## Discovery
 

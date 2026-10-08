@@ -1,7 +1,7 @@
 # Benchmarks
 
 Tenet separates local overhead from live model latency.
-Startup and file discovery can be measured without credentials. Live throughput depends on provider, model, input size, concurrency, and relevance rate.
+Startup and file discovery can be measured without credentials. Live throughput depends on provider, model, input size, and concurrency.
 
 No speed or accuracy claim is published for the rebuilt runner yet.
 Private benchmark runs record command, binary identity, workload size, warmups, and timing samples.

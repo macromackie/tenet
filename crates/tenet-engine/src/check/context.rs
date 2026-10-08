@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use super::conclusion::Completion;
+use crate::Mode;
 use crate::change::check_size;
-use crate::{Mode, Status};
 use anyhow::Result;
 
 impl Completion<'_> {
@@ -25,14 +25,8 @@ impl Completion<'_> {
         let mut included = BTreeSet::new();
         let mut files = Vec::new();
         for change in &changes {
-            let excluded = self.results.iter().any(|result| {
-                result.path == change.path.to_string_lossy()
-                    && result.status == Status::NotApplicable
-            });
-            if !excluded {
-                included.insert(change.path.clone());
-                files.push(change.current_input());
-            }
+            included.insert(change.path.clone());
+            files.push(change.current_input());
         }
         let mut support_files = Vec::new();
         for change in &plan.context {

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.1
+
+- Retain every selected captured source in combined assessments, including files classified as not applicable.
+  Oversized combined inputs remain unresolved instead of dropping source to fit the request limit.
+- Preserve a routed file violation when its relevance answer disagrees. A contrary combined no-violation answer
+  reports unresolved with the conflicting files; both raw answers remain visible.
+- Existing prompts, confidence policy, requested scopes, and input limits are unchanged.
+
 ## v0.6.0
 
 - Export review inputs offline with `tenet evidence`: complete contracts, captured before/after source, content hashes,

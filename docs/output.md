@@ -25,6 +25,10 @@ A full check cannot conclude unaffected or preserved. A diff check cannot newly 
 These are model judgments, not formal proofs. No findings alone is insufficient for verification.
 
 File results remain `pass`, `fail`, `not_applicable`, `uncertain`, `error`, or `incomplete`.
+After confidence routing, a violation `match` produces `fail` even when relevance says `no_match`. Otherwise, relevance `no_match`
+produces `not_applicable`; that status retains the source for the combined assessment. For other relevance outcomes,
+violation `no_match` produces `pass` and uncertain violation produces `uncertain`. Raw answers and routing remain visible.
+
 The verbose reporter shows uncertain file judgments as `UNRESOLVED`. A repository assessment can resolve them when combined context supplies the missing evidence; the original file judgments remain in the report. Operational errors and exhausted budgets retain separate counts and exit codes.
 
 ## JSONL
@@ -73,7 +77,9 @@ that contradict a favorable repository answer. Those disagreements remain unreso
 | `violation` / `compliance` | Review the model's conclusion and evidence |
 
 When combined context was assembled, `context` reports `input_bytes`, `limit_bytes`, `included_files`,
-`selected_files`, `support_files`, and `omitted_files` (paths only). These describe the supplied state, not proof that it contains every necessary implementation.
+`selected_files`, `support_files`, and `omitted_files` (paths only). All captured selected source in the contract scope
+is retained regardless of relevance answers. Omitted paths come from inventory outside the supplied source. These
+fields describe the supplied state, not proof that it contains every necessary implementation.
 The same diagnostics and evidence hash remain available if the provider fails. Oversize reasons give measured bytes;
 source is never truncated to fit.
 

@@ -138,14 +138,11 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
             outcome: routing.outcome,
         })?;
     }
-    result.status = if applicability_routing.outcome == Outcome::NoMatch {
-        Status::NotApplicable
-    } else {
-        match verification_routing.outcome {
-            Outcome::Match => Status::Fail,
-            Outcome::NoMatch => Status::Pass,
-            Outcome::Uncertain => Status::Uncertain,
-        }
+    result.status = match verification_routing.outcome {
+        Outcome::Match => Status::Fail,
+        _ if applicability_routing.outcome == Outcome::NoMatch => Status::NotApplicable,
+        Outcome::NoMatch => Status::Pass,
+        Outcome::Uncertain => Status::Uncertain,
     };
     result.applicability = Some(applicability);
     result.applicability_routing = Some(applicability_routing);

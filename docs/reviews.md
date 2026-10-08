@@ -66,11 +66,14 @@ and trace callers for rules spanning files.
 
 Tenet checks independent contracts concurrently within `--jobs`, then prints their summaries in contract order.
 For each file it asks relevance and violation questions in one Jev request. The request includes the before/after
-change and resulting source. A confident irrelevant answer excludes that file from the contract's evidence.
+change and resulting source. Relevance is a hint for the reviewer's attention; it does not remove selected source
+from the contract's evidence or override a violation routed to `match`.
 
-The final assessment receives relevant selected files, explicit `--context` inputs, and the scoped file inventory.
-Tenet attempts this bounded combined assessment for selected-path checks too.
-It does not fill spare space with unrelated source. If a file check and final assessment disagree about a violation,
+The final assessment receives all captured selected source within the contract scope, explicit `--context` inputs,
+and the scoped file inventory. Tenet attempts this bounded combined assessment for selected-path checks too.
+If the complete input exceeds its limit, the contract remains unresolved. Narrow positional paths or supporting
+context explicitly when appropriate, and account for what the smaller selection leaves unreviewed.
+Tenet does not fill spare space with unrelated source. If a file check and final assessment disagree about a violation,
 Tenet reports `unresolved` with `conflicting_files`. The reviewer decides whether more context or a code change is needed.
 
 Request metadata includes attempts, hedges, elapsed time, and available usage. Recovered transport failures do not

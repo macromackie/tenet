@@ -3,16 +3,17 @@
 File judgments receive the contract plus a record containing the path, change kind, patch, and prior contents, with the resulting file supplied once.
 Full checks use additions from an empty starting point. Diff checks assume the base satisfies the selected contracts.
 
-Combined assessment receives the scoped file inventory, relevant selected source, explicit context, and complete
-selected changes including prior contents and patches. It does not read unselected source automatically.
+Combined assessment receives the scoped file inventory, all captured selected source within the contract scope,
+explicit context, and complete selected changes including prior contents and patches. It does not read unselected source automatically.
 Selected subjects and support files are labeled separately; support files do not expand the requested claim.
-It can detect missing required files and inspect cross-file requirements when the context fits. File judgments determine relevance; conflicting file failures
-remain visible after the repository assessment.
+It can detect missing required files and inspect cross-file requirements when the context fits. Relevance answers
+do not prune selected evidence. Conflicting file failures remain visible after the repository assessment.
 It does not retrieve external dependencies, execute the commands written in contracts, or run an agent investigation.
 
 Each source file and encoded change or repository context for model assessment is limited to 64 KiB. Queries are limited to 8 KiB, encoded provider requests to 96 KiB, and responses to 64 KiB.
 Oversized selected inputs produce errors. Repository context that cannot be supplied completely leaves the contract unresolved. Inputs are never silently truncated.
-Large scopes may therefore need a reviewing agent to complete the assessment.
+Large scopes may therefore need a reviewing agent to complete the assessment. Narrowing positional paths or explicit
+context changes the supplied evidence; record the remaining scope instead of treating a smaller check as full coverage.
 
 Checks, dry runs, and exports also have a fixed 64 MiB aggregate capture limit. It counts serialized contract data
 and original documents, plus distinct source records including paths, patches, and read errors. This bounds the
@@ -30,6 +31,6 @@ Model answers can differ between runs on the same input, especially for borderli
 before treating a change in results as an improvement.
 
 Every answer uses `--min-confidence` (default 0.8). Lower-confidence and explicit uncertain answers route to
-uncertain while their raw choices and probabilities remain visible. Uncertain relevance keeps the file in combined
-evidence; uncertain file judgments may be resolved by a confident combined assessment. The 0.8 floor is a routing
+uncertain while their raw choices and probabilities remain visible. Every relevance outcome retains selected source
+in combined evidence; uncertain file judgments may be resolved by a confident combined assessment. The 0.8 floor is a routing
 policy, not a measured accuracy guarantee. Lowering it changes routing and does not improve the evidence.
