@@ -25,7 +25,7 @@ pub(crate) fn query(stage: Stage, mode: Mode) -> String {
     }
     if stage == Stage::Completeness {
         query.push_str(
-            "\nAssess the whole scoped repository, including missing required files and cross-file behavior. Inventory lists the scoped files; omitted_source lists contents not supplied. Use uncertain if a necessary implementation is omitted or opaque; distinguish that from a feature shown to be absent from complete source.",
+            "\nAssess the requested_scope using all supplied files together. For full_contract, assess the whole contract scope, including missing required files and cross-file behavior. For selected_subjects, assess only violations in selected_files; support_files provide evidence and do not expand the claim. Inventory lists the contract's scoped files; omitted_source lists contents not supplied. An unselected file's violation alone is outside a selected_subjects claim. Use uncertain if a necessary implementation is omitted or opaque; distinguish that from a feature shown to be absent from complete source.",
         );
     }
     query

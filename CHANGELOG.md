@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.5.0
+
+- Assess selected files together with explicit helper context. Per-contract scope recognizes complete nested selections;
+  favorable partial selections report `clear` without claiming full verification.
+- Apply configurable `--min-confidence` (default 0.8) consistently. Preserve raw model answers and separate routing
+  reasons instead of promoting weak answers to file passes or failures.
+- Report unresolved claims through exit 3. Ordinary output includes scope, reasons, and candidate paths. JSONL v3
+  records selected, supporting, and omitted source alongside the combined assessment.
+- Keep combined diff evidence complete with before contents and patches; deduplicate explicit supporting source.
+- Use ev-grep 0.5.0's raw assessment API and content-derived prompt identities.
+
 ## v0.4.7
 
 - Validate complete file inputs during credential-free dry runs and before counting model requests. Oversized inputs report byte limits without truncating source.

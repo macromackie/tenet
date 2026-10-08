@@ -15,6 +15,7 @@ use tokio::sync::Semaphore;
 pub struct Options {
     pub jobs: usize,
     pub max_requests: usize,
+    pub min_confidence: f64,
 }
 
 pub async fn run(
@@ -26,6 +27,10 @@ pub async fn run(
     ensure!(
         (1..=256).contains(&options.jobs) && options.max_requests > 0,
         "jobs must be between 1 and 256 and max-requests must be positive"
+    );
+    ensure!(
+        options.min_confidence.is_finite() && (0.0..=1.0).contains(&options.min_confidence),
+        "min-confidence must be between 0 and 1"
     );
     let started = Instant::now();
     let requests = Cell::new(0);
@@ -96,6 +101,7 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
             emit: self.emit,
             requests: self.requests,
             max_requests: self.options.max_requests,
+            min_confidence: self.options.min_confidence,
             local_requests: &local_requests,
         };
         let mut running = stream::iter(subjects)
@@ -122,6 +128,7 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
             summary: &summary,
             requests: self.requests,
             max_requests: self.options.max_requests,
+            min_confidence: self.options.min_confidence,
             local_requests: &local_requests,
         }
         .assess(self.evaluator, self.emit)

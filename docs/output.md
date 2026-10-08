@@ -1,8 +1,8 @@
 # Output
 
-The default reporter shows progress while files are assessed, then one final result per contract. Unresolved results show only their status; operational errors remain visible. Only failed contracts show requirement snippets and finding details. Interactive terminals show a spinner, file counts, and elapsed time below completed contracts. Failure details follow the results. Redirected output contains no animation.
+The default reporter shows progress while files are assessed, then one final result per contract. Unresolved results show the reason they could not complete. Only failed contracts show requirement snippets and finding details. Interactive terminals show a spinner, file counts, and elapsed time below completed contracts. Failure details follow the results. Redirected output contains no animation.
 
-Use `--reporter verbose` for individual file judgments and unresolved reasons. JSONL retains all intermediate evidence, including uncertainty that a later repository assessment resolves.
+Use `--reporter verbose` for individual file judgments. JSONL retains all intermediate evidence, including uncertainty that a later repository assessment resolves.
 Human reports go to stderr. JSONL goes to stdout.
 
 ```sh
@@ -15,7 +15,8 @@ tenet check --base origin/main --reporter jsonl > report.jsonl
 | --- | --- |
 | verified | Full-check evidence supports compliance |
 | preserved | Relevant changes preserve compliance, assuming a valid base |
-| unaffected | No relevant changes found, assuming a valid base |
+| unaffected | No relevant changes found across all selected contract changes, assuming a valid base |
+| clear | No violation found in the selected subjects; the full contract scope was not verified |
 | failed | Evidence supports a violation |
 | unresolved | The model cannot decide, or required evidence or execution is incomplete |
 
@@ -27,7 +28,7 @@ The verbose reporter shows uncertain file judgments as `UNRESOLVED`. A repositor
 
 ## JSONL
 
-Each event has `version: 2` and a `type`. The `begin` event records `full` or `diff` mode, provider/model, root, base and HEAD when available, and the baseline assumption. Snapshot runs include the original snapshot path and patch hash.
+Each event has `version: 3` and a `type`. The `begin` event records `full` or `diff` mode, provider/model, root, base and HEAD when available, the confidence threshold, and the baseline assumption. Snapshot runs include the original snapshot path and patch hash.
 
 `result` contains file evidence: mode, change kind, previous path for renames, before/after hashes, contract hash, judgments, and timing. `source_hash` identifies the complete encoded change input. `input_bytes` measures the encoded state including contract and explicit context, before provider instructions and question wrappers; it is not a token count.
 
@@ -35,16 +36,19 @@ Each event has `version: 2` and a `type`. The `begin` event records `full` or `d
 
 ```json
 {
-  "assessment": "unresolved",
-  "confidence": null,
-  "reason": "Only selected paths were checked; contract-wide coverage is incomplete.",
-  "reason_code": "partial_scope",
+  "assessment": "clear",
+  "scope": "selected_subjects",
+  "confidence": 0.95,
+  "reason": "No violation found in the selected subjects; this does not verify the full contract scope.",
+  "reason_code": "selected_subjects_clear",
   "request": null
 }
 ```
 
 Confidence is the model's score for its selected answer, not a measured probability that the contract holds.
-A low score does not change the answer to unresolved. An explicit uncertain answer does. When there is no final
+The raw `choice`, `confidence`, and probabilities stay unchanged. `routing` separately records the outcome after
+applying `--min-confidence` (default 0.8). Low-confidence and explicit uncertain answers route to unresolved.
+File results retain the same distinction in `applicability_routing` and `verification_routing`. When there is no final
 model assessment, confidence is null. Errors add an `error` field.
 
 `reason` explains the conclusion, including selected-path coverage, unavailable context, model uncertainty, and
@@ -57,7 +61,7 @@ that contradict a favorable repository answer. Those disagreements remain unreso
 | Code | Next step |
 | --- | --- |
 | `file_checks_incomplete` | Inspect file errors or incomplete results |
-| `partial_scope` | Review the remaining scope |
+| `selected_subjects_clear` | Review the remaining scope before claiming full verification |
 | `no_relevant_changes` | Retain the compliant-base assumption |
 | `request_budget` | Account for unassessed work before increasing the budget |
 | `context_too_large` | Use bounded evidence and manual review; do not silently omit required source |
@@ -67,13 +71,13 @@ that contradict a favorable repository answer. Those disagreements remain unreso
 | `conflicting_assessments` | Trace the flagged files against the combined evidence |
 | `violation` / `compliance` | Review the model's conclusion and evidence |
 
-When repository context was assembled, `context` reports `input_bytes`, `limit_bytes`, `included_files`, and
-`omitted_files` (paths only). These describe the supplied state, not proof that it contains every necessary implementation.
+When combined context was assembled, `context` reports `input_bytes`, `limit_bytes`, `included_files`,
+`selected_files`, `support_files`, and `omitted_files` (paths only). These describe the supplied state, not proof that it contains every necessary implementation.
 The same diagnostics and evidence hash remain available if the provider fails. Oversize reasons give measured bytes;
-the required-source subtotal can exceed the limit before the complete state is assembled.
+source is never truncated to fit.
 
-These diagnostic fields are additive within JSONL version 2. Consumers should retain useful diagnostics and ignore
-unknown fields. A reason describes the evidence limit; it does not turn an unresolved assessment into a pass.
+Version 3 replaces the run-wide `partial` flag with each conclusion's `scope` (`full_contract` or `selected_subjects`)
+and separates raw answers from routing. Consumers should retain useful diagnostics and ignore unknown fields. A reason describes the evidence limit; it does not turn an unresolved assessment into a pass.
 
 Other events include `contract_started`, `check_started`, `stage_started`, `stage_completed`, `summary`, and `error`. Stages are `applicability`, `verification`, and `completeness`.
 The summary includes file counts, contract counts, request count, and exit code. Source contents and credentials are not printed.
@@ -82,19 +86,14 @@ The summary includes file counts, contract counts, request count, and exit code.
 
 | Code | Meaning |
 | --- | --- |
-| 0 | No contract failures |
+| 0 | Every requested claim completed without a violation |
 | 1 | Contract failures |
 | 2 | Invalid input or execution error |
-| 3 | File checks could not complete, such as when the request budget is exhausted |
+| 3 | Unresolved semantics or incomplete requested work, including exhausted budgets |
 | 130 | Cancelled |
 
-Unresolved contracts do not fail a check. They remain unresolved in the report; exit code 0 does not mean every contract was verified.
-To also fail when any contract is unresolved, read the JSONL summary. The pipe hides Tenet's own exit status, so
-check it there too:
-
-```sh
-tenet check --json | jq -e 'select(.type == "summary") | .exit_code == 0 and .summary.contracts_unresolved == 0'
-```
-Execution errors and incomplete file checks still exit nonzero and take precedence over contract failures. Findings remain available in all cases.
+Unresolved contracts exit 3. Exit 0 can include `clear` results for selected subjects, so it does not imply full
+contract verification. Cancellation takes precedence, then execution errors, unresolved or incomplete work, and
+confirmed violations. Findings remain available even when another contract causes exit 2 or 3.
 
 File diagnostics highlight the contract requirement; Tenet does not invent an exact source span for a file-level judgment. The reviewing agent locates actionable code.

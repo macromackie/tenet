@@ -26,10 +26,11 @@ Each contract finishes with one result:
 | Full check | Diff check |
 | --- | --- |
 | `verified` | `preserved` or `unaffected` |
+| `clear` for selected subjects | `clear` for selected changes |
 | `failed` | `failed` |
 | `unresolved` | `unresolved` |
 
-Failures include the requirement and evidence. Unresolved results need follow-up; they do not fail the command. These are model judgments, so inspect findings before acting on them. See [Output](./output.md).
+Failures include the requirement and evidence. Unresolved results need follow-up and exit 3. A `clear` result applies only to the requested selection. These are model judgments, so inspect findings before acting on them. See [Output](./output.md).
 
 ## Try a contract
 

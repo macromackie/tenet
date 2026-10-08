@@ -17,18 +17,28 @@ impl Plan {
         contract: &tenet_contracts::Contract,
         change: &crate::Change,
     ) -> Result<serde_json::Value> {
+        let context: Vec<_> = self
+            .context
+            .iter()
+            .filter(|support| support.path != change.path)
+            .map(crate::Change::current_input)
+            .collect();
         let state = serde_json::json!({
             "contract": contract.body,
             "change": change,
             "files": [change.current_input()],
-            "context": self.context.iter().map(crate::Change::current_input).collect::<Vec<_>>(),
+            "context": context,
         });
         crate::change::check_size("complete file input", serde_json::to_vec(&state)?.len())?;
         Ok(state)
     }
 
     pub fn with_context(mut self, paths: &[PathBuf]) -> Result<Self> {
-        let mut seen = BTreeSet::new();
+        let mut seen: BTreeSet<_> = self
+            .context
+            .iter()
+            .map(|change| change.path.clone())
+            .collect();
         for path in paths {
             ensure!(
                 path.components()
@@ -38,7 +48,7 @@ impl Plan {
                 "context paths must be repository source files: {}",
                 path.display()
             );
-            if !seen.insert(path) {
+            if !seen.insert(path.clone()) {
                 continue;
             }
             let full = self.root.join(path);
@@ -69,6 +79,26 @@ impl Plan {
                 .previous_paths
                 .get(path)
                 .is_some_and(|old| old.starts_with(scope))
+    }
+
+    pub fn requested_scope(&self, contract: &tenet_contracts::Contract) -> crate::RequestedScope {
+        let mut scoped_candidates = self
+            .candidate_files
+            .iter()
+            .filter(|path| self.in_scope(path, &contract.scope))
+            .peekable();
+        let covers_empty_scope = self.selected_paths.is_empty()
+            || self
+                .selected_paths
+                .iter()
+                .any(|selector| contract.scope.starts_with(selector));
+        let covers_scope = (scoped_candidates.peek().is_some() || covers_empty_scope)
+            && scoped_candidates.all(|path| self.files.contains(path));
+        if covers_scope {
+            crate::RequestedScope::FullContract
+        } else {
+            crate::RequestedScope::SelectedSubjects
+        }
     }
 
     pub fn change(&self, path: &Path) -> Result<crate::Change> {

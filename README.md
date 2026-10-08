@@ -23,7 +23,8 @@ tenet check --base origin/main     # Assess changes, assuming a valid base
 
 For example, a contract can require database failures to reach the caller rather than become empty results.
 Tenet checks relevant files and their combined context, then reports one conclusion per contract.
-Each model conclusion includes confidence. Unresolved contracts need follow-up but do not fail the command.
+Each model conclusion preserves raw confidence separately from routing. Unresolved contracts need follow-up and exit 3.
+Selected-path checks assess their combined evidence and can report `clear` without claiming full contract verification.
 
 Read every applicable contract during a review. Tenet helps choose where to investigate first; the outer reviewer owns the final judgment. See [Reviews](docs/reviews.md).
 

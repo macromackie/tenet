@@ -55,7 +55,7 @@ impl<'a> Reporter<'a> {
         self.track(&event);
         if self.kind == ReporterKind::Jsonl {
             let mut value = serde_json::to_value(event)?;
-            value["version"] = 2.into();
+            value["version"] = 3.into();
             let mut out = io::stdout().lock();
             serde_json::to_writer(&mut out, &value)?;
             writeln!(out)?;
@@ -143,6 +143,7 @@ impl<'a> Reporter<'a> {
                     |c| match c.status {
                         ContractStatus::Verified => "VERIFIED",
                         ContractStatus::Preserved => "PRESERVED",
+                        ContractStatus::Clear => "CLEAR",
                         ContractStatus::Unaffected => "UNAFFECTED",
                         ContractStatus::Failed => "FAILED",
                         ContractStatus::Unresolved => "UNRESOLVED",
@@ -181,9 +182,13 @@ impl<'a> Reporter<'a> {
                     }
                     if let Some(error) = &conclusion.error {
                         self.term.write_line(&format!("  {error}"))?;
-                    } else if self.kind == ReporterKind::Verbose {
+                    } else {
                         self.term.write_line(&format!("  {}", conclusion.reason))?;
                     }
+                } else if let Some(conclusion) = &conclusion
+                    && conclusion.status == ContractStatus::Clear
+                {
+                    self.term.write_line(&format!("  {}", conclusion.reason))?;
                 }
                 if let Some(issue) = progress
                     .issues

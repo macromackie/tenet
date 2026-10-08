@@ -26,9 +26,10 @@ pub struct Plan {
     pub deleted: Vec<PathBuf>,
     pub base: Option<String>,
     pub head: Option<String>,
-    pub partial: bool,
     pub mode: crate::Mode,
     pub inventory: Vec<PathBuf>,
+    pub candidate_files: Vec<PathBuf>,
+    pub selected_paths: Vec<PathBuf>,
     pub previous_paths: BTreeMap<PathBuf, PathBuf>,
     pub context: Vec<crate::Change>,
     pub contract_changes: Vec<PathBuf>,
@@ -202,18 +203,39 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
             })
         });
     }
-    let files: Vec<_> = candidates
-        .into_iter()
+    let selected_candidates: Vec<_> = candidates
+        .iter()
         .filter(|p| {
-            let old = previous_paths.get(p);
-            (selectors.is_empty()
+            let old = previous_paths.get(*p);
+            selectors.is_empty()
                 || selectors
                     .iter()
-                    .any(|s| p.starts_with(s) || old.is_some_and(|p| p.starts_with(s))))
-                && contracts.iter().any(|c| {
-                    p.starts_with(&c.scope) || old.is_some_and(|p| p.starts_with(&c.scope))
-                })
+                    .any(|s| p.starts_with(s) || old.is_some_and(|p| p.starts_with(s)))
         })
+        .collect();
+    if selection.contract.is_none() && !selectors.is_empty() {
+        contracts.retain(|contract| {
+            selectors.iter().any(|selector| {
+                selector.starts_with(&contract.scope) || contract.scope.starts_with(selector)
+            }) || selected_candidates.iter().any(|path| {
+                path.starts_with(&contract.scope)
+                    || previous_paths
+                        .get(*path)
+                        .is_some_and(|old| old.starts_with(&contract.scope))
+            })
+        });
+    }
+    let files: Vec<_> = selected_candidates
+        .into_iter()
+        .filter(|path| {
+            contracts.iter().any(|contract| {
+                path.starts_with(&contract.scope)
+                    || previous_paths
+                        .get(*path)
+                        .is_some_and(|old| old.starts_with(&contract.scope))
+            })
+        })
+        .cloned()
         .collect();
     let deleted = files
         .iter()
@@ -234,11 +256,12 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
         head,
         mode,
         inventory,
+        candidate_files: candidates,
+        selected_paths: selectors,
         previous_paths,
         context: Vec::new(),
         contract_changes,
         base: changes.map(|c| c.base),
-        partial: !selectors.is_empty() && !selectors.iter().any(|p| p.as_os_str().is_empty()),
     })
 }
 

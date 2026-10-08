@@ -50,7 +50,7 @@ pub(super) fn counts(s: &Summary) -> String {
 pub(super) fn paint(state: &str) -> String {
     let styled = console::style(state).for_stderr();
     match state.to_ascii_uppercase().as_str() {
-        "PASS" | "VERIFIED" | "PRESERVED" => styled.green().to_string(),
+        "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => styled.green().to_string(),
         "FAIL" | "FAILED" | "ERROR" => styled.red().bold().to_string(),
         "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" => styled.yellow().to_string(),
         _ => styled.dim().to_string(),
@@ -59,13 +59,13 @@ pub(super) fn paint(state: &str) -> String {
 
 pub(super) fn marker(state: &str) -> String {
     let symbol = match state {
-        "PASS" | "VERIFIED" | "PRESERVED" => "✓",
+        "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => "✓",
         "FAIL" | "FAILED" | "ERROR" => "×",
         "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" => "?",
         _ => "−",
     };
     match state {
-        "PASS" | "VERIFIED" | "PRESERVED" => {
+        "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => {
             console::style(symbol).for_stderr().green().to_string()
         }
         "FAIL" | "FAILED" | "ERROR" => console::style(symbol).for_stderr().red().to_string(),

@@ -3,8 +3,9 @@
 File judgments receive the contract plus a record containing the path, change kind, patch, and prior contents, with the resulting file supplied once.
 Full checks use additions from an empty starting point. Diff checks assume the base satisfies the selected contracts.
 
-Contract assessment receives the scoped file inventory, relevant current source, explicit context, and changed-file
-paths and kinds. Prior contents and patches are supplied to file checks, not the final repository assessment.
+Combined assessment receives the scoped file inventory, relevant selected source, explicit context, and complete
+selected changes including prior contents and patches. It does not read unselected source automatically.
+Selected subjects and support files are labeled separately; support files do not expand the requested claim.
 It can detect missing required files and inspect cross-file requirements when the context fits. File judgments determine relevance; conflicting file failures
 remain visible after the repository assessment.
 It does not retrieve external dependencies, execute the commands written in contracts, or run an agent investigation.
@@ -21,5 +22,7 @@ Jev requests share a 15-second budget across at most three attempts, with a five
 Model answers can differ between runs on the same input, especially for borderline files. Compare repeated runs
 before treating a change in results as an improvement.
 
-A relevance answer below 0.8 confidence counts as uncertain, so the file is still judged. Violation answers keep
-their choice and report confidence without a threshold. The 0.8 floor is provisional, not a measured accuracy guarantee.
+Every answer uses `--min-confidence` (default 0.8). Lower-confidence and explicit uncertain answers route to
+uncertain while their raw choices and probabilities remain visible. Uncertain relevance keeps the file in combined
+evidence; uncertain file judgments may be resolved by a confident combined assessment. The 0.8 floor is a routing
+policy, not a measured accuracy guarantee. Lowering it changes routing and does not improve the evidence.

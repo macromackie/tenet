@@ -11,7 +11,8 @@ tenet check --base origin/main --json > report.jsonl
 
 Read every contract in the inventory. Use failed, unresolved, and lower-confidence assessments to decide where
 to investigate first. A favorable assessment can save time; it does not remove the contract from the review.
-Confirm suspected violations before commenting on code. Exit 0 means no final failures, not complete verification.
+Confirm suspected violations before commenting on code. Exit 0 means the requested claims completed without violations. Read each claim's scope: selected subjects can be
+`clear` without verifying a whole contract. Unresolved results exit 3.
 
 ## Add context
 
@@ -61,7 +62,8 @@ Tenet checks independent contracts concurrently within `--jobs`, then prints the
 For each file it asks relevance and violation questions in one Jev request. The request includes the before/after
 change and resulting source. A confident irrelevant answer excludes that file from the contract's evidence.
 
-The final assessment receives relevant files, explicit `--context` inputs, and the scoped file inventory.
+The final assessment receives relevant selected files, explicit `--context` inputs, and the scoped file inventory.
+Tenet attempts this bounded combined assessment for selected-path checks too.
 It does not fill spare space with unrelated source. If a file check and final assessment disagree about a violation,
 Tenet reports `unresolved` with `conflicting_files`. The reviewer decides whether more context or a code change is needed.
 

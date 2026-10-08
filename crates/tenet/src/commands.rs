@@ -134,7 +134,7 @@ async fn evaluate(
                     writeln!(
                         io::stdout(),
                         "{}",
-                        serde_json::json!({"version":2,"type":"selected","contract":c.name,"path":path,"contract_hash":c.hash,"input_bytes":input_bytes,"input_limit_bytes":tenet_engine::MAX_FILE_BYTES,"error":error})
+                        serde_json::json!({"version":3,"type":"selected","contract":c.name,"scope":plan.requested_scope(c),"path":path,"contract_hash":c.hash,"input_bytes":input_bytes,"input_limit_bytes":tenet_engine::MAX_FILE_BYTES,"error":error})
                     )?;
                 } else {
                     writeln!(io::stdout(), "{}  {}", c.name, path.display())?;
@@ -148,7 +148,7 @@ async fn evaluate(
             writeln!(
                 io::stdout(),
                 "{}",
-                serde_json::json!({"version":2,"type":"summary","dry_run":true,"files":plan.files.len(),"mode":plan.mode,"assume_base_valid":plan.mode == Mode::Diff,"partial":plan.partial,"deleted":plan.deleted,"errors":errors,"exit_code":if errors > 0 { 2 } else { 0 }})
+                serde_json::json!({"version":3,"type":"summary","dry_run":true,"files":plan.files.len(),"mode":plan.mode,"assume_base_valid":plan.mode == Mode::Diff,"deleted":plan.deleted,"errors":errors,"exit_code":if errors > 0 { 2 } else { 0 }})
             )?;
         }
         return Ok(if errors > 0 { 2 } else { 0 });
@@ -184,16 +184,17 @@ async fn evaluate(
             head: plan.head.clone(),
             assumption: (plan.mode == Mode::Diff)
                 .then(|| "The base satisfies the selected contracts.".into()),
-            partial: plan.partial,
             snapshot: snapshot.map(|s| s.snapshot.display().to_string()),
             patch_hash: snapshot.and_then(|s| s.patch_hash.clone()),
             jobs: run.jobs.into(),
             max_requests: run.max_requests as usize,
+            min_confidence: run.min_confidence,
         },
     })?;
     let options = Options {
         jobs: run.jobs.into(),
         max_requests: run.max_requests as usize,
+        min_confidence: run.min_confidence,
     };
     let future = tenet_engine::run(plan, options, &evaluator, &emit);
     tokio::pin!(future);

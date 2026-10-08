@@ -11,6 +11,7 @@ pub(super) struct Context<'a, E, F> {
     pub(super) emit: &'a F,
     pub(super) requests: &'a Cell<usize>,
     pub(super) max_requests: usize,
+    pub(super) min_confidence: f64,
     pub(super) local_requests: &'a Cell<usize>,
 }
 
@@ -37,7 +38,9 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
         message: contract.message.clone(),
         reason: None,
         applicability: None,
+        applicability_routing: None,
         verification: None,
+        verification_routing: None,
         request: None,
         elapsed_ms: 0,
     };
@@ -115,33 +118,36 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
     let applicability = batch
         .answers
         .remove("relevance")
-        .context("missing relevance answer")?
-        .with_min_confidence(0.8);
+        .context("missing relevance answer")?;
     let verification = batch
         .answers
         .remove("violation")
         .context("missing violation answer")?;
-    for (stage, assessment) in [
-        (Stage::Applicability, &applicability),
-        (Stage::Verification, &verification),
+    let applicability_routing = applicability.route(context.min_confidence);
+    let verification_routing = verification.route(context.min_confidence);
+    for (stage, routing) in [
+        (Stage::Applicability, &applicability_routing),
+        (Stage::Verification, &verification_routing),
     ] {
         (context.emit)(Event::StageCompleted {
             contract: context.contract.name.clone(),
             path: result.path.clone(),
             stage,
-            outcome: assessment.outcome,
+            outcome: routing.outcome,
         })?;
     }
-    result.status = if applicability.outcome == Outcome::NoMatch {
+    result.status = if applicability_routing.outcome == Outcome::NoMatch {
         Status::NotApplicable
     } else {
-        match verification.outcome {
+        match verification_routing.outcome {
             Outcome::Match => Status::Fail,
             Outcome::NoMatch => Status::Pass,
             Outcome::Uncertain => Status::Uncertain,
         }
     };
     result.applicability = Some(applicability);
+    result.applicability_routing = Some(applicability_routing);
     result.verification = Some(verification);
+    result.verification_routing = Some(verification_routing);
     Ok(())
 }

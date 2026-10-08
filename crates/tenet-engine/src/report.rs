@@ -36,7 +36,9 @@ pub struct CheckResult {
     pub message: String,
     pub reason: Option<String>,
     pub applicability: Option<ev_grep_core::Assessment>,
+    pub applicability_routing: Option<ev_grep_core::Routing>,
     pub verification: Option<ev_grep_core::Assessment>,
+    pub verification_routing: Option<ev_grep_core::Routing>,
     pub request: Option<ev_grep_core::RequestInfo>,
     pub elapsed_ms: u128,
 }
@@ -57,6 +59,7 @@ pub struct Summary {
     pub elapsed_ms: u128,
     pub cancelled: bool,
     pub contracts_verified: usize,
+    pub contracts_clear: usize,
     pub contracts_preserved: usize,
     pub contracts_unaffected: usize,
     pub contracts_failed: usize,
@@ -77,6 +80,7 @@ impl Summary {
         self.input_tokens += other.input_tokens;
         self.output_tokens += other.output_tokens;
         self.contracts_verified += other.contracts_verified;
+        self.contracts_clear += other.contracts_clear;
         self.contracts_preserved += other.contracts_preserved;
         self.contracts_unaffected += other.contracts_unaffected;
         self.contracts_failed += other.contracts_failed;
@@ -109,7 +113,7 @@ impl Summary {
             130
         } else if self.errors > 0 {
             2
-        } else if self.incomplete > 0 {
+        } else if self.incomplete > 0 || self.contracts_unresolved > 0 {
             3
         } else {
             u8::from(self.contracts_failed > 0)
@@ -127,11 +131,11 @@ pub struct RunInfo {
     pub base: Option<String>,
     pub head: Option<String>,
     pub assumption: Option<String>,
-    pub partial: bool,
     pub snapshot: Option<String>,
     pub patch_hash: Option<String>,
     pub jobs: usize,
     pub max_requests: usize,
+    pub min_confidence: f64,
 }
 
 #[derive(Serialize)]
@@ -186,15 +190,24 @@ pub enum Event {
 pub enum ContractStatus {
     Verified,
     Preserved,
+    Clear,
     Unaffected,
     Failed,
     Unresolved,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestedScope {
+    FullContract,
+    SelectedSubjects,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ContractResult {
     #[serde(rename = "assessment")]
     pub status: ContractStatus,
+    pub scope: RequestedScope,
     pub confidence: Option<f64>,
     pub reason: String,
     pub reason_code: ConclusionReason,
@@ -202,6 +215,8 @@ pub struct ContractResult {
     pub context: Option<ContextSummary>,
     #[serde(rename = "model_assessment", skip_serializing_if = "Option::is_none")]
     pub assessment: Option<ev_grep_core::Assessment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ev_grep_core::Routing>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -215,7 +230,6 @@ pub struct ContractResult {
 #[serde(rename_all = "snake_case")]
 pub enum ConclusionReason {
     FileChecksIncomplete,
-    PartialScope,
     NoRelevantChanges,
     RequestBudget,
     ContextTooLarge,
@@ -223,6 +237,7 @@ pub enum ConclusionReason {
     AssessmentFailed,
     Violation,
     Compliance,
+    SelectedSubjectsClear,
     ModelUncertain,
     ConflictingAssessments,
 }
@@ -232,6 +247,8 @@ pub struct ContextSummary {
     pub input_bytes: usize,
     pub limit_bytes: usize,
     pub included_files: usize,
+    pub selected_files: Vec<std::path::PathBuf>,
+    pub support_files: Vec<std::path::PathBuf>,
     pub omitted_files: Vec<std::path::PathBuf>,
 }
 
@@ -240,6 +257,7 @@ impl Summary {
         self.record_request(conclusion.request.as_ref());
         match conclusion.status {
             ContractStatus::Verified => self.contracts_verified += 1,
+            ContractStatus::Clear => self.contracts_clear += 1,
             ContractStatus::Preserved => self.contracts_preserved += 1,
             ContractStatus::Unaffected => self.contracts_unaffected += 1,
             ContractStatus::Failed => self.contracts_failed += 1,

@@ -76,11 +76,25 @@ pub(crate) struct Run {
     pub jobs: u16,
     #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..))]
     pub max_requests: u32,
+    /// Route lower-confidence answers to unresolved while preserving their raw values.
+    #[arg(long, default_value_t = tenet_engine::MIN_CONFIDENCE, value_parser = min_confidence)]
+    pub min_confidence: f64,
     #[arg(long, value_enum, default_value_t = ReporterKind::Default)]
     pub reporter: ReporterKind,
     /// Shorthand for --reporter jsonl.
     #[arg(long)]
     pub json: bool,
+}
+
+fn min_confidence(value: &str) -> Result<f64, String> {
+    let value: f64 = value
+        .parse()
+        .map_err(|_| "expected a number between 0 and 1")?;
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(value)
+    } else {
+        Err("min-confidence must be between 0 and 1".into())
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
