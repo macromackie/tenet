@@ -3,7 +3,7 @@ mod conclusion;
 mod context;
 mod prompt;
 
-use crate::{Event, Plan, Summary};
+use crate::{Event, EvidencePacket, Plan, Summary};
 use anyhow::{Result, ensure};
 use ev_grep_core::Evaluator;
 use futures_util::{StreamExt, stream};
@@ -33,10 +33,11 @@ pub async fn run(
         "min-confidence must be between 0 and 1"
     );
     let started = Instant::now();
+    let evidence = plan.capture().await?;
     let requests = Cell::new(0);
     let slots = Semaphore::new(options.jobs);
     let shared = Pool {
-        plan,
+        evidence: &evidence,
         options,
         evaluator,
         emit,
@@ -71,7 +72,7 @@ pub async fn run(
 }
 
 struct Pool<'a, E, F> {
-    plan: &'a Plan,
+    evidence: &'a EvidencePacket<'a>,
     options: Options,
     evaluator: &'a E,
     emit: &'a F,
@@ -84,10 +85,11 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
         let started = Instant::now();
         let local_requests = Cell::new(0);
         let subjects: Vec<_> = self
+            .evidence
             .plan
             .files
             .iter()
-            .filter(|p| self.plan.in_scope(p, &contract.scope))
+            .filter(|p| self.evidence.plan.in_scope(p, &contract.scope))
             .collect();
         (self.emit)(Event::ContractStarted {
             contract: contract.name.clone(),
@@ -95,7 +97,7 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
             total: subjects.len(),
         })?;
         let context = assess::Context {
-            plan: self.plan,
+            evidence: self.evidence,
             contract,
             evaluator: self.evaluator,
             emit: self.emit,
@@ -122,7 +124,7 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
         }
         let _permit = self.slots.acquire().await?;
         let conclusion = conclusion::Completion {
-            plan: self.plan,
+            evidence: self.evidence,
             contract,
             results: &results,
             summary: &summary,

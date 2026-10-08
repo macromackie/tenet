@@ -15,6 +15,8 @@ pub(crate) struct Cli {
 pub(crate) enum Command {
     /// Assess a repository, or whether a change preserves its contracts.
     Check(Check),
+    /// Export captured contracts and source as JSON without calling a model.
+    Evidence(Evidence),
     /// Validate contract documents without calling a model.
     Validate,
     /// Browse contract requirements and scope.
@@ -42,6 +44,26 @@ pub(crate) enum Contracts {
 
 #[derive(Args)]
 pub(crate) struct Check {
+    #[command(flatten)]
+    pub input: Input,
+    /// Show candidate pairs without calling a model.
+    #[arg(long)]
+    pub dry_run: bool,
+    #[command(flatten)]
+    pub run: Run,
+}
+
+#[derive(Args)]
+pub(crate) struct Evidence {
+    #[command(flatten)]
+    pub input: Input,
+    /// Maximum encoded packet size in bytes; oversized input is rejected, never truncated.
+    #[arg(long, default_value_t = 1_048_576, value_parser = clap::value_parser!(u32).range(1..=67_108_864))]
+    pub max_bytes: u32,
+}
+
+#[derive(Args)]
+pub(crate) struct Input {
     pub paths: Vec<PathBuf>,
     /// Supply related repository files without changing contract scope; repeat as needed.
     #[arg(long)]
@@ -54,17 +76,12 @@ pub(crate) struct Check {
     pub snapshot: Option<PathBuf>,
     #[arg(long, requires = "snapshot")]
     pub patch: Option<PathBuf>,
-    /// Show candidate pairs without calling a model.
     #[arg(long)]
-    pub dry_run: bool,
-    #[command(flatten)]
-    pub run: Run,
+    pub contract: Option<String>,
 }
 
 #[derive(Args)]
 pub(crate) struct Run {
-    #[arg(long)]
-    pub contract: Option<String>,
     #[arg(long, env = "TENET_PROVIDER", default_value = "openrouter")]
     pub provider: Provider,
     #[arg(long, env = "TENET_MODEL")]

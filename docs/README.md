@@ -48,3 +48,5 @@ tenet check --base origin/main --json > review.jsonl
 ```
 
 A [reviewing agent](./reviews.md) reads the report, investigates failures and unresolved contracts, and writes the review. Tenet uses Jev through OpenRouter or TypeSafe; selected code and contract rules go to that provider.
+
+Use [`tenet evidence`](./evidence.md) to export selected contracts and source offline for a review or a focused question.

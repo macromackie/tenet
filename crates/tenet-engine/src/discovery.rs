@@ -147,15 +147,13 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
         ensure!(full.starts_with(&root), "selected path escapes project");
         selectors.push(full.strip_prefix(&root)?.to_owned());
     }
+    let discovered = paths(&root)?;
     let changes = selection
         .base
         .as_ref()
-        .map(|r| git::changed(&root, r))
+        .map(|r| git::changed(&root, r, &discovered))
         .transpose()?;
-    let inventory: Vec<_> = paths(&root)?
-        .into_iter()
-        .filter(|p| !is_contract(p))
-        .collect();
+    let inventory: Vec<_> = discovered.into_iter().filter(|p| !is_contract(p)).collect();
     let candidates: Vec<_> = if let Some(changes) = &changes {
         changes
             .paths

@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.6.0
+
+- Export review inputs offline with `tenet evidence`: complete contracts, captured before/after source, content hashes,
+  selected and supporting paths, and omissions. The JSON packet defaults to a 1 MiB limit; no model call is made.
+- Capture source once per run and reuse the same contents or read errors across file and combined assessments.
+  Capture has a fixed 64 MiB aggregate payload bound and fails before assessment when exceeded. Sequential capture
+  is not an atomic filesystem snapshot.
+- Honor `.ignore` for untracked diff inputs while retaining tracked changes, deletions, renames, and source inside
+  newly added nested repositories.
+- Use ev-grep 0.6.1. Existing model prompts and the default confidence floor are unchanged.
+- Rust API: call `Plan::capture().await?` and obtain file inputs from its `EvidencePacket`. Use
+  `Plan::export_evidence(max_bytes).await?` for the offline JSON representation.
+
 ## v0.5.0
 
 - Assess selected files together with explicit helper context. Per-contract scope recognizes complete nested selections;

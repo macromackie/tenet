@@ -5,12 +5,12 @@ use ev_grep_core::{Evaluator, Outcome, Uncertainty};
 use tenet_contracts::Contract;
 
 use crate::{
-    CheckResult, ConclusionReason, ContextSummary, ContractResult, ContractStatus, Event, Mode,
-    Plan, RequestedScope, Stage, Status, Summary,
+    CheckResult, ConclusionReason, ContextSummary, ContractResult, ContractStatus, Event,
+    EvidencePacket, Mode, RequestedScope, Stage, Status, Summary,
 };
 
 pub(crate) struct Completion<'a> {
-    pub plan: &'a Plan,
+    pub evidence: &'a EvidencePacket<'a>,
     pub contract: &'a Contract,
     pub results: &'a [CheckResult],
     pub summary: &'a Summary,
@@ -29,7 +29,7 @@ impl Completion<'_> {
     ) -> ContractResult {
         ContractResult {
             status,
-            scope: self.plan.requested_scope(self.contract),
+            scope: self.evidence.plan.requested_scope(self.contract),
             confidence: None,
             reason: reason.into(),
             reason_code,
@@ -91,7 +91,7 @@ impl Completion<'_> {
             support_files: serde_json::from_value(state["support_files"].clone())?,
             omitted_files: serde_json::from_value(state["omitted_source"].clone())?,
         };
-        let query = super::prompt::query(Stage::Completeness, self.plan.mode);
+        let query = super::prompt::query(Stage::Completeness, self.evidence.plan.mode);
         self.requests.set(self.requests.get() + 1);
         self.local_requests.set(self.local_requests.get() + 1);
         emit(Event::StageStarted {
@@ -165,14 +165,14 @@ impl Completion<'_> {
     }
 
     fn clear_decision(&self) -> (ContractStatus, ConclusionReason, &'static str) {
-        if self.plan.requested_scope(self.contract) == RequestedScope::SelectedSubjects {
+        if self.evidence.plan.requested_scope(self.contract) == RequestedScope::SelectedSubjects {
             return (
                 ContractStatus::Clear,
                 ConclusionReason::SelectedSubjectsClear,
                 "No violation found in the selected subjects; this does not verify the full contract scope.",
             );
         }
-        if self.plan.mode == Mode::Diff {
+        if self.evidence.plan.mode == Mode::Diff {
             if self
                 .results
                 .iter()

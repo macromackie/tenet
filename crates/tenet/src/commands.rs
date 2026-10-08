@@ -1,7 +1,7 @@
 use std::{
     cell::RefCell,
     io::{self, Write},
-    path::Component,
+    path::{Component, Path},
 };
 
 use anyhow::{Context, Result, ensure};
@@ -9,7 +9,7 @@ use ev_grep_jev::Jev;
 use tenet_engine::{Event, Mode, Options, PreparedSnapshot, RunInfo, Selection};
 
 use crate::{
-    cli::{Cli, Command, Contracts, ReporterKind, Run},
+    cli::{Cli, Command, Contracts, Input, ReporterKind, Run},
     reporter::Reporter,
 };
 
@@ -75,27 +75,43 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
             Ok(0)
         }
         Command::Check(check) => {
-            let snapshot = check
-                .snapshot
-                .as_ref()
-                .map(|base| PreparedSnapshot::new(base, check.patch.as_deref()))
-                .transpose()?;
-            let root = snapshot
-                .as_ref()
-                .map_or(cli.root.as_path(), PreparedSnapshot::root);
-            let selection = Selection {
-                paths: check.paths.clone(),
-                base: if check.patch.is_some() {
-                    Some("HEAD".into())
-                } else {
-                    check.base.clone()
-                },
-                contract: check.run.contract.clone(),
-            };
-            let plan = tenet_engine::plan(root, &selection)?.with_context(&check.context)?;
+            let (plan, snapshot) = prepare(&cli.root, &check.input)?;
             evaluate(&plan, &check.run, check.dry_run, snapshot.as_ref()).await
         }
+        Command::Evidence(evidence) => {
+            let (plan, _snapshot) = prepare(&cli.root, &evidence.input)?;
+            let capture = plan.export_evidence(evidence.max_bytes as usize);
+            let bytes = tokio::select! {
+                result = capture => result?,
+                signal = tokio::signal::ctrl_c() => {
+                    signal?;
+                    return Ok(130);
+                }
+            };
+            io::stdout().write_all(&bytes)?;
+            Ok(0)
+        }
     }
+}
+
+fn prepare(root: &Path, input: &Input) -> Result<(tenet_engine::Plan, Option<PreparedSnapshot>)> {
+    let snapshot = input
+        .snapshot
+        .as_ref()
+        .map(|base| PreparedSnapshot::new(base, input.patch.as_deref()))
+        .transpose()?;
+    let root = snapshot.as_ref().map_or(root, PreparedSnapshot::root);
+    let selection = Selection {
+        paths: input.paths.clone(),
+        base: if input.patch.is_some() {
+            Some("HEAD".into())
+        } else {
+            input.base.clone()
+        },
+        contract: input.contract.clone(),
+    };
+    let plan = tenet_engine::plan(root, &selection)?.with_context(&input.context)?;
+    Ok((plan, snapshot))
 }
 
 async fn evaluate(
@@ -111,6 +127,7 @@ async fn evaluate(
     };
     let reporter = RefCell::new(Reporter::new(kind, &plan.contracts));
     if dry {
+        let evidence = plan.capture().await?;
         let mut errors = 0;
         for c in &plan.contracts {
             for path in plan.files.iter().filter(|p| {
@@ -120,9 +137,7 @@ async fn evaluate(
                         .get(*p)
                         .is_some_and(|old| old.starts_with(&c.scope))
             }) {
-                let input = plan
-                    .change(path)
-                    .and_then(|change| plan.file_input(c, &change));
+                let input = evidence.file_input(c, path);
                 let (input_bytes, error) = match input {
                     Ok(state) => (Some(serde_json::to_vec(&state)?.len()), None),
                     Err(error) => {

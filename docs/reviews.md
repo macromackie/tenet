@@ -24,7 +24,13 @@ tenet check --base origin/main --contract database-failures \
 ```
 
 Context files supplement the input; they do not expand the contract's scope. Tenet retains their before/after identity.
-Keep the checkout stable during a run. Capture stdout and exit status even when the command returns nonzero.
+Keep the checkout stable during a run. Tenet captures selected and supporting source before model assessment, then
+reuses those bytes throughout the run. Capture is not an atomic filesystem snapshot. Capture stdout and exit status
+even when the command returns nonzero.
+
+Use [`tenet evidence`](./evidence.md) to export selected contracts and source without calling a model. A saved packet
+can supply a focused question or a description of the change, with references back to each before/after source.
+Descriptions help choose what to inspect; verify their claims against the source and the full English contracts.
 
 ## Establish the baseline
 

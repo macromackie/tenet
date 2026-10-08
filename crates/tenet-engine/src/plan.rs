@@ -12,27 +12,6 @@ use crate::{
 };
 
 impl Plan {
-    pub fn file_input(
-        &self,
-        contract: &tenet_contracts::Contract,
-        change: &crate::Change,
-    ) -> Result<serde_json::Value> {
-        let context: Vec<_> = self
-            .context
-            .iter()
-            .filter(|support| support.path != change.path)
-            .map(crate::Change::current_input)
-            .collect();
-        let state = serde_json::json!({
-            "contract": contract.body,
-            "change": change,
-            "files": [change.current_input()],
-            "context": context,
-        });
-        crate::change::check_size("complete file input", serde_json::to_vec(&state)?.len())?;
-        Ok(state)
-    }
-
     pub fn with_context(mut self, paths: &[PathBuf]) -> Result<Self> {
         let mut seen: BTreeSet<_> = self
             .context
@@ -58,7 +37,7 @@ impl Plan {
                     "context path escapes repository"
                 );
             }
-            let change = self.change(path)?;
+            let change = self.read_change(path)?;
             ensure!(
                 change.before.is_some() || change.after.is_some(),
                 "context file does not exist: {}",
@@ -101,7 +80,7 @@ impl Plan {
         }
     }
 
-    pub fn change(&self, path: &Path) -> Result<crate::Change> {
+    pub(crate) fn read_change(&self, path: &Path) -> Result<crate::Change> {
         let old = self.previous_paths.get(path);
         let before = if let Some(base) = &self.base {
             git::before(&self.root, base, old.map_or(path, PathBuf::as_path))?

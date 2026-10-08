@@ -4,6 +4,7 @@ The default reporter shows progress while files are assessed, then one final res
 
 Use `--reporter verbose` for individual file judgments. JSONL retains all intermediate evidence, including uncertainty that a later repository assessment resolves.
 Human reports go to stderr. JSONL goes to stdout.
+The offline [`evidence` command](./evidence.md) has a separate JSON format containing source and contract documents.
 
 ```sh
 tenet check --base origin/main --reporter jsonl > report.jsonl
@@ -82,7 +83,7 @@ and separates raw answers from routing. Consumers should retain useful diagnosti
 Other events include `contract_started`, `check_started`, `stage_started`, `stage_completed`, `summary`, and `error`. Stages are `applicability`, `verification`, and `completeness`.
 The summary includes file counts, contract counts, request count, and exit code. Source contents and credentials are not printed.
 
-## Exit codes
+## Check exit codes
 
 | Code | Meaning |
 | --- | --- |

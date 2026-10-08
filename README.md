@@ -37,6 +37,8 @@ tenet check --base origin/main --json > review.jsonl
 A reviewer investigates failures and unresolved contracts with ordinary repository tools. Model judgments can be wrong; a successful exit does not mean every contract was verified.
 Selected code and contract rules go to the configured provider, using your API key.
 
+Use [`tenet evidence`](docs/evidence.md) to export selected contracts and source offline for a review or a focused question.
+
 Read [commands](docs/cli.md), [output](docs/output.md), and [reviewing with an agent](docs/reviews.md).
 The same docs are at [tenet-contracts.com/docs](https://tenet-contracts.com/docs).
 

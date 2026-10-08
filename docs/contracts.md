@@ -58,7 +58,7 @@ A contract can govern code, configuration, tests, or documentation. State its sc
 Give each contract one concern. Tenet asks one question about the whole contract per file, so a single clause in a
 long contract can be missed. Move a mechanical requirement, such as a required metadata field or an import rule, into a
 project script and name that script under `Checks`.
-Legacy tagged evaluation fences are withheld from the model.
+`tenet check` withholds legacy tagged evaluation fences from the model.
 
 Commands under `Checks` are instructions for the reviewer. Include the working directory and use project-owned scripts.
 Tenet does not run these commands or assume they succeeded. Linked resources are not expanded automatically;
@@ -81,5 +81,6 @@ tenet contracts view database-failures
 
 Use ordinary fenced code blocks to explain allowed and disallowed behavior. Label them in prose.
 Examples are documentation; evaluate real project snapshots and patches through `tenet check`.
-See [evaluation](./evaluation.md). Legacy `tenet:` fences are withheld from model context to avoid leaking
-old expected-answer labels; convert them to ordinary examples when editing a contract.
+See [evaluation](./evaluation.md). Legacy `tenet:` fences are withheld from check inputs to avoid leaking
+old expected-answer labels; convert them to ordinary examples when editing a contract. The offline
+[evidence archive](./evidence.md) preserves the original document, including those fences.

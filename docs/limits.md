@@ -10,9 +10,16 @@ It can detect missing required files and inspect cross-file requirements when th
 remain visible after the repository assessment.
 It does not retrieve external dependencies, execute the commands written in contracts, or run an agent investigation.
 
-Each source file and encoded change or repository context is limited to 64 KiB. Queries are limited to 8 KiB, encoded provider requests to 96 KiB, and responses to 64 KiB.
+Each source file and encoded change or repository context for model assessment is limited to 64 KiB. Queries are limited to 8 KiB, encoded provider requests to 96 KiB, and responses to 64 KiB.
 Oversized selected inputs produce errors. Repository context that cannot be supplied completely leaves the contract unresolved. Inputs are never silently truncated.
 Large scopes may therefore need a reviewing agent to complete the assessment.
+
+Checks, dry runs, and exports also have a fixed 64 MiB aggregate capture limit. It counts serialized contract data
+and original documents, plus distinct source records including paths, patches, and read errors. This bounds the
+captured payload, not total process memory. Capture overflow exits 2 before any model requests. Increasing the
+request budget does not raise this bound.
+
+The offline [`evidence` export](./evidence.md#bounds-and-errors) has a separate packet limit; it does not enlarge model inputs.
 
 The shared request budget covers applicability, verification, and repository assessments, including failed attempts.
 Each file uses one request that asks relevance and violation together. A contract may use one additional repository request.

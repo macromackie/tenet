@@ -3,6 +3,7 @@
 ```sh
 tenet check
 tenet check --base origin/main
+tenet evidence src/ --base origin/main > evidence.json
 tenet validate
 tenet contracts list [--for PATH] [--base REF] [--json]
 tenet contracts view NAME
@@ -53,7 +54,13 @@ If the snapshot has no `.contracts`, Tenet copies `.contracts` from its parent d
 
 Without a patch this is a full check. With a patch it is a diff check. `--base` and `--snapshot` cannot be combined.
 
-## Options
+## Evidence export
+
+`tenet evidence` exports selected source and complete contract documents without model requests. It accepts the same
+input selection as `check` and writes one JSON object. See [Evidence](./evidence.md) for source identities, scope,
+size limits, and examples of preparing a focused question.
+
+## Check options
 
 | Option | Default | Purpose |
 | --- | --- | --- |

@@ -1,11 +1,11 @@
-use crate::{CheckResult, Event, Plan, Stage, Status};
+use crate::{CheckResult, Event, EvidencePacket, Stage, Status};
 use anyhow::{Context as _, Result};
 use ev_grep_core::{Evaluator, Outcome};
 use std::{cell::Cell, path::Path, time::Instant};
 use tenet_contracts::Contract;
 
 pub(super) struct Context<'a, E, F> {
-    pub(super) plan: &'a Plan,
+    pub(super) evidence: &'a EvidencePacket<'a>,
     pub(super) contract: &'a Contract,
     pub(super) evaluator: &'a E,
     pub(super) emit: &'a F,
@@ -21,7 +21,7 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
 ) -> Result<CheckResult> {
     let started = Instant::now();
     let contract = context.contract;
-    let mode = context.plan.mode;
+    let mode = context.evidence.plan.mode;
     let mut result = CheckResult {
         mode,
         change_kind: None,
@@ -48,7 +48,7 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
         contract: contract.name.clone(),
         path: result.path.clone(),
     })?;
-    let change = context.plan.change(path);
+    let change = context.evidence.change(path);
     let judged = async {
         let change = change?;
         result.change_kind = Some(change.kind);
@@ -66,7 +66,7 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
             .map(|s| blake3::hash(s.as_bytes()).to_hex().to_string());
         let source = change.source()?;
         result.source_hash = Some(blake3::hash(source.text.as_bytes()).to_hex().to_string());
-        judge(context, &change, &mut result).await
+        judge(context, change, &mut result).await
     }
     .await;
     if let Err(error) = judged {
@@ -82,7 +82,9 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
     change: &crate::Change,
     result: &mut CheckResult,
 ) -> Result<()> {
-    let state = context.plan.file_input(context.contract, change)?;
+    let state = context
+        .evidence
+        .file_input(context.contract, &change.path)?;
     result.input_bytes = Some(serde_json::to_vec(&state)?.len());
     if context.requests.get() >= context.max_requests {
         result.status = Status::Incomplete;

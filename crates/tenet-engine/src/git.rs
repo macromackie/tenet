@@ -33,7 +33,7 @@ pub(crate) struct Changes {
     pub base: String,
 }
 
-pub(crate) fn changed(root: &Path, reference: &str) -> Result<Changes> {
+pub(crate) fn changed(root: &Path, reference: &str, discovered: &[PathBuf]) -> Result<Changes> {
     ensure!(
         !reference.starts_with('-'),
         "Git reference cannot start with '-'"
@@ -83,7 +83,13 @@ pub(crate) fn changed(root: &Path, reference: &str) -> Result<Changes> {
         .filter(|s| !s.is_empty())
     {
         if let Ok(path) = top.join(std::str::from_utf8(name)?).strip_prefix(root) {
-            paths.entry(path.to_owned()).or_insert(None);
+            let start = discovered.partition_point(|candidate| candidate.as_path() < path);
+            for candidate in discovered[start..]
+                .iter()
+                .take_while(|candidate| candidate.starts_with(path))
+            {
+                paths.entry(candidate.clone()).or_insert(None);
+            }
         }
     }
     Ok(Changes { paths, base })
