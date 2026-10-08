@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.3
+
+- Reduce repeated inventory paths in combined assessments by using directory trees when they encode to fewer bytes.
+  Smaller inventories retain expanded path lists, and tree nesting is bounded.
+- Preserve exact inventory, selected, supporting, and omitted paths alongside complete captured source and changes.
+  JSONL scope diagnostics and the version 1 offline evidence format are unchanged; combined input sizes and hashes
+  reflect the chosen encoding. Model questions, confidence routing, and request limits are unchanged.
+
 ## v0.6.2
 
 - Speed up scope checks for large file selections and avoid repeated scope calculations during JSON dry runs.

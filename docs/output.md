@@ -82,6 +82,8 @@ is retained regardless of relevance answers. Omitted paths come from inventory o
 fields describe the supplied state, not proof that it contains every necessary implementation.
 The same diagnostics and evidence hash remain available if the provider fails. Oversize reasons give measured bytes;
 source is never truncated to fit.
+Inventory metadata may use [compact directory trees](./limits.md); scope diagnostics retain expanded paths, while
+`input_bytes` and `evidence_hash` describe the actual encoded assessment input.
 
 Version 3 replaces the run-wide `partial` flag with each conclusion's `scope` (`full_contract` or `selected_subjects`)
 and separates raw answers from routing. Consumers should retain useful diagnostics and ignore unknown fields. A reason describes the evidence limit; it does not turn an unresolved assessment into a pass.

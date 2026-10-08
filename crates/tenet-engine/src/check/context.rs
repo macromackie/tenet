@@ -1,60 +1,54 @@
-use std::collections::BTreeSet;
+mod paths;
+mod scope;
+
+use anyhow::Result;
+use serde_json::Value;
 
 use super::conclusion::Completion;
-use crate::Mode;
-use crate::change::check_size;
-use anyhow::Result;
+use crate::{ContextSummary, Mode, change::check_size};
+
+pub(super) struct CombinedContext {
+    pub state: Value,
+    pub summary: ContextSummary,
+    pub hash: String,
+}
 
 impl Completion<'_> {
-    pub(super) fn evidence(&self) -> Result<serde_json::Value> {
-        let plan = self.evidence.plan;
-        let inventory: Vec<_> = plan
-            .inventory
-            .iter()
-            .filter(|path| path.starts_with(&self.contract.scope))
-            .collect();
-        let selected_files: Vec<_> = plan
-            .files
-            .iter()
-            .filter(|path| plan.in_scope(path, &self.contract.scope))
-            .collect();
-        let changes = selected_files
+    pub(super) fn evidence(&self) -> Result<CombinedContext> {
+        let scope = scope::Scope::new(self.evidence.plan, self.contract);
+        let changes = scope
+            .selected
             .iter()
             .map(|path| self.evidence.change(path))
             .collect::<Result<Vec<_>>>()?;
-        let mut included = BTreeSet::new();
-        let mut files = Vec::new();
-        for change in &changes {
-            included.insert(change.path.clone());
-            files.push(change.current_input());
-        }
-        let mut support_files = Vec::new();
-        for change in &plan.context {
-            if included.insert(change.path.clone()) {
-                files.push(change.current_input());
-                support_files.push(&change.path);
-            }
-        }
-        let omitted_source: Vec<_> = inventory
+        let mut files: Vec<_> = changes
             .iter()
-            .filter(|path| !included.contains(**path))
+            .map(|change| change.current_input())
             .collect();
-        let changes = if plan.mode == Mode::Diff {
+        for path in &scope.support {
+            files.push(self.evidence.change(path)?.current_input());
+        }
+        let changes = if self.evidence.plan.mode == Mode::Diff {
             changes
         } else {
             Vec::new()
         };
-        let state = serde_json::json!({
-            "contract": self.contract.body,
-            "requested_scope": plan.requested_scope(self.contract),
-            "selected_files": selected_files,
-            "support_files": support_files,
-            "inventory": inventory,
-            "files": files,
-            "changes": changes,
-            "omitted_source": omitted_source,
-        });
-        check_size("combined context", serde_json::to_vec(&state)?.len())?;
-        Ok(state)
+        let mut fields = serde_json::Map::from_iter([
+            ("contract".into(), serde_json::json!(self.contract.body)),
+            ("requested_scope".into(), serde_json::json!(scope.requested)),
+            ("selected_files".into(), serde_json::json!(scope.selected)),
+            ("support_files".into(), serde_json::json!(scope.support)),
+            ("files".into(), serde_json::json!(files)),
+            ("changes".into(), serde_json::json!(changes)),
+        ]);
+        fields.extend(paths::metadata(&scope)?);
+        let state = Value::Object(fields);
+        let encoded = serde_json::to_vec(&state)?;
+        check_size("combined context", encoded.len())?;
+        Ok(CombinedContext {
+            state,
+            summary: scope.summary(encoded.len()),
+            hash: blake3::hash(&encoded).to_hex().to_string(),
+        })
     }
 }

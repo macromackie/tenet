@@ -10,6 +10,11 @@ It can detect missing required files and inspect cross-file requirements when th
 do not prune selected evidence. Conflicting file failures remain visible after the repository assessment.
 It does not retrieve external dependencies, execute the commands written in contracts, or run an agent investigation.
 
+Tenet uses directory trees for inventory metadata when they encode to fewer bytes than expanded path lists.
+The trees preserve every inventory path and distinguish supplied source from paths whose contents are omitted.
+Selected subjects and supporting files remain separate. Tree nesting is bounded, and source text and changes remain complete.
+Both encodings use the same scope facts for the assessment and its report. The version 1 offline evidence format is unchanged.
+
 Each source file and encoded change or repository context for model assessment is limited to 64 KiB. Queries are limited to 8 KiB, encoded provider requests to 96 KiB, and responses to 64 KiB.
 Oversized selected inputs produce errors. Repository context that cannot be supplied completely leaves the contract unresolved. Inputs are never silently truncated.
 Large scopes may therefore need a reviewing agent to complete the assessment. Narrowing positional paths or explicit

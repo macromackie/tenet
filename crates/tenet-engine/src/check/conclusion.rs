@@ -5,8 +5,8 @@ use ev_grep_core::{Evaluator, Outcome, Uncertainty};
 use tenet_contracts::Contract;
 
 use crate::{
-    CheckResult, ConclusionReason, ContextSummary, ContractResult, ContractStatus, Event,
-    EvidencePacket, Mode, RequestedScope, Stage, Status, Summary,
+    CheckResult, ConclusionReason, ContractResult, ContractStatus, Event, EvidencePacket, Mode,
+    RequestedScope, Stage, Status, Summary,
 };
 
 pub(crate) struct Completion<'a> {
@@ -62,8 +62,8 @@ impl Completion<'_> {
                 "Request budget exhausted before combined assessment.",
             ));
         }
-        let state = match self.evidence() {
-            Ok(state) => state,
+        let context = match self.evidence() {
+            Ok(context) => context,
             Err(error) => {
                 let limit = error.is::<crate::change::InputLimit>();
                 let mut result = self.decision(
@@ -81,16 +81,11 @@ impl Completion<'_> {
                 return Ok(result);
             }
         };
-        let encoded = serde_json::to_vec(&state)?;
-        let evidence_hash = blake3::hash(&encoded).to_hex().to_string();
-        let context = ContextSummary {
-            input_bytes: encoded.len(),
-            limit_bytes: ev_grep_core::MAX_FILE_BYTES,
-            included_files: state["files"].as_array().map_or(0, Vec::len),
-            selected_files: serde_json::from_value(state["selected_files"].clone())?,
-            support_files: serde_json::from_value(state["support_files"].clone())?,
-            omitted_files: serde_json::from_value(state["omitted_source"].clone())?,
-        };
+        let super::context::CombinedContext {
+            state,
+            summary: context,
+            hash: evidence_hash,
+        } = context;
         let query = super::prompt::query(Stage::Completeness, self.evidence.plan.mode);
         self.requests.set(self.requests.get() + 1);
         self.local_requests.set(self.local_requests.get() + 1);
