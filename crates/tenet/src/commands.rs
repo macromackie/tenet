@@ -130,6 +130,7 @@ async fn evaluate(
         let evidence = plan.capture().await?;
         let mut errors = 0;
         for c in &plan.contracts {
+            let scope = (kind == ReporterKind::Jsonl).then(|| plan.requested_scope(c));
             for path in plan.files.iter().filter(|p| {
                 p.starts_with(&c.scope)
                     || plan
@@ -149,7 +150,7 @@ async fn evaluate(
                     writeln!(
                         io::stdout(),
                         "{}",
-                        serde_json::json!({"version":3,"type":"selected","contract":c.name,"scope":plan.requested_scope(c),"path":path,"contract_hash":c.hash,"input_bytes":input_bytes,"input_limit_bytes":tenet_engine::MAX_FILE_BYTES,"error":error})
+                        serde_json::json!({"version":3,"type":"selected","contract":c.name,"scope":scope,"path":path,"contract_hash":c.hash,"input_bytes":input_bytes,"input_limit_bytes":tenet_engine::MAX_FILE_BYTES,"error":error})
                     )?;
                 } else {
                     writeln!(io::stdout(), "{}  {}", c.name, path.display())?;

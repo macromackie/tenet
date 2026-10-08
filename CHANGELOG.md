@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.6.2
+
+- Speed up scope checks for large file selections and avoid repeated scope calculations during JSON dry runs.
+  Selected files, scope classifications, and report contents are unchanged.
+
 ## v0.6.1
 
 - Retain every selected captured source in combined assessments, including files classified as not applicable.

@@ -61,6 +61,7 @@ impl Plan {
     }
 
     pub fn requested_scope(&self, contract: &tenet_contracts::Contract) -> crate::RequestedScope {
+        let selected: BTreeSet<_> = self.files.iter().collect();
         let mut scoped_candidates = self
             .candidate_files
             .iter()
@@ -72,7 +73,7 @@ impl Plan {
                 .iter()
                 .any(|selector| contract.scope.starts_with(selector));
         let covers_scope = (scoped_candidates.peek().is_some() || covers_empty_scope)
-            && scoped_candidates.all(|path| self.files.contains(path));
+            && scoped_candidates.all(|path| selected.contains(path));
         if covers_scope {
             crate::RequestedScope::FullContract
         } else {
