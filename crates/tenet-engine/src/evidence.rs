@@ -108,7 +108,7 @@ impl EvidencePacket<'_> {
             .get(path)
             .with_context(|| format!("source was not captured: {}", path.display()))?
             .as_ref()
-            .map_err(|error| anyhow::anyhow!("{error}"))
+            .map_err(|error| anyhow::anyhow!("{}: {error}", path.display()))
     }
 
     pub fn file_input(

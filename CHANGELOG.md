@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.4
+
+- Size-check complete contract context before file assessments. Oversized scopes remain unresolved without spending model requests, preserving budget for other contracts.
+- Retain actual and allowed bytes, source scope, and evidence identity on oversized-context results. Captured source failures still block execution and name the affected file.
+- Reuse the prepared evidence for the final assessment. Model questions, fitting inputs, confidence routing, and request limits are unchanged.
+
 ## v0.6.3
 
 - Reduce repeated inventory paths in combined assessments by using directory trees when they encode to fewer bytes.

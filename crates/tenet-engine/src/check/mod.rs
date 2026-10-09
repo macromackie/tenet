@@ -96,6 +96,15 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
             path: contract.path.display().to_string(),
             total: subjects.len(),
         })?;
+        let prepared = match context::prepare(self.evidence, contract) {
+            context::Preparation::Ready(context) => context,
+            context::Preparation::Unresolved(conclusion) => {
+                let mut summary = Summary::default();
+                summary.conclude(&conclusion);
+                summary.elapsed_ms = started.elapsed().as_millis();
+                return Ok((summary, *conclusion));
+            }
+        };
         let context = assess::Context {
             evidence: self.evidence,
             contract,
@@ -133,7 +142,7 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
             min_confidence: self.options.min_confidence,
             local_requests: &local_requests,
         }
-        .assess(self.evaluator, self.emit)
+        .assess(prepared, self.evaluator, self.emit)
         .await?;
         summary.conclude(&conclusion);
         summary.requests = local_requests.get();

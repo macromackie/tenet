@@ -27,24 +27,12 @@ impl Completion<'_> {
         reason_code: ConclusionReason,
         reason: &str,
     ) -> ContractResult {
-        ContractResult {
-            status,
-            scope: self.evidence.plan.requested_scope(self.contract),
-            confidence: None,
-            reason: reason.into(),
-            reason_code,
-            context: None,
-            assessment: None,
-            routing: None,
-            evidence_hash: None,
-            error: None,
-            conflicting_files: Vec::new(),
-            request: None,
-        }
+        decision(self.evidence, self.contract, status, reason_code, reason)
     }
 
     pub(crate) async fn assess(
         &self,
+        context: super::context::CombinedContext,
         evaluator: &impl Evaluator,
         emit: &impl Fn(Event) -> Result<()>,
     ) -> Result<ContractResult> {
@@ -62,25 +50,6 @@ impl Completion<'_> {
                 "Request budget exhausted before combined assessment.",
             ));
         }
-        let context = match self.evidence() {
-            Ok(context) => context,
-            Err(error) => {
-                let limit = error.is::<crate::change::InputLimit>();
-                let mut result = self.decision(
-                    ContractStatus::Unresolved,
-                    if limit {
-                        ConclusionReason::ContextTooLarge
-                    } else {
-                        ConclusionReason::ContextUnavailable
-                    },
-                    &format!("Combined context unavailable: {error}"),
-                );
-                if !limit {
-                    result.error = Some(error.to_string());
-                }
-                return Ok(result);
-            }
-        };
         let super::context::CombinedContext {
             state,
             summary: context,
@@ -190,5 +159,28 @@ impl Completion<'_> {
             ConclusionReason::Compliance,
             "The supplied evidence supports compliance across the full contract scope.",
         )
+    }
+}
+
+pub(super) fn decision(
+    evidence: &EvidencePacket<'_>,
+    contract: &Contract,
+    status: ContractStatus,
+    reason_code: ConclusionReason,
+    reason: &str,
+) -> ContractResult {
+    ContractResult {
+        status,
+        scope: evidence.plan.requested_scope(contract),
+        confidence: None,
+        reason: reason.into(),
+        reason_code,
+        context: None,
+        assessment: None,
+        routing: None,
+        evidence_hash: None,
+        error: None,
+        conflicting_files: Vec::new(),
+        request: None,
     }
 }
