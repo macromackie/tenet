@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.6
+
+- Classify oversized source files, including the base revision, as unresolved `context_too_large` instead of an
+  unavailable-source error. Preserve the path and byte limit without truncating source or spending model requests.
+  Unreadable and binary source still report execution errors.
+
 ## v0.6.5
 
 - Limit diff contract discovery to scopes containing changed or renamed files. A malformed contract in an unrelated folder no longer blocks the diff's inventory or check.

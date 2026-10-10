@@ -42,8 +42,12 @@ pub(super) fn prepare(evidence: &EvidencePacket<'_>, contract: &Contract) -> Pre
             }
         },
         Err(error) => {
-            result.reason = format!("Combined context unavailable: {error}");
-            result.error = Some(error.to_string());
+            result.reason = format!("Combined context unavailable: {error:#}");
+            if error.is::<crate::change::InputLimit>() {
+                result.reason_code = ConclusionReason::ContextTooLarge;
+            } else {
+                result.error = Some(format!("{error:#}"));
+            }
         }
     }
     Preparation::Unresolved(Box::new(result))
@@ -51,22 +55,25 @@ pub(super) fn prepare(evidence: &EvidencePacket<'_>, contract: &Contract) -> Pre
 
 fn capture(evidence: &EvidencePacket<'_>, contract: &Contract) -> Result<CombinedContext> {
     let scope = scope::Scope::new(evidence.plan, contract);
-    let changes = scope
-        .selected
-        .iter()
-        .map(|path| evidence.change(path))
-        .collect::<Result<Vec<_>>>()?;
-    let mut files: Vec<_> = changes
-        .iter()
-        .map(|change| change.current_input())
-        .collect();
-    for path in &scope.support {
-        files.push(evidence.change(path)?.current_input());
+    let mut inputs = Vec::new();
+    let mut limit = None;
+    for path in scope.selected.iter().chain(&scope.support) {
+        match evidence.change(path) {
+            Ok(change) => inputs.push(change),
+            Err(error) if error.is::<crate::change::InputLimit>() => {
+                limit.get_or_insert(error);
+            }
+            Err(error) => return Err(error),
+        }
     }
+    if let Some(error) = limit {
+        return Err(error);
+    }
+    let files: Vec<_> = inputs.iter().map(|change| change.current_input()).collect();
     let changes = if evidence.plan.mode == Mode::Diff {
-        changes
+        &inputs[..scope.selected.len()]
     } else {
-        Vec::new()
+        &[]
     };
     let mut fields = serde_json::Map::from_iter([
         ("contract".into(), serde_json::json!(contract.body)),

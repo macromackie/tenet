@@ -120,10 +120,7 @@ pub(crate) fn before(root: &Path, base: &str, path: &Path) -> Result<Option<Stri
     let size: usize = String::from_utf8(output(&top, &["cat-file", "-s", &object])?)?
         .trim()
         .parse()?;
-    ensure!(
-        size <= ev_grep_core::MAX_FILE_BYTES,
-        "base file exceeds 64 KiB: {relative}"
-    );
+    crate::change::check_size("base file", size)?;
     let bytes = output(&top, &["cat-file", "blob", &object])?;
     ensure!(!bytes.contains(&0), "binary base file: {relative}");
     Ok(Some(

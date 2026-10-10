@@ -3,7 +3,7 @@ members = ["crates/tenet", "crates/tenet-contracts", "crates/tenet-engine"]
 resolver = "3"
 
 [workspace.package]
-version = "0.6.5"
+version = "0.6.6"
 edition = "2024"
 rust-version = "1.98"
 publish = false
@@ -26,8 +26,8 @@ tokio = { version = "1", features = ["macros", "rt", "signal", "sync", "time"] }
 tempfile = "3"
 annotate-snippets = "0.12"
 console = "0.16"
-ev-grep-core = { git = "https://github.com/macromackie/ev-grep", rev = "2dd0eca1d9dd29202b067e798e7c8b182fec2ee6" }
-ev-grep-jev = { git = "https://github.com/macromackie/ev-grep", rev = "2dd0eca1d9dd29202b067e798e7c8b182fec2ee6" }
+ev-grep-core = { git = "https://github.com/macromackie/ev-grep", rev = "90584f35389bd3e1f27187cfe0debd527cb590d0" }
+ev-grep-jev = { git = "https://github.com/macromackie/ev-grep", rev = "90584f35389bd3e1f27187cfe0debd527cb590d0" }
 tenet-contracts = { path = "crates/tenet-contracts" }
 tenet-engine = { path = "crates/tenet-engine" }
 

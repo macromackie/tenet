@@ -108,7 +108,15 @@ impl EvidencePacket<'_> {
             .get(path)
             .with_context(|| format!("source was not captured: {}", path.display()))?
             .as_ref()
-            .map_err(|error| anyhow::anyhow!("{}: {error}", path.display()))
+            .map_err(|error| {
+                let retained =
+                    if let Some(limit) = error.downcast_ref::<crate::change::InputLimit>() {
+                        anyhow::Error::new(*limit)
+                    } else {
+                        anyhow::anyhow!("{error:#}")
+                    };
+                retained.context(path.display().to_string())
+            })
     }
 
     pub fn file_input(

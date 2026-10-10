@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use ev_grep_core::{MAX_FILE_BYTES, Source, SourceRead};
+use ev_grep_core::{MAX_FILE_BYTES, Source, SourceRead, SourceTooLarge};
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -77,10 +77,10 @@ impl Change {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct InputLimit {
     label: &'static str,
-    bytes: usize,
+    bytes: u64,
 }
 
 impl std::fmt::Display for InputLimit {
@@ -97,13 +97,28 @@ impl std::error::Error for InputLimit {}
 
 pub(crate) fn check_size(label: &'static str, bytes: usize) -> Result<()> {
     if bytes > MAX_FILE_BYTES {
-        return Err(InputLimit { label, bytes }.into());
+        return Err(InputLimit {
+            label,
+            bytes: bytes as u64,
+        }
+        .into());
     }
     Ok(())
 }
 
 pub(crate) fn text(root: &Path, path: &Path) -> Result<String> {
-    match ev_grep_core::read_source(&root.join(path))? {
+    let source = ev_grep_core::read_source(&root.join(path)).map_err(|error| {
+        if let Some(limit) = error.downcast_ref::<SourceTooLarge>() {
+            InputLimit {
+                label: "source file",
+                bytes: limit.bytes,
+            }
+            .into()
+        } else {
+            error
+        }
+    })?;
+    match source {
         SourceRead::Text(source) => Ok(source.text),
         SourceRead::Binary => anyhow::bail!(
             "binary input cannot establish contract compliance: {}",

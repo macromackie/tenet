@@ -16,7 +16,7 @@ Selected subjects and supporting files remain separate. Tree nesting is bounded,
 Both encodings use the same scope facts for the assessment and its report. The version 1 offline evidence format is unchanged.
 
 Each source file and encoded change or repository context for model assessment is limited to 64 KiB. Queries are limited to 8 KiB, encoded provider requests to 96 KiB, and responses to 64 KiB.
-Oversized or unreadable source files produce errors. Before spending model requests for a contract, Tenet assembles its complete repository context. If the encoded context exceeds the limit, the contract remains unresolved with `context_too_large`, its actual and allowed byte counts, and the selected, supporting, and omitted paths. It spends no file or repository requests for that contract. Inputs are never silently truncated.
+Oversized source files leave the contract unresolved with `context_too_large`, the path, and actual and allowed byte counts. Unreadable or binary source remains an execution error. Before spending model requests for a contract, Tenet assembles its complete repository context. If the encoded context exceeds the limit, the contract remains unresolved with `context_too_large`, its actual and allowed byte counts, and the selected, supporting, and omitted paths. It spends no file or repository requests for that contract. Inputs are never silently truncated.
 Large scopes may therefore need a reviewing agent to complete the assessment. Narrowing positional paths or explicit
 context changes the supplied evidence; record the remaining scope instead of treating a smaller check as full coverage.
 
