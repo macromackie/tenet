@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.6.5
+
+- Limit diff contract discovery to scopes containing changed or renamed files. A malformed contract in an unrelated folder no longer blocks the diff's inventory or check.
+- Keep validation strict for affected scopes, explicit named contracts, and repository-wide validation.
+
 ## v0.6.4
 
 - Size-check complete contract context before file assessments. Oversized scopes remain unresolved without spending model requests, preserving budget for other contracts.

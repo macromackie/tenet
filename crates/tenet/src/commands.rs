@@ -22,7 +22,6 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
             Ok(0)
         }
         Command::Contracts { command } => {
-            let contracts = tenet_engine::discover_contracts(&cli.root)?;
             match command {
                 Contracts::List { path, base, json } => {
                     if let Some(path) = path {
@@ -32,21 +31,18 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
                             "--for path must be relative to the project root"
                         );
                     }
-                    let plan = base
-                        .as_ref()
-                        .map(|base| {
-                            tenet_engine::plan(
-                                &cli.root,
-                                &Selection {
-                                    base: Some(base.clone()),
-                                    ..Selection::default()
-                                },
-                            )
-                        })
-                        .transpose()?;
-                    let contracts = plan
-                        .as_ref()
-                        .map_or(contracts.as_slice(), |plan| plan.contracts.as_slice());
+                    let (contracts, contract_changes) = if let Some(base) = base {
+                        let plan = tenet_engine::plan(
+                            &cli.root,
+                            &Selection {
+                                base: Some(base.clone()),
+                                ..Selection::default()
+                            },
+                        )?;
+                        (plan.contracts, plan.contract_changes)
+                    } else {
+                        (tenet_engine::discover_contracts(&cli.root)?, Vec::new())
+                    };
                     let selected: Vec<_> = contracts
                         .iter()
                         .filter(|c| path.as_ref().is_none_or(|p| p.starts_with(&c.scope)))
@@ -56,7 +52,7 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
                         writeln!(
                             io::stdout(),
                             "{}",
-                            serde_json::json!({"version":1,"contracts":entries,"contract_changes":plan.as_ref().map(|p| p.contract_changes.as_slice()).unwrap_or(&[])})
+                            serde_json::json!({"version":1,"contracts":entries,"contract_changes":contract_changes})
                         )?;
                     } else {
                         for c in selected {
@@ -65,6 +61,7 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
                     }
                 }
                 Contracts::View { name } => {
+                    let contracts = tenet_engine::discover_contracts(&cli.root)?;
                     let c = contracts
                         .iter()
                         .find(|c| &c.name == name)

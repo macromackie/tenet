@@ -44,6 +44,8 @@ The caller owns establishing the baseline and running full checks when contracts
 
 `contracts list --base REF --json` returns the containing contract scopes in evaluation order, plus changed contract paths.
 It needs no model credentials. New and old paths participate, including deletions and moves.
+Diff discovery validates contracts in those scopes. Malformed contracts in unrelated folders do not block the diff;
+`validate` still checks every contract, and selecting a contract by name requires repository-wide discovery.
 
 ## Snapshot and patch
 

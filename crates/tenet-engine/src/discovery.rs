@@ -69,14 +69,29 @@ pub(crate) fn paths(root: &Path) -> Result<Vec<PathBuf>> {
 }
 
 pub fn discover_contracts(root: &Path) -> Result<Vec<Contract>> {
+    read_contracts(root, &paths(root)?, |_| true)
+}
+
+fn read_contracts(
+    root: &Path,
+    paths: &[PathBuf],
+    include_scope: impl Fn(&Path) -> bool,
+) -> Result<Vec<Contract>> {
     let mut contracts = Vec::new();
-    for path in paths(root)? {
+    for path in paths {
         if path.file_name().is_none_or(|n| n != "CONTRACT.md")
             || !path.components().any(|p| p.as_os_str() == ".contracts")
         {
             continue;
         }
-        let full = root.join(&path);
+        let scope: PathBuf = path
+            .iter()
+            .take_while(|part| *part != ".contracts")
+            .collect();
+        if !include_scope(&scope) {
+            continue;
+        }
+        let full = root.join(path);
         ensure!(
             full.symlink_metadata()?.is_file(),
             "contract must be a regular file: {}",
@@ -88,7 +103,7 @@ pub fn discover_contracts(root: &Path) -> Result<Vec<Contract>> {
             path.display()
         );
         contracts.push(tenet_contracts::parse(
-            &path,
+            path,
             &fs::read_to_string(&full)
                 .with_context(|| format!("cannot read {}", path.display()))?,
         )?);
@@ -119,7 +134,21 @@ pub fn discover_contracts(root: &Path) -> Result<Vec<Contract>> {
 
 pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
     let root = root.canonicalize().context("invalid project root")?;
-    let mut contracts = discover_contracts(&root)?;
+    let discovered = paths(&root)?;
+    let changes = selection
+        .base
+        .as_ref()
+        .map(|r| git::changed(&root, r, &discovered))
+        .transpose()?;
+    let mut contracts = read_contracts(&root, &discovered, |scope| {
+        selection.contract.is_some()
+            || changes.as_ref().is_none_or(|changes| {
+                changes.paths.iter().any(|(path, old)| {
+                    path.starts_with(scope)
+                        || old.as_ref().is_some_and(|path| path.starts_with(scope))
+                })
+            })
+    })?;
     if let Some(name) = &selection.contract {
         contracts.retain(|c| &c.name == name);
         ensure!(!contracts.is_empty(), "unknown contract: {name}");
@@ -147,12 +176,6 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
         ensure!(full.starts_with(&root), "selected path escapes project");
         selectors.push(full.strip_prefix(&root)?.to_owned());
     }
-    let discovered = paths(&root)?;
-    let changes = selection
-        .base
-        .as_ref()
-        .map(|r| git::changed(&root, r, &discovered))
-        .transpose()?;
     let inventory: Vec<_> = discovered.into_iter().filter(|p| !is_contract(p)).collect();
     let candidates: Vec<_> = if let Some(changes) = &changes {
         changes
@@ -189,18 +212,6 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
                 .collect()
         })
         .unwrap_or_default();
-    if selection.contract.is_none()
-        && let Some(changes) = &changes
-    {
-        contracts.retain(|contract| {
-            changes.paths.iter().any(|(path, old)| {
-                path.starts_with(&contract.scope)
-                    || old
-                        .as_ref()
-                        .is_some_and(|path| path.starts_with(&contract.scope))
-            })
-        });
-    }
     let selected_candidates: Vec<_> = candidates
         .iter()
         .filter(|p| {
