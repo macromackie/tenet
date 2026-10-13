@@ -27,6 +27,10 @@ request budget does not raise this bound.
 
 The offline [`evidence` export](./evidence.md#bounds-and-errors) has a separate packet limit; it does not enlarge model inputs.
 
+`tenet contracts update` merges line by line with `git merge-file`. Rewrapping a paragraph changes every line in it,
+so an upstream edit to that paragraph conflicts as a whole. Shared contracts keep one sentence per line to limit this.
+The merge does not understand Markdown or meaning; review every merged contract.
+
 The shared request budget covers applicability, verification, and repository assessments, including failed attempts.
 Each file uses one request that asks relevance and violation together. A contract may use one additional repository request.
 File and repository assessments share the jobs limit across independent contracts. Final summaries retain scope and numeric order.

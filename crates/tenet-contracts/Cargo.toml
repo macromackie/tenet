@@ -12,6 +12,7 @@ repository.workspace = true
 anyhow.workspace = true
 pulldown-cmark.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 serde_yaml.workspace = true
 blake3.workspace = true
 

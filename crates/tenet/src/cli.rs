@@ -40,6 +40,67 @@ pub(crate) enum Contracts {
     View {
         name: String,
     },
+    #[command(flatten)]
+    Adoption(Adoption),
+}
+
+/// Install and update shared contracts through .tenet.lock.
+#[derive(Subcommand)]
+pub(crate) enum Adoption {
+    /// Install a shared contract and record it in .tenet.lock.
+    Add {
+        #[arg(
+            value_name = "SOURCE/NAME[@REF]",
+            help = "Library contract; without a ref, the highest vX.Y.Z tag"
+        )]
+        spec: String,
+        /// Directory whose .contracts receives the next free number.
+        #[arg(long, required_unless_present = "path", conflicts_with = "path")]
+        scope: Option<PathBuf>,
+        /// Record an existing CONTRACT.md instead of writing a new copy.
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Local contract name when the upstream name is already used.
+        #[arg(long, conflicts_with = "path")]
+        name: Option<String>,
+        #[arg(long, conflicts_with = "path", value_parser = clap::value_parser!(u32).range(1..))]
+        number: Option<u32>,
+        /// Register a source as ALIAS=URL; repeat as needed.
+        #[arg(long = "source")]
+        sources: Vec<String>,
+    },
+    /// Compare installed contracts with their sources.
+    Outdated {
+        /// Report only local edits, without fetching sources.
+        #[arg(long)]
+        offline: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Take upstream changes, merging local edits three ways.
+    Update {
+        /// Installed contracts to update; all when omitted.
+        paths: Vec<PathBuf>,
+        /// Move to this tag, branch, or commit instead of the newest.
+        #[arg(long = "ref")]
+        reference: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show upstream changes and local edits since the locked version.
+    Diff {
+        path: PathBuf,
+        /// Print the base, upstream, and local texts.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove an installed contract and its lock entry.
+    Remove {
+        path: PathBuf,
+        /// Keep the file as an ordinary local contract.
+        #[arg(long)]
+        keep_file: bool,
+    },
 }
 
 #[derive(Args)]

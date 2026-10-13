@@ -26,6 +26,15 @@ Tenet checks relevant files and their combined context, then reports one conclus
 Each model conclusion preserves raw confidence separately from routing. Unresolved contracts need follow-up and exit 3.
 Selected-path checks assess their combined evidence and can report `clear` without claiming full contract verification.
 
+Install shared contracts from the public [tenet-contracts](https://github.com/macromackie/tenet-contracts) library:
+
+```sh
+tenet contracts add tenet/data-and-apis --scope packages/api
+tenet contracts update             # Take later releases, keeping local edits
+```
+
+See [Guidance](docs/guidance.md) for local adaptations and conflicts.
+
 Read every applicable contract during a review. Tenet helps choose where to investigate first; the outer reviewer owns the final judgment. See [Reviews](docs/reviews.md).
 
 ## Review changes

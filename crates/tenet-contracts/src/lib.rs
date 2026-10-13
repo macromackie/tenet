@@ -1,5 +1,6 @@
 //! Numbered Markdown requirements.
 
+mod lock;
 mod markdown;
 mod parse;
 
@@ -7,7 +8,8 @@ use std::{ops::Range, path::PathBuf};
 
 use serde::Serialize;
 
-pub use parse::{DocumentError, parse};
+pub use lock::{DEFAULT_SOURCE, DEFAULT_SOURCE_URL, Entry, LOCK_FILE, Lock, content_hash};
+pub use parse::{DocumentError, is_kebab, name_of, parse, with_name};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Contract {

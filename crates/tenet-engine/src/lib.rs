@@ -1,5 +1,6 @@
 //! Scoped file selection and ordered, bounded contract evaluation.
 
+pub mod adoption;
 mod change;
 mod check;
 mod discovery;

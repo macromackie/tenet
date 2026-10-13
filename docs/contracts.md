@@ -77,6 +77,15 @@ tenet contracts list --for src/users.ts
 tenet contracts view database-failures
 ```
 
+## Shared contracts
+
+`tenet contracts add tenet/NAME --scope DIR` installs a contract from the public
+[tenet-contracts](https://github.com/macromackie/tenet-contracts) library as an ordinary local file. It takes the next
+number in the scope and keeps the library name unless the project already uses it; `--name` chooses another.
+`.tenet.lock` records where each copy came from. Put local exceptions under a final `## Local adaptations` heading so
+updates merge cleanly. Lines that begin with `<<<<<<< ` or `>>>>>>> ` are unresolved conflict markers and fail
+validation. See [Guidance](./guidance.md).
+
 ## Examples
 
 Use ordinary fenced code blocks to explain allowed and disallowed behavior. Label them in prose.

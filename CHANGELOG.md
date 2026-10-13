@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.7.0
+
+- Install shared contracts with `tenet contracts add tenet/NAME --scope DIR`. Contracts come from the public
+  [tenet-contracts](https://github.com/macromackie/tenet-contracts) library or any Git source registered with
+  `--source ALIAS=URL`. A committed `.tenet.lock` records each copy's release, commit, and content hash.
+- Take library releases with `tenet contracts outdated` and `tenet contracts update`. Unedited copies are replaced,
+  edited copies merge three ways, and overlapping edits leave diff3 conflict markers with exit 1.
+  `tenet contracts diff` and `tenet contracts remove` inspect and drop copies.
+- `tenet validate` rejects unresolved conflict markers in contracts and checks `.tenet.lock`. Discovery skips the lock,
+  and `check` and `evidence` never read it.
+
 ## v0.6.6
 
 - Classify oversized source files, including the base revision, as unresolved `context_too_large` instead of an
