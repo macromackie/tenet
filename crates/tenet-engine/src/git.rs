@@ -10,6 +10,7 @@ pub(crate) fn output(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .arg("-C")
         .arg(root)
         .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
         .output()
         .context("cannot run Git")?;
     ensure!(

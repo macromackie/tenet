@@ -1,3 +1,4 @@
+mod adoption;
 mod cli;
 mod commands;
 mod diagnostics;

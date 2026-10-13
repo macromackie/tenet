@@ -1,6 +1,6 @@
-use std::{error::Error, fmt, path::Path};
+use std::{error::Error, fmt, ops::Range, path::Path};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 
 use crate::{Contract, markdown};
@@ -42,6 +42,14 @@ pub fn parse(path: &Path, document: &str) -> Result<Contract> {
 
 fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
     ensure!(document.len() <= 65536, "contract exceeds 65536 bytes");
+    if let Some(line) = conflict_marker(document) {
+        return Err(DocumentError {
+            path: path.to_owned(),
+            line,
+            message: "unresolved merge conflict marker".into(),
+        }
+        .into());
+    }
     let folder = path
         .parent()
         .context("contract requires a numbered directory")?;
@@ -64,7 +72,7 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
     );
     let number: u32 = digits.parse()?;
     ensure!(
-        number > 0 && kebab(suffix),
+        number > 0 && is_kebab(suffix),
         "contract directory must be NNN-kebab-case with a positive number"
     );
     let mut lines = document.split_inclusive('\n');
@@ -89,7 +97,10 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
             line: error.location().map_or(2, |loc| loc.line() + 1),
             message: error.to_string(),
         })?;
-    ensure!(kebab(&metadata.name), "name must be lowercase kebab-case");
+    ensure!(
+        is_kebab(&metadata.name),
+        "name must be lowercase kebab-case"
+    );
     ensure!(
         !metadata.message.trim().is_empty(),
         "message must not be empty"
@@ -124,7 +135,54 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
     })
 }
 
-fn kebab(value: &str) -> bool {
+/// Replace the frontmatter `name` value, leaving every other byte unchanged.
+pub fn with_name(document: &str, name: &str) -> Result<String> {
+    let value = name_value(document)?;
+    Ok(format!(
+        "{}{name}{}",
+        &document[..value.start],
+        &document[value.end..]
+    ))
+}
+
+/// Return the frontmatter `name` value without validating the rest of the document.
+pub fn name_of(document: &str) -> Result<&str> {
+    Ok(&document[name_value(document)?])
+}
+
+fn name_value(document: &str) -> Result<Range<usize>> {
+    let mut lines = document.split_inclusive('\n');
+    let first = lines.next().unwrap_or_default();
+    ensure!(
+        first.trim_end() == "---",
+        "contract requires YAML frontmatter"
+    );
+    let mut offset = first.len();
+    for line in lines {
+        if line.trim_end() == "---" {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix("name:") {
+            let start = offset + "name:".len() + rest.len() - rest.trim_start().len();
+            return Ok(start..start + rest.trim().len());
+        }
+        offset += line.len();
+    }
+    bail!("contract frontmatter has no name")
+}
+
+/// Return the 1-based line of the first Git conflict marker, if any.
+pub(crate) fn conflict_marker(text: &str) -> Option<usize> {
+    text.lines()
+        .position(|line| {
+            ["<<<<<<<", ">>>>>>>"]
+                .iter()
+                .any(|marker| line == *marker || line.starts_with(&format!("{marker} ")))
+        })
+        .map(|index| index + 1)
+}
+
+pub fn is_kebab(value: &str) -> bool {
     !value.is_empty()
         && value.split('-').all(|part| {
             !part.is_empty()

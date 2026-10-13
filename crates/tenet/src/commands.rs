@@ -18,11 +18,18 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
         Command::Validate => {
             let contracts = tenet_engine::discover_contracts(&cli.root)?;
             ensure!(!contracts.is_empty(), "no contracts found");
+            let installed = tenet_engine::adoption::validate_lock(&cli.root)?;
             writeln!(io::stdout(), "{} contracts valid", contracts.len())?;
+            if installed > 0 {
+                writeln!(io::stdout(), "{installed} installed contracts recorded")?;
+            }
             Ok(0)
         }
         Command::Contracts { command } => {
             match command {
+                Contracts::Adoption(command) => {
+                    return crate::adoption::execute(&cli.root, command);
+                }
                 Contracts::List { path, base, json } => {
                     if let Some(path) = path {
                         ensure!(

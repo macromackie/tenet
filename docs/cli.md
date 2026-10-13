@@ -7,6 +7,8 @@ tenet evidence src/ --base origin/main > evidence.json
 tenet validate
 tenet contracts list [--for PATH] [--base REF] [--json]
 tenet contracts view NAME
+tenet contracts add SOURCE/NAME[@REF] (--scope DIR | --path FILE)
+tenet contracts outdated | update | diff PATH | remove PATH
 ```
 
 Use `--root DIR` to choose a project; the default is the working directory. Contracts outside that root do not participate.
@@ -65,6 +67,33 @@ Without a patch this is a full check. With a patch it is a diff check. `--base` 
 input selection as `check` and writes one JSON object. See [Evidence](./evidence.md) for source identities, scope,
 size limits, and examples of preparing a focused question.
 
+## Shared contracts
+
+These commands install contracts from a library and record them in `.tenet.lock` at the project root. They are the only
+commands that read the lock or reach the network, and they need `git`. `check`, `evidence`, and `contracts list` and
+`view` never read the lock; `validate` checks its format and that each recorded file exists. See
+[Guidance](./guidance.md) for the workflow.
+
+| Command | Effect |
+| --- | --- |
+| `add SOURCE/NAME[@REF] --scope DIR` | Copy a library contract into the next numbered folder under `DIR/.contracts` |
+| `add SOURCE/NAME[@REF] --path FILE` | Record an existing copy; its differences count as local edits |
+| `outdated [--offline] [--json]` | Show each copy's release, newest release, and local state |
+| `update [PATH ...] [--ref REF] [--json]` | Replace unedited copies, merge edited ones, and move the lock |
+| `diff PATH [--json]` | Show upstream changes since the recorded release, then local edits |
+| `remove PATH [--keep-file]` | Delete a copy and its lock entry, or keep the file as a local contract |
+
+`SOURCE` is `tenet` for https://github.com/macromackie/tenet-contracts. Register another Git library with
+`--source ALIAS=URL` on `add`; Git uses your existing credentials. Without `@REF`, `add` takes the highest `vX.Y.Z` tag.
+`add` also accepts `--name LOCAL` and `--number N`. `update` refuses uncommitted changes to the lock or selected
+contracts, so every merge is a reviewable diff.
+
+| Exit | `add`, `diff`, `remove` | `outdated` | `update` |
+| --- | --- | --- | --- |
+| 0 | Done | Every copy is current and present | Every copy is unchanged, replaced, or merged |
+| 1 | Not used | A copy changed or was removed upstream, or is missing | A conflict was written or a contract was removed upstream |
+| 2 | Invalid input or execution error | Same | Same |
+
 ## Check options
 
 | Option | Default | Purpose |
@@ -86,7 +115,7 @@ inputs can fit while their combined context exceeds the limit. `validate` and `c
 
 ## Discovery
 
-The inventory respects Git ignore files and `.ignore`. Tool configuration and other hidden files are included. `.git`, `.context`, `.agents`, `.tenet`, `.env`, `.env.*`, `target`, `node_modules`, `dist`, and `out` are excluded. Contract support files are not code subjects.
+The inventory respects Git ignore files and `.ignore`. Tool configuration and other hidden files are included. `.git`, `.context`, `.agents`, `.tenet`, `.tenet.lock`, `.env`, `.env.*`, `target`, `node_modules`, `dist`, and `out` are excluded. Contract support files are not code subjects.
 Tracked changes to ordinary files are assessed even if current ignore rules hide them from the inventory. Never store credentials in files you submit for assessment.
 
 Symlinks are not followed. Selected symlinks, binary files, unreadable inputs, and oversized inputs do not count as passing checks.
