@@ -144,10 +144,12 @@ pub fn add(root: &Path, request: &AddRequest<'_>) -> Result<Added> {
             !url.is_empty() && !url.starts_with('-'),
             "invalid URL for source {alias}"
         );
+        // `tenet` always names the public library, even before a lock exists.
         if let Some(existing) = lock.sources.get(alias) {
             ensure!(
                 existing == url,
-                "source {alias} is already {existing} in {LOCK_FILE}"
+                "source {alias} already names {existing}; register {url} under another alias, \
+                 as in --source local={url} with local/{contract}"
             );
         }
         lock.sources.insert(alias.into(), url.into());

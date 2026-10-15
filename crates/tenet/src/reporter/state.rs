@@ -28,6 +28,7 @@ impl Reporter<'_> {
                 Status::Uncertain => self.summary.uncertain += 1,
                 Status::Error => self.summary.errors += 1,
                 Status::Incomplete => self.summary.incomplete += 1,
+                Status::Skipped => self.summary.skipped += 1,
             }
         }
     }

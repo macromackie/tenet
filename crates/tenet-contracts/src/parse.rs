@@ -24,6 +24,7 @@ impl Error for DocumentError {}
 struct Metadata {
     name: String,
     message: String,
+    paths: Option<Vec<String>>,
 }
 
 pub fn parse(path: &Path, document: &str) -> Result<Contract> {
@@ -105,6 +106,19 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
         !metadata.message.trim().is_empty(),
         "message must not be empty"
     );
+    let paths = metadata
+        .paths
+        .as_deref()
+        .map(crate::scope::Patterns::new)
+        .transpose()
+        .map_err(|error| DocumentError {
+            path: path.to_owned(),
+            line: document[..end]
+                .lines()
+                .position(|line| line.starts_with("paths:"))
+                .map_or(1, |index| index + 1),
+            message: error.to_string(),
+        })?;
     let markdown = markdown::parse(&document[offset..], offset, document)?;
     let rules_span = markdown
         .sections
@@ -132,6 +146,7 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
         rules_span: rules_start..rules_end,
         hash: blake3::hash(document.as_bytes()).to_hex().to_string(),
         document: document.to_owned(),
+        paths,
     })
 }
 

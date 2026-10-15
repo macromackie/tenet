@@ -3,10 +3,11 @@
 Try a contract against code that follows it, then make a small change that breaks it.
 
 ```sh
-tenet check --snapshot fixtures/cache/project
-tenet check --snapshot fixtures/cache/project --patch fixtures/cache/patches/broken-hit.patch
+tenet check --snapshot ./project
+tenet check --snapshot ./project --patch ./break-cache.patch
 ```
 
+`./project` holds the code and its `.contracts`, and the patch makes one small change that breaks a contract.
 The first command checks the whole project. The second assumes the original project satisfied the
 contracts and checks whether the patch breaks them. Each run uses an isolated copy.
 

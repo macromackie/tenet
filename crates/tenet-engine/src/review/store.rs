@@ -6,13 +6,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, bail};
-use serde_json::Value;
+use anyhow::{Context, Result, bail, ensure};
+use serde::{Deserialize, Serialize};
+
+use crate::git;
 
 pub(crate) const DIRECTORY: &str = ".tenet";
 pub(crate) const EVENTS: &str = "events.jsonl";
 pub(crate) const ANSWERS: &str = "answers.jsonl";
-const FORMAT: u64 = 1;
+/// The largest text `blobs/` keeps. Blobs only let `show` diff later edits, and larger files are
+/// mostly generated, so keeping them would let a few files dominate the directory.
+pub const MAX_BLOB_BYTES: usize = 1024 * 1024;
 
 pub(crate) struct Store {
     directory: PathBuf,
@@ -29,22 +33,28 @@ impl Store {
             fs::write(&ignore, "*\n")
                 .with_context(|| format!("cannot write {}", ignore.display()))?;
         }
+        untracked(&directory)?;
         Ok(Self { directory })
     }
 
-    pub(crate) fn existing(root: &Path) -> Option<Self> {
+    pub(crate) fn existing(root: &Path) -> Result<Option<Self>> {
         let directory = root.join(DIRECTORY);
-        directory.is_dir().then_some(Self { directory })
+        if !directory.is_dir() {
+            return Ok(None);
+        }
+        untracked(&directory)?;
+        Ok(Some(Self { directory }))
     }
 
     pub(crate) fn path(&self, name: &str) -> PathBuf {
         self.directory.join(name)
     }
 
+    /// Keep `text` under its hash, unless it exceeds `MAX_BLOB_BYTES`, and return the hash.
     pub(crate) fn write_blob(&self, text: &str) -> Result<String> {
         let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
         let path = self.directory.join("blobs").join(&hash);
-        if !path.exists() {
+        if text.len() <= MAX_BLOB_BYTES && !path.exists() {
             let mut file = tempfile::NamedTempFile::new_in(self.directory.join("blobs"))?;
             file.write_all(text.as_bytes())?;
             file.persist(&path)
@@ -64,57 +74,114 @@ impl Store {
     }
 }
 
-/// Read every complete line. A final line without a newline is a write still in progress, or one
-/// that never finished; it was never acknowledged, so it is not part of the log.
-pub(crate) fn read(path: &Path) -> Result<Vec<Value>> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+/// Refuse review state that Git tracks. Records and cached answers describe one machine's review;
+/// committed, they would settle contracts in every clone and in CI.
+fn untracked(directory: &Path) -> Result<()> {
+    // Outside a Git work tree nothing is tracked.
+    if git::output(directory, &["rev-parse", "--is-inside-work-tree"]).is_err() {
+        return Ok(());
+    }
+    let tracked = git::output(directory, &["ls-files", "-z", "--", "."])?;
+    if let Some(name) = tracked
+        .split(|byte| *byte == 0)
+        .find(|name| !name.is_empty())
+    {
+        bail!(
+            "Git tracks {DIRECTORY}/{}, but review state belongs to one machine: committed records \
+             and cached answers would settle contracts in every clone. Untrack it with \
+             `git rm -r --cached {DIRECTORY}` and commit the removal",
+            String::from_utf8_lossy(name)
+        );
+    }
+    Ok(())
+}
+
+/// The complete lines after byte `start`, and the offset where they end. A final line without a
+/// newline is a write still in progress, or one that never finished; it was never acknowledged,
+/// so it is not part of the file.
+pub(crate) fn read(path: &Path, start: u64) -> Result<(String, u64)> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound && start == 0 => {
+            return Ok((String::new(), 0));
+        }
         Err(error) => return Err(error).with_context(|| format!("cannot read {}", path.display())),
     };
-    let complete = text.rfind('\n').map_or("", |end| &text[..end]);
-    complete
-        .lines()
+    let text = read_after(&mut file, path, start)?;
+    let end = start + text.len() as u64;
+    Ok((text, end))
+}
+
+fn read_after(file: &mut File, path: &Path, start: u64) -> Result<String> {
+    ensure!(
+        file.metadata()?.len() >= start,
+        "{} is shorter than when Tenet read it; it must only ever be appended to",
+        path.display()
+    );
+    file.seek(SeekFrom::Start(start))?;
+    let mut text = String::new();
+    file.read_to_string(&mut text)
+        .with_context(|| format!("cannot read {}", path.display()))?;
+    text.truncate(text.rfind('\n').map_or(0, |end| end + 1));
+    Ok(text)
+}
+
+/// Each nonblank line of `text` with its 1-based number, counting from `first`, and the format
+/// version in its `v` field.
+pub(crate) fn lines<'a>(
+    path: &'a Path,
+    text: &'a str,
+    first: usize,
+) -> impl Iterator<Item = Result<(usize, u64, &'a str)>> + 'a {
+    #[derive(Deserialize)]
+    struct Format {
+        v: Option<u64>,
+    }
+
+    text.lines()
         .enumerate()
         .filter(|(_, line)| !line.is_empty())
-        .map(|(index, line)| {
-            let mut value: Value = serde_json::from_str(line)
-                .with_context(|| format!("{}:{}: invalid JSON", path.display(), index + 1))?;
-            let format = value.get("v").and_then(Value::as_u64);
-            if format != Some(FORMAT) {
-                bail!(
-                    "{}:{}: unsupported format {format:?}; this Tenet reads format {FORMAT}",
-                    path.display(),
-                    index + 1
-                );
-            }
-            if let Value::Object(fields) = &mut value {
-                fields.remove("v");
-            }
-            Ok(value)
+        .map(move |(index, line)| {
+            let number = first + index + 1;
+            let format: Format = serde_json::from_str(line)
+                .with_context(|| format!("{}:{number}: invalid JSON", path.display()))?;
+            let format = format.v.with_context(|| {
+                format!(
+                    "{}:{number}: the line has no format version",
+                    path.display()
+                )
+            })?;
+            Ok((number, format, line))
         })
-        .collect()
 }
 
-/// Append lines under an exclusive lock.
-pub(crate) fn append(path: &Path, values: Vec<Value>) -> Result<()> {
-    append_with(path, false, |_| Ok(values))
+/// Append lines in `format` under an exclusive lock.
+pub(crate) fn append<T: Serialize>(path: &Path, format: u64, lines: &[T]) -> Result<()> {
+    let mut file = lock(path)?;
+    write(&mut file, path, format, lines)?;
+    Ok(())
 }
 
-/// Append lines derived from the log as it stands while the lock is held, so numbers derived from
-/// existing lines cannot collide with a concurrent writer's.
-pub(crate) fn append_after(
+/// Append lines built from whatever other writers appended after byte `start`, under the lock, so
+/// numbers derived from the log cannot collide with a concurrent writer's. Returns the offset after
+/// the appended lines.
+pub(crate) fn append_after<T: Serialize>(
     path: &Path,
-    build: impl FnOnce(&[Value]) -> Result<Vec<Value>>,
-) -> Result<()> {
-    append_with(path, true, build)
+    start: u64,
+    format: u64,
+    build: impl FnOnce(&str) -> Result<Vec<T>>,
+) -> Result<u64> {
+    let mut file = lock(path)?;
+    let appended = read_after(&mut file, path, start)?;
+    let lines = build(&appended)?;
+    let written = write(&mut file, path, format, &lines)?;
+    Ok(start + (appended.len() + written) as u64)
 }
 
-fn append_with(
-    path: &Path,
-    read_existing: bool,
-    build: impl FnOnce(&[Value]) -> Result<Vec<Value>>,
-) -> Result<()> {
+/// Open the file for appending and take its lock. Only a writer holding the lock appends, so an
+/// unterminated tail under the lock is a write that was interrupted. Remove it, or the next line
+/// would join it.
+fn lock(path: &Path) -> Result<File> {
     let mut file = OpenOptions::new()
         .create(true)
         .read(true)
@@ -123,46 +190,40 @@ fn append_with(
         .with_context(|| format!("cannot open {}", path.display()))?;
     file.lock()
         .with_context(|| format!("cannot lock {}", path.display()))?;
-    discard_unfinished_line(&mut file)?;
-    let existing = if read_existing {
-        read(path)?
-    } else {
-        Vec::new()
-    };
-    let mut bytes = Vec::new();
-    for mut value in build(&existing)? {
-        if let Value::Object(fields) = &mut value {
-            fields.insert("v".into(), FORMAT.into());
+    let length = file.metadata()?.len();
+    if length > 0 {
+        let mut last = [0];
+        file.seek(SeekFrom::Start(length - 1))?;
+        file.read_exact(&mut last)?;
+        if last[0] != b'\n' {
+            file.seek(SeekFrom::Start(0))?;
+            let mut text = Vec::new();
+            file.read_to_end(&mut text)?;
+            let complete = text
+                .iter()
+                .rposition(|byte| *byte == b'\n')
+                .map_or(0, |end| end + 1);
+            file.set_len(complete as u64)?;
         }
-        serde_json::to_writer(&mut bytes, &value)?;
+    }
+    Ok(file)
+}
+
+fn write<T: Serialize>(file: &mut File, path: &Path, format: u64, lines: &[T]) -> Result<usize> {
+    #[derive(Serialize)]
+    struct Versioned<'a, T> {
+        v: u64,
+        #[serde(flatten)]
+        line: &'a T,
+    }
+
+    let mut bytes = Vec::new();
+    for line in lines {
+        serde_json::to_writer(&mut bytes, &Versioned { v: format, line })?;
         bytes.push(b'\n');
     }
     file.write_all(&bytes)
         .with_context(|| format!("cannot append to {}", path.display()))?;
     file.sync_data()?;
-    Ok(())
-}
-
-/// Only a writer holding the lock appends, so an unterminated tail under the lock is a write that
-/// was interrupted. Remove it before appending, or the next line would join it.
-fn discard_unfinished_line(file: &mut File) -> Result<()> {
-    let length = file.metadata()?.len();
-    if length == 0 {
-        return Ok(());
-    }
-    let mut last = [0];
-    file.seek(SeekFrom::Start(length - 1))?;
-    file.read_exact(&mut last)?;
-    if last[0] == b'\n' {
-        return Ok(());
-    }
-    file.seek(SeekFrom::Start(0))?;
-    let mut text = Vec::new();
-    file.read_to_end(&mut text)?;
-    let complete = text
-        .iter()
-        .rposition(|byte| *byte == b'\n')
-        .map_or(0, |end| end + 1);
-    file.set_len(complete as u64)?;
-    Ok(())
+    Ok(bytes.len())
 }

@@ -6,12 +6,14 @@ use std::{
     path::PathBuf,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result, ensure};
 use ev_grep_core::{Assessment, Outcome, Question};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::store;
+
+const FORMAT: u64 = 1;
 
 #[derive(Clone, Deserialize, Serialize)]
 struct Answer {
@@ -51,8 +53,16 @@ impl Answers {
         self.reuse = reuse;
         if let (true, Some(file)) = (reuse, &self.file) {
             let mut entries = self.entries.borrow_mut();
-            for value in store::read(file)? {
-                let line: Line = serde_json::from_value(value)?;
+            let (text, _) = store::read(file, 0)?;
+            for line in store::lines(file, &text, 0) {
+                let (number, format, line) = line?;
+                let location = || format!("{}:{number}", file.display());
+                ensure!(
+                    format == FORMAT,
+                    "{}: unsupported format {format}",
+                    location()
+                );
+                let line: Line = serde_json::from_str(line).with_context(location)?;
                 entries.insert(line.key, line.answers);
             }
         }
@@ -115,11 +125,11 @@ impl Answers {
             })
             .collect();
         if let Some(file) = &self.file {
-            let line = serde_json::to_value(Line {
+            let line = Line {
                 key: key.to_owned(),
                 answers: answers.clone(),
-            })?;
-            store::append(file, vec![line])?;
+            };
+            store::append(file, FORMAT, &[line])?;
         }
         self.entries.borrow_mut().insert(key.to_owned(), answers);
         Ok(())

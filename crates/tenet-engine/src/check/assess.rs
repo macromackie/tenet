@@ -16,6 +16,7 @@ pub(super) struct Context<'a, E, F> {
     pub(super) max_requests: usize,
     pub(super) min_confidence: f64,
     pub(super) local_requests: &'a Cell<usize>,
+    pub(super) refused: &'a Cell<usize>,
 }
 
 pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
@@ -35,8 +36,8 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
         contract_path: contract.path.display().to_string(),
         contract_hash: contract.hash.clone(),
         path: path.display().to_string(),
-        source_hash: None,
         input_bytes: None,
+        omitted: Vec::new(),
         status: Status::Error,
         message: contract.message.clone(),
         reason: None,
@@ -62,14 +63,13 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
             .map(|p| p.display().to_string());
         result.before_hash = change.before.as_deref().map(content_hash);
         result.after_hash = change.after.as_deref().map(content_hash);
-        let source = change.source()?;
-        result.source_hash = Some(content_hash(&source.text));
         judge(context, change, &mut result).await
     }
     .await;
     if let Err(error) = judged {
-        result.status = Status::Error;
-        result.reason = Some(error.to_string());
+        let (status, reason) = crate::input_status(&error);
+        result.status = status;
+        result.reason = Some(reason);
     }
     result.elapsed_ms = started.elapsed().as_millis();
     Ok(result)
@@ -80,10 +80,11 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
     change: &crate::Change,
     result: &mut CheckResult,
 ) -> Result<()> {
-    let state = context
+    let (state, omitted) = context
         .evidence
         .file_input(context.contract, &change.path)?;
     result.input_bytes = Some(serde_json::to_vec(&state)?.len());
+    result.omitted = omitted;
     let relevance = super::prompt::query(Stage::Applicability, result.mode);
     let violation = super::prompt::query(Stage::Verification, result.mode);
     let questions = [
@@ -102,6 +103,7 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
         answers
     } else {
         if context.requests.get() >= context.max_requests {
+            context.refused.set(context.refused.get() + 1);
             result.status = Status::Incomplete;
             result.reason = Some("request budget exhausted".into());
             return Ok(());

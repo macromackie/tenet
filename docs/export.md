@@ -14,14 +14,14 @@ as [`tenet check`](./cli.md). Output is always JSON; it has no `--json`, provide
 
 ## Contents
 
-The packet has `version: 1`, `kind: "tenet_evidence"`, and `hash_algorithm: "blake3"`.
+The packet has `version: 2`, `kind: "tenet_evidence"`, and `hash_algorithm: "blake3"`.
 Its main fields describe different parts of the review:
 
 | Fields | Meaning |
 | --- | --- |
 | `mode`, `base`, `head`, `assumption` | Full or diff mode, available Git revisions, and the compliant-base assumption for a diff |
 | `selected_paths`, `selected_files`, `support_files` | Requested selectors, selected subjects, and explicit context |
-| `inventory`, `omitted_files` | Discovered paths and inventory paths whose source is absent from the packet |
+| `inventory` | Discovered paths that the exported contracts govern |
 | `contract_changes` | Changed contract paths in a diff |
 | `contracts` | Complete documents, identities, scopes, and selection information |
 | `sources` | Captured before/after source, keyed by repository-relative path |
@@ -34,7 +34,8 @@ this archive does not remove those fences or their expected-answer labels.
 `rules_span` gives start-inclusive, end-exclusive UTF-8 byte offsets for Rules, or the body if no Rules section exists.
 It helps locate text; exceptions and other requirements can appear elsewhere in the contract. Read the complete body.
 `requested_scope` is `full_contract` or `selected_subjects`; `selected_files` and `omitted_files` describe that
-contract's portion of the packet. These are selection facts, not assessments of compliance or evidence sufficiency.
+contract's portion of the packet. `omitted_files` lists the files the contract governs whose source is absent from
+the packet. These are selection facts, not assessments of compliance or evidence sufficiency.
 
 Each source contains `kind`, `previous_path` for a rename, and `before` and `after` sides.
 An available side contains its complete `text` and a BLAKE3 `hash` of those UTF-8 bytes. A missing side is `null`.
@@ -54,8 +55,8 @@ its own inputs. Tenet does not import or replay evidence packets.
 ## Bounds and errors
 
 The default packet limit is 1 MiB. `--max-bytes N` accepts 1 through 67,108,864 bytes (64 MiB) and limits the
-complete encoded JSON plus its trailing newline. Each source side remains limited to 64 KiB. Existing
-supplementary-context limits also apply; raising the packet limit does not raise them.
+complete encoded JSON plus its trailing newline. Existing supplementary-context limits also apply; raising the packet
+limit does not raise them.
 
 Capture has a separate fixed 64 MiB bound, shared by checks, dry runs, and exports. It counts serialized contract
 data and original documents, plus each distinct source record including its path, before/after contents, patch, or
@@ -64,11 +65,11 @@ process memory. Exceeding it aborts before any model request or exported packet;
 `--max-bytes` does not raise this bound.
 
 Selection follows the normal [discovery rules](./cli.md#discovery). Omitted paths identify discovered source that
-was not captured; they are not a dependency analysis. Ignored and otherwise excluded paths may be absent from the
-inventory altogether. Choose supporting files explicitly when a question depends on callers or helpers.
+was not captured; they are not a dependency analysis. Ignored and excluded paths, and paths no exported contract
+governs, are absent from the inventory. Choose supporting files explicitly when a question depends on callers or helpers.
 
-Success exits 0 and means the export completed. Invalid, unreadable, binary, or oversized selected inputs exit 2
-before any packet is written. Cancellation exits 130. Inputs are never silently truncated.
+Success exits 0 and means the export completed. Binary, non-UTF-8, and symbolic-link sources appear as
+`{"unreadable": reason}` without contents. Invalid selected inputs and read errors exit 2 before any packet is written. Cancellation exits 130. Inputs are never silently truncated.
 Unlike a check report, this output contains source text and complete contract documents. Store and share it accordingly.
 
 ## Ask a focused question

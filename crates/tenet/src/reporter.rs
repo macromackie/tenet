@@ -10,9 +10,11 @@ use std::{
 use anyhow::Result;
 use console::Term;
 use tenet_contracts::Contract;
-use tenet_engine::{ContractState, ContractStatus, Event, Pending, Stage, Status, Summary};
+use tenet_engine::{
+    ContractState, ContractStatus, Event, Pending, Stage, Status, Summary, review::Answer,
+};
 
-use crate::report_format::{contract_counts, counts, marker, paint, status};
+use crate::report_format::{Model, contract_counts, counts, marker, paint, status};
 use crate::{cli::ReporterKind, diagnostics};
 
 pub(crate) struct Reporter<'a> {
@@ -27,6 +29,13 @@ pub(crate) struct Reporter<'a> {
     active: BTreeMap<String, ContractProgress>,
     pub summary: Summary,
     contract_statuses: BTreeMap<&'static str, usize>,
+    /// Contracts a record settled rather than the model.
+    recorded: usize,
+    /// Contract documents the diff deletes, listed with the summary.
+    deleted: Vec<std::path::PathBuf>,
+    diff: bool,
+    /// The run's confidence threshold, shown beside an unresolved answer that fell short of it.
+    min_confidence: f64,
 }
 
 impl<'a> Reporter<'a> {
@@ -48,6 +57,10 @@ impl<'a> Reporter<'a> {
             active: BTreeMap::new(),
             summary: Summary::default(),
             contract_statuses: BTreeMap::new(),
+            recorded: 0,
+            deleted: Vec::new(),
+            diff: false,
+            min_confidence: tenet_engine::MIN_CONFIDENCE,
         }
     }
 
@@ -85,6 +98,9 @@ impl<'a> Reporter<'a> {
                 self.term
                     .write_line(&format!("TENET {}  {}\n", run.version, run.root))?;
                 self.term.write_line(&format!("Mode: {}", run.mode))?;
+                self.diff = run.base.is_some();
+                self.deleted = run.deleted_contracts;
+                self.min_confidence = run.min_confidence;
                 if let Some(assumption) = run.assumption {
                     self.term.write_line(&format!("Assumption: {assumption}"))?;
                 }
@@ -143,8 +159,29 @@ impl<'a> Reporter<'a> {
                 state,
             } => {
                 let mut progress = self.active.remove(&contract).unwrap_or_default();
-                let (label, detail) = describe(&state, conclusion.as_deref());
+                let model = conclusion.as_deref().map(|c| Model {
+                    status: c.status,
+                    violation: c.violation,
+                    answer: c.assessment.as_ref().map(|answer| Answer {
+                        choice: answer.choice,
+                        confidence: answer.confidence,
+                    }),
+                    min_confidence: Some(self.min_confidence),
+                });
+                let unchanged = if conclusion.as_ref().is_some_and(|c| c.cached) {
+                    " · unchanged"
+                } else {
+                    ""
+                };
+                let (label, note) = crate::report_format::state(&state, model, unchanged);
                 *self.contract_statuses.entry(label).or_default() += 1;
+                self.recorded += usize::from(matches!(
+                    state,
+                    ContractState::Settled {
+                        record: Some(_),
+                        ..
+                    }
+                ));
                 let files = if progress.done > 0 {
                     progress.done
                 } else {
@@ -152,7 +189,7 @@ impl<'a> Reporter<'a> {
                 };
                 let text = format!("{files} file{}", if files == 1 { "" } else { "s" });
                 self.term.write_line(&format!(
-                    " {} {contract} ({text}) {}{detail}  {:.1}s",
+                    " {} {contract} ({text}) {} · {note}  {:.1}s",
                     marker(label),
                     paint(&label.to_lowercase()),
                     summary.elapsed_ms as f64 / 1000.0
@@ -207,6 +244,14 @@ impl<'a> Reporter<'a> {
                 {
                     self.term.write_line(&format!("  {}", conclusion.reason))?;
                 }
+                if let Some(context) = conclusion.as_ref().and_then(|c| c.context.as_ref())
+                    && context.is_reduced()
+                {
+                    self.term.write_line(&format!(
+                        "  Combined input {}",
+                        crate::report_format::context(context)
+                    ))?;
+                }
                 if let Some(issue) = progress
                     .issues
                     .iter()
@@ -236,10 +281,25 @@ impl<'a> Reporter<'a> {
                 for failure in &self.failures {
                     failure.write(self.contracts, &mut self.term)?;
                 }
+                let recorded = if self.recorded > 0 {
+                    format!(" · {} settled by record", self.recorded)
+                } else {
+                    String::new()
+                };
                 self.term.write_line(&format!(
-                    "\n Contracts  {}",
+                    "\n Contracts  {}{recorded}",
                     contract_counts(&self.contract_statuses, self.contracts.len())
                 ))?;
+                if self.diff && self.contracts.is_empty() {
+                    self.term
+                        .write_line(" No contract's scope has changes since the base.")?;
+                }
+                for path in &self.deleted {
+                    self.term.write_line(&format!(
+                        " Deleted    {}; its requirement no longer applies",
+                        path.display()
+                    ))?;
+                }
                 if self.kind == ReporterKind::Verbose {
                     self.term
                         .write_line(&format!("File evidence  {}", counts(&summary)))?;
@@ -249,8 +309,16 @@ impl<'a> Reporter<'a> {
                 } else {
                     String::new()
                 };
+                let over_budget = if summary.over_budget > 0 {
+                    format!(
+                        " · budget spent; {} more not sent, so their checks are incomplete",
+                        summary.over_budget
+                    )
+                } else {
+                    String::new()
+                };
                 self.term.write_line(&format!(
-                    " Requests   {}{cached}\n Duration   {:.2}s",
+                    " Requests   {}{cached}{over_budget}\n Duration   {:.2}s",
                     summary.requests,
                     summary.elapsed_ms as f64 / 1000.0
                 ))?;
@@ -262,8 +330,22 @@ impl<'a> Reporter<'a> {
                     self.term
                         .write_line("Cancelled; remaining checks were not completed.")?;
                 } else if let Some(first) = pending.first() {
-                    self.term
-                        .write_line(&format!(" Pending    {}", pending.join(", ")))?;
+                    let shown = pending
+                        .iter()
+                        .take(5)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let more = pending.len().saturating_sub(5);
+                    self.term.write_line(&format!(
+                        " Pending    {} · {shown}{}",
+                        pending.len(),
+                        if more > 0 {
+                            format!(" and {more} more")
+                        } else {
+                            String::new()
+                        }
+                    ))?;
                     let next = if revision.is_some() {
                         format!("tenet show {first}")
                     } else {
@@ -322,53 +404,6 @@ impl<'a> Reporter<'a> {
             )?;
         }
         Ok(())
-    }
-}
-
-/// The contract's label and a short note on where its state came from.
-fn describe(
-    state: &ContractState,
-    conclusion: Option<&tenet_engine::ContractResult>,
-) -> (&'static str, String) {
-    let confidence = conclusion
-        .and_then(|c| c.confidence)
-        .map(|score| format!(" ({:.0}% confidence)", score * 100.0))
-        .unwrap_or_default();
-    let cached = if conclusion.is_some_and(|c| c.cached) {
-        " · unchanged"
-    } else {
-        ""
-    };
-    match state {
-        ContractState::Settled {
-            conclusion: status,
-            record: Some(id),
-        } => (upper(*status), format!(" · recorded {id}")),
-        ContractState::Settled {
-            conclusion: status,
-            record: None,
-        } => (upper(*status), format!("{confidence}{cached}")),
-        ContractState::Pending { reason } => (
-            "PENDING",
-            match reason {
-                Pending::ModelFailed => format!(" · model failed{confidence} · confirm or dispute"),
-                Pending::ModelUnresolved => format!(" · model unresolved{confidence}"),
-                Pending::NotAssessed => " · not assessed".into(),
-                Pending::InputsChanged => " · inputs changed".into(),
-                Pending::NotChecked => " · not checked".into(),
-            },
-        ),
-    }
-}
-
-fn upper(status: ContractStatus) -> &'static str {
-    match status {
-        ContractStatus::Verified => "VERIFIED",
-        ContractStatus::Preserved => "PRESERVED",
-        ContractStatus::Clear => "CLEAR",
-        ContractStatus::Unaffected => "UNAFFECTED",
-        ContractStatus::Failed => "FAILED",
-        ContractStatus::Unresolved => "UNRESOLVED",
     }
 }
 

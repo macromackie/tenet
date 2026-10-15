@@ -65,8 +65,8 @@ struct Export<'a> {
 impl Serialize for Export<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let plan = self.evidence.plan;
-        let mut state = serializer.serialize_struct("Evidence", 16)?;
-        state.serialize_field("version", &1)?;
+        let mut state = serializer.serialize_struct("Evidence", 15)?;
+        state.serialize_field("version", &2)?;
         state.serialize_field("kind", "tenet_evidence")?;
         state.serialize_field("hash_algorithm", "blake3")?;
         state.serialize_field("mode", &plan.mode)?;
@@ -82,13 +82,12 @@ impl Serialize for Export<'_> {
             "support_files",
             &Sequence(plan.context.iter().map(|change| &change.path)),
         )?;
-        state.serialize_field("inventory", &plan.inventory)?;
         state.serialize_field(
-            "omitted_files",
+            "inventory",
             &Sequence(
                 plan.inventory
                     .iter()
-                    .filter(|path| !self.evidence.changes.contains_key(*path)),
+                    .filter(|path| plan.contracts.iter().any(|c| c.governs(path))),
             ),
         )?;
         state.serialize_field("contract_changes", &plan.contract_changes)?;
@@ -123,11 +122,13 @@ impl Serialize for Contracts<'_> {
             let selected = Sequence(
                 plan.files
                     .iter()
-                    .filter(|path| plan.in_scope(path, &contract.scope)),
+                    .filter(|path| plan.governs(contract, path)),
             );
-            let omitted = Sequence(plan.inventory.iter().filter(|path| {
-                path.starts_with(&contract.scope) && !self.0.changes.contains_key(*path)
-            }));
+            let omitted = Sequence(
+                plan.inventory
+                    .iter()
+                    .filter(|path| contract.governs(path) && !self.0.changes.contains_key(*path)),
+            );
             #[derive(Serialize)]
             struct Entry<'a, S, O> {
                 name: &'a str,
@@ -162,9 +163,24 @@ impl Serialize for Sources<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut sources = serializer.serialize_map(Some(self.0.changes.len()))?;
         for (path, change) in &self.0.changes {
-            let change = change.as_ref().map_err(|error| {
-                S::Error::custom(format!("cannot export {}: {error}", path.display()))
-            })?;
+            let change = match change {
+                Ok(change) => change,
+                Err(error) => match error.downcast_ref::<crate::change::Unreadable>() {
+                    Some(unreadable) => {
+                        sources.serialize_entry(
+                            path,
+                            &serde_json::json!({ "unreadable": unreadable.to_string() }),
+                        )?;
+                        continue;
+                    }
+                    None => {
+                        return Err(S::Error::custom(format!(
+                            "cannot export {}: {error:#}",
+                            path.display()
+                        )));
+                    }
+                },
+            };
             if change.before.is_none() && change.after.is_none() {
                 return Err(S::Error::custom(format!(
                     "captured source does not exist: {}",

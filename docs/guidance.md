@@ -95,7 +95,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          curl -fsSL https://tenet-contracts.com/v0.7.0/install.sh | bash
+          curl -fsSL https://tenet-contracts.com/v0.8.0/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - id: update
         run: |
@@ -121,11 +121,16 @@ A diff check assumes the base followed the old rules, so it cannot judge a chang
 contract whose `CONTRACT.md` changed against the whole repository. This needs provider credentials:
 
 ```sh
-git fetch origin main
-tenet contracts list --base origin/main --json \
+git fetch --unshallow origin main 2>/dev/null || git fetch origin main
+tenet contracts list --base "$(git merge-base origin/main HEAD)" --json \
   | jq -r '.contract_changes as $c | .contracts[] | select(.path | IN($c[])) | .name' \
-  | while read -r name; do tenet check --contract "$name" || exit $?; done
+  | { code=0; while read -r name; do tenet check --contract "$name" || code=$?; done; exit "$code"; }
 ```
+
+Comparing with the merge base leaves out contracts that changed only on `main`. The job checks every changed contract
+and exits with the last non-zero code. Exit 4 means a model answer awaits
+review. Records stay in the `.tenet/` folder of the machine that wrote them, and Tenet exits 2 if Git tracks that
+folder, so CI never sees them and reports the contract on every run.
 
 ## Skills
 

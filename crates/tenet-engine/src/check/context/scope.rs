@@ -18,7 +18,7 @@ impl<'a> Scope<'a> {
         let selected: Vec<_> = plan
             .files
             .iter()
-            .filter(|path| plan.in_scope(path, &contract.scope))
+            .filter(|path| plan.governs(contract, path))
             .collect();
         let mut supplied: BTreeSet<_> = selected.iter().copied().collect();
         let support = plan
@@ -29,7 +29,7 @@ impl<'a> Scope<'a> {
         let inventory: Vec<_> = plan
             .inventory
             .iter()
-            .filter(|path| path.starts_with(&contract.scope))
+            .filter(|path| contract.governs(path))
             .collect();
         let (supplied_inventory, omitted) = inventory
             .iter()
@@ -52,7 +52,10 @@ impl<'a> Scope<'a> {
             included_files: self.selected.len() + self.support.len(),
             selected_files: self.selected.iter().map(|path| (*path).clone()).collect(),
             support_files: self.support.iter().map(|path| (*path).clone()).collect(),
-            omitted_files: self.omitted.iter().map(|path| (*path).clone()).collect(),
+            omitted_files: self.omitted.len(),
+            before_omitted: false,
+            inventory_counted: false,
+            contents_omitted: Vec::new(),
         }
     }
 }

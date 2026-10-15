@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::OsStr,
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -27,12 +28,39 @@ pub struct Plan {
     pub base: Option<String>,
     pub head: Option<String>,
     pub mode: crate::Mode,
+    /// Every discovered file, contract documents included; each contract governs part of it.
     pub inventory: Vec<PathBuf>,
     pub candidate_files: Vec<PathBuf>,
     pub selected_paths: Vec<PathBuf>,
+    /// Selected paths that yield no subject for any planned contract.
+    pub excluded_paths: Vec<ExcludedPath>,
     pub previous_paths: BTreeMap<PathBuf, PathBuf>,
     pub context: Vec<crate::Change>,
     pub contract_changes: Vec<PathBuf>,
+}
+
+/// A selected path where a check assesses nothing, and why.
+#[derive(Clone, Debug, Serialize)]
+pub struct ExcludedPath {
+    pub path: PathBuf,
+    pub reason: Exclusion,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Exclusion {
+    /// Discovery finds no file there: ignore rules, a protected name, or an empty directory.
+    NotDiscovered,
+    /// Discovery finds files there, but no planned contract governs them.
+    NotGoverned,
+}
+
+/// Names never discovered at any depth: Git internals, review state, the adoption lock, and
+/// environment files that may hold credentials. Nested repositories and worktrees, which carry
+/// their own `.git`, are separate projects. Ignore files exclude everything else.
+fn protected(name: &OsStr) -> bool {
+    let name = name.to_string_lossy();
+    matches!(name.as_ref(), ".git" | ".tenet" | ".tenet.lock" | ".env") || name.starts_with(".env.")
 }
 
 pub(crate) fn paths(root: &Path) -> Result<Vec<PathBuf>> {
@@ -41,21 +69,10 @@ pub(crate) fn paths(root: &Path) -> Result<Vec<PathBuf>> {
         .require_git(false)
         .follow_links(false)
         .filter_entry(|entry| {
-            let name = entry.file_name().to_string_lossy();
             entry.depth() == 0
-                || (!matches!(
-                    name.as_ref(),
-                    ".git"
-                        | ".context"
-                        | ".agents"
-                        | ".tenet"
-                        | ".tenet.lock"
-                        | ".env"
-                        | "target"
-                        | "node_modules"
-                        | "dist"
-                        | "out"
-                ) && !name.starts_with(".env."))
+                || !(protected(entry.file_name())
+                    || entry.file_type().is_some_and(|t| t.is_dir())
+                        && entry.path().join(".git").symlink_metadata().is_ok())
         })
         .build();
     let mut paths = Vec::new();
@@ -177,16 +194,15 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
         ensure!(full.starts_with(&root), "selected path escapes project");
         selectors.push(full.strip_prefix(&root)?.to_owned());
     }
-    let inventory: Vec<_> = discovered.into_iter().filter(|p| !is_contract(p)).collect();
     let candidates: Vec<_> = if let Some(changes) = &changes {
         changes
             .paths
             .keys()
-            .filter(|p| !is_contract(p) && allowed(p))
+            .filter(|p| allowed(p))
             .cloned()
             .collect()
     } else {
-        inventory.clone()
+        discovered.clone()
     };
     let previous_paths: BTreeMap<_, _> = changes
         .as_ref()
@@ -213,39 +229,58 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
                 .collect()
         })
         .unwrap_or_default();
+    let selects = |selector: &Path, path: &Path| {
+        path.starts_with(selector)
+            || previous_paths
+                .get(path)
+                .is_some_and(|old| old.starts_with(selector))
+    };
     let selected_candidates: Vec<_> = candidates
         .iter()
-        .filter(|p| {
-            let old = previous_paths.get(*p);
-            selectors.is_empty()
-                || selectors
-                    .iter()
-                    .any(|s| p.starts_with(s) || old.is_some_and(|p| p.starts_with(s)))
-        })
+        .filter(|p| selectors.is_empty() || selectors.iter().any(|s| selects(s, p)))
         .collect();
     if selection.contract.is_none() && !selectors.is_empty() {
+        // Keep a contract when a selector covers its scope or selects a file it governs. An empty
+        // directory inside its scope keeps it too, so requirements for missing files stay checkable.
         contracts.retain(|contract| {
             selectors.iter().any(|selector| {
-                selector.starts_with(&contract.scope) || contract.scope.starts_with(selector)
-            }) || selected_candidates.iter().any(|path| {
-                path.starts_with(&contract.scope)
-                    || previous_paths
-                        .get(*path)
-                        .is_some_and(|old| old.starts_with(&contract.scope))
-            })
+                contract.scope.starts_with(selector)
+                    || (selector.starts_with(&contract.scope)
+                        && root.join(selector).is_dir()
+                        && !selected_candidates
+                            .iter()
+                            .any(|path| selects(selector, path)))
+            }) || selected_candidates
+                .iter()
+                .any(|path| governs(contract, &previous_paths, path))
         });
     }
     let files: Vec<_> = selected_candidates
         .into_iter()
         .filter(|path| {
-            contracts.iter().any(|contract| {
-                path.starts_with(&contract.scope)
-                    || previous_paths
-                        .get(*path)
-                        .is_some_and(|old| old.starts_with(&contract.scope))
-            })
+            contracts
+                .iter()
+                .any(|contract| governs(contract, &previous_paths, path))
         })
         .cloned()
+        .collect();
+    let excluded_paths = selectors
+        .iter()
+        .filter(|selector| !files.iter().any(|path| selects(selector, path)))
+        .filter_map(|selector| {
+            let reason = if candidates.iter().any(|path| selects(selector, path)) {
+                Exclusion::NotGoverned
+            } else if discovered.iter().any(|path| path.starts_with(selector)) {
+                // A diff with no changes here.
+                return None;
+            } else {
+                Exclusion::NotDiscovered
+            };
+            Some(ExcludedPath {
+                path: selector.clone(),
+                reason,
+            })
+        })
         .collect();
     let deleted = files
         .iter()
@@ -265,9 +300,10 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
         deleted,
         head,
         mode,
-        inventory,
+        inventory: discovered,
         candidate_files: candidates,
         selected_paths: selectors,
+        excluded_paths,
         previous_paths,
         context: Vec::new(),
         contract_changes,
@@ -275,25 +311,22 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
     })
 }
 
+/// Whether `contract` governs `path`, or the path it was renamed from.
+pub(crate) fn governs(
+    contract: &Contract,
+    previous_paths: &BTreeMap<PathBuf, PathBuf>,
+    path: &Path,
+) -> bool {
+    contract.governs(path)
+        || previous_paths
+            .get(path)
+            .is_some_and(|old| contract.governs(old))
+}
+
 pub(crate) fn is_contract(path: &Path) -> bool {
     path.components().any(|c| c.as_os_str() == ".contracts")
 }
 
 pub(crate) fn allowed(path: &Path) -> bool {
-    !path.components().any(|part| {
-        let name = part.as_os_str().to_string_lossy();
-        matches!(
-            name.as_ref(),
-            ".git"
-                | ".context"
-                | ".agents"
-                | ".tenet"
-                | ".tenet.lock"
-                | ".env"
-                | "target"
-                | "node_modules"
-                | "dist"
-                | "out"
-        ) || name.starts_with(".env.")
-    })
+    !path.components().any(|part| protected(part.as_os_str()))
 }

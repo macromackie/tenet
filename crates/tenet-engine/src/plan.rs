@@ -4,10 +4,11 @@ use std::{
 };
 
 use anyhow::{Result, ensure};
+use tenet_contracts::Contract;
 
 use crate::{
     Plan,
-    discovery::{allowed, is_contract},
+    discovery::{self, allowed, is_contract},
     git,
 };
 
@@ -20,22 +21,12 @@ impl Plan {
             .collect();
         for path in paths {
             ensure!(
-                path.components()
-                    .all(|part| matches!(part, Component::Normal(_)))
-                    && allowed(path)
-                    && !is_contract(path),
+                is_source(&self.root, path)?,
                 "context paths must be repository source files: {}",
                 path.display()
             );
             if !seen.insert(path.clone()) {
                 continue;
-            }
-            let full = self.root.join(path);
-            if full.exists() {
-                ensure!(
-                    full.canonicalize()?.starts_with(&self.root),
-                    "context path escapes repository"
-                );
             }
             let change = self.read_change(path)?;
             ensure!(
@@ -52,20 +43,42 @@ impl Plan {
         Ok(self)
     }
 
-    pub fn in_scope(&self, path: &Path, scope: &Path) -> bool {
-        path.starts_with(scope)
-            || self
-                .previous_paths
-                .get(path)
-                .is_some_and(|old| old.starts_with(scope))
+    /// Whether `contract` governs `path` at its current location or, for a rename, its previous one.
+    pub fn governs(&self, contract: &Contract, path: &Path) -> bool {
+        discovery::governs(contract, &self.previous_paths, path)
     }
 
-    pub fn requested_scope(&self, contract: &tenet_contracts::Contract) -> crate::RequestedScope {
+    /// Contract documents the diff deletes. Moving one counts too, unless discovery still finds a
+    /// contract document at its new path.
+    pub fn deleted_contracts(&self) -> Vec<PathBuf> {
+        let moved_to_contract = |old: &PathBuf| {
+            self.previous_paths.iter().any(|(new, previous)| {
+                previous == old
+                    && self.contract_changes.contains(new)
+                    && self.inventory.binary_search(new).is_ok()
+            })
+        };
+        self.contract_changes
+            .iter()
+            .filter(|path| !self.root.join(path).exists() && !moved_to_contract(path))
+            .cloned()
+            .collect()
+    }
+
+    /// Whether a diff changes none of the contract's files and not the contract itself, so the
+    /// contract is unaffected without a model request.
+    pub fn untouched(&self, contract: &Contract) -> bool {
+        self.mode == crate::Mode::Diff
+            && !self.files.iter().any(|path| self.governs(contract, path))
+            && !self.contract_changes.contains(&contract.path)
+    }
+
+    pub fn requested_scope(&self, contract: &Contract) -> crate::RequestedScope {
         let selected: BTreeSet<_> = self.files.iter().collect();
         let mut scoped_candidates = self
             .candidate_files
             .iter()
-            .filter(|path| self.in_scope(path, &contract.scope))
+            .filter(|path| self.governs(contract, path))
             .peekable();
         let covers_empty_scope = self.selected_paths.is_empty()
             || self
@@ -100,4 +113,17 @@ impl Plan {
         }
         Ok(change)
     }
+}
+
+/// Whether a caller may supply this path as repository source, as `--context` or as a record's
+/// evidence: relative, outside excluded and contract folders, and not leading out of the canonical
+/// `root` through a symbolic link.
+pub(crate) fn is_source(root: &Path, path: &Path) -> Result<bool> {
+    let relative = path
+        .components()
+        .all(|part| matches!(part, Component::Normal(_)))
+        && allowed(path)
+        && !is_contract(path);
+    let full = root.join(path);
+    Ok(relative && (!full.exists() || full.canonicalize()?.starts_with(root)))
 }

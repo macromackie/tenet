@@ -9,9 +9,10 @@ use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
 use crate::{
-    Change, Plan,
+    Change, Mode, Omitted, Plan,
+    change::Unreadable,
     check::context::scope::Scope,
-    review::{Role, ScopedFile},
+    review::{CapturedFile, Role, ScopedFile},
 };
 
 pub const MAX_CAPTURE_BYTES: usize = 64 * 1024 * 1024;
@@ -113,22 +114,27 @@ impl EvidencePacket<'_> {
             .with_context(|| format!("source was not captured: {}", path.display()))?
             .as_ref()
             .map_err(|error| {
-                let retained =
-                    if let Some(limit) = error.downcast_ref::<crate::change::InputLimit>() {
-                        anyhow::Error::new(*limit)
-                    } else {
-                        anyhow::anyhow!("{error:#}")
-                    };
+                let retained = if let Some(unreadable) = error.downcast_ref::<Unreadable>() {
+                    anyhow::Error::new(*unreadable)
+                } else {
+                    anyhow::anyhow!("{error:#}")
+                };
                 retained.context(path.display().to_string())
             })
     }
 
+    /// The model input for one file's check; an empty file has none. When the complete input
+    /// exceeds the limit, prior and then resulting contents are left out, but only when the patch
+    /// remains to show the change.
     pub fn file_input(
         &self,
         contract: &tenet_contracts::Contract,
         path: &Path,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<(serde_json::Value, Vec<Omitted>)> {
         let change = self.change(path)?;
+        if change.is_empty() {
+            return Err(Unreadable::Empty.into());
+        }
         let context: Vec<_> = self
             .plan
             .context
@@ -136,14 +142,33 @@ impl EvidencePacket<'_> {
             .filter(|support| support.path != change.path)
             .map(Change::current_input)
             .collect();
-        let state = serde_json::json!({
+        let mut state = serde_json::json!({
             "contract": contract.body,
             "change": change,
             "files": [change.current_input()],
             "context": context,
         });
-        crate::change::check_size("complete file input", serde_json::to_vec(&state)?.len())?;
-        Ok(state)
+        let mut omitted = Vec::new();
+        let patched = !change.patch.is_empty();
+        for (part, present) in [
+            (Omitted::Before, change.before.is_some() && patched),
+            (Omitted::Contents, change.after.is_some() && patched),
+        ] {
+            if !present || serde_json::to_vec(&state)?.len() <= crate::MAX_FILE_BYTES {
+                continue;
+            }
+            let slot = match part {
+                Omitted::Before => &mut state["change"]["before"],
+                Omitted::Contents => &mut state["files"][0]["contents"],
+            };
+            *slot = crate::change::omitted("too large; judge from the patch");
+            omitted.push(part);
+        }
+        crate::change::check_size(
+            "file input with only its patch",
+            serde_json::to_vec(&state)?.len(),
+        )?;
+        Ok((state, omitted))
     }
 
     /// Identities of the selected and supporting files one contract's assessment covers.
@@ -153,41 +178,68 @@ impl EvidencePacket<'_> {
         let support = scope.support.iter().map(|path| (*path, Role::Support));
         selected
             .chain(support)
-            .map(|(path, role)| match self.change(path) {
-                Ok(change) => ScopedFile {
-                    path: path.clone(),
-                    role,
-                    previous_path: change.previous_path.clone(),
-                    before: change.before.as_deref().map(content_hash),
-                    after: change.after.as_deref().map(content_hash),
-                    error: None,
-                },
-                Err(error) => ScopedFile {
-                    path: path.clone(),
-                    role,
-                    previous_path: self.plan.previous_paths.get(path).cloned(),
-                    before: None,
-                    after: None,
-                    error: Some(format!("{error:#}")),
+            .map(|(path, role)| ScopedFile {
+                role,
+                file: match self.change(path) {
+                    Ok(change) => CapturedFile {
+                        path: path.clone(),
+                        previous_path: change.previous_path.clone(),
+                        before: change.before.as_deref().map(content_hash),
+                        after: change.after.as_deref().map(content_hash),
+                        error: None,
+                        changed: match self.plan.mode {
+                            Mode::Diff => change.changed.clone(),
+                            Mode::Full => Vec::new(),
+                        },
+                    },
+                    Err(error) => CapturedFile {
+                        path: path.clone(),
+                        previous_path: self.plan.previous_paths.get(path).cloned(),
+                        before: None,
+                        after: None,
+                        error: Some(format!("{error:#}")),
+                        changed: Vec::new(),
+                    },
                 },
             })
             .collect()
     }
 
     /// Identify everything one contract's assessment covers: the contract document, mode, requested
-    /// scope, every selected and supporting file, and the scoped inventory. Model settings are not
+    /// scope, and every selected and supporting file. A full check also covers the scoped inventory,
+    /// since a file that joins the scope is unverified. A diff check assumes the base complies, so a
+    /// file the base gains outside the change leaves its input unchanged. Model settings are not
     /// part of it, so a record keeps applying to the code it describes.
     pub fn input_key(&self, contract: &tenet_contracts::Contract) -> String {
         let scope = Scope::new(self.plan, contract);
+        let inventory = (self.plan.mode == Mode::Full).then_some(scope.inventory);
+        // Changed lines follow from each file's contents, and keys made before Tenet recorded
+        // them must still match.
+        let mut files = self.scoped_files(contract);
+        for scoped in &mut files {
+            scoped.file.changed.clear();
+        }
         let facts = serde_json::json!({
             "contract": contract.hash,
             "path": contract.path,
             "mode": self.plan.mode,
             "scope": scope.requested,
-            "files": self.scoped_files(contract),
-            "inventory": scope.inventory,
+            "files": files,
+            "inventory": inventory,
         });
         content_hash(&facts.to_string())
+    }
+}
+
+/// How a file whose model input cannot be built is reported: skipped when it has no text,
+/// incomplete when its patch alone exceeds the input limit, and otherwise an error.
+pub fn input_status(error: &anyhow::Error) -> (crate::Status, String) {
+    if let Some(unreadable) = error.downcast_ref::<Unreadable>() {
+        (crate::Status::Skipped, unreadable.to_string())
+    } else if error.is::<crate::change::InputLimit>() {
+        (crate::Status::Incomplete, format!("{error:#}"))
+    } else {
+        (crate::Status::Error, format!("{error:#}"))
     }
 }
 
@@ -217,7 +269,7 @@ mod tests {
     async fn empty_and_unreadable_entries_still_exhaust_the_capture_budget() -> Result<()> {
         for contents in ["", "\0"] {
             let root = fixture()?;
-            for index in 0..40 {
+            for index in 0..80 {
                 fs::write(root.path().join(format!("source-{index}.rs")), contents)?;
             }
             let plan = plan(root.path(), &Selection::default())?;
