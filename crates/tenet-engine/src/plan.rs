@@ -1,46 +1,233 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
+    fmt,
     path::{Component, Path, PathBuf},
+    str::FromStr,
 };
 
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, bail, ensure};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use tenet_contracts::Contract;
 
 use crate::{
-    Plan,
+    Change, Plan,
     discovery::{self, allowed, is_contract},
     git,
 };
 
+/// A repository file, whole or one inclusive range of lines counted from 1, as `--context` and
+/// `record --evidence` name it: `PATH`, `PATH:LINE`, or `PATH:START-END`.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct SpanRequest {
+    pub path: PathBuf,
+    /// Inclusive, 1-based; absent for the whole file.
+    pub lines: Option<(usize, usize)>,
+}
+
+impl FromStr for SpanRequest {
+    type Err = anyhow::Error;
+
+    fn from_str(text: &str) -> Result<Self> {
+        if let Some((path, lines)) = text.rsplit_once(':')
+            && !path.is_empty()
+            && !lines.is_empty()
+            && lines.chars().all(|c| c.is_ascii_digit() || c == '-')
+        {
+            let line = |text: &str| text.parse::<usize>().ok().filter(|line| *line > 0);
+            let (start, end) = lines.split_once('-').unwrap_or((lines, lines));
+            return match (line(start), line(end)) {
+                (Some(start), Some(end)) if start <= end => Ok(Self {
+                    path: PathBuf::from(path),
+                    lines: Some((start, end)),
+                }),
+                _ => {
+                    bail!("invalid line range in {text}; use PATH:START-END, counting lines from 1")
+                }
+            };
+        }
+        Ok(Self {
+            path: PathBuf::from(text),
+            lines: None,
+        })
+    }
+}
+
+impl fmt::Display for SpanRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let path = self.path.display();
+        match self.lines {
+            None => write!(f, "{path}"),
+            Some((start, end)) if start == end => write!(f, "{path}:{start}"),
+            Some((start, end)) => write!(f, "{path}:{start}-{end}"),
+        }
+    }
+}
+
+/// Kept in the review log as the text `--context` accepts, so a plain path is a whole file.
+impl Serialize for SpanRequest {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for SpanRequest {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(D::Error::custom)
+    }
+}
+
+/// Lines of a `--context` file supplied in place of its whole resulting contents. A selected
+/// file's lines also stand in for its resulting contents wherever they are left out for size.
+#[derive(Clone, Debug, Serialize)]
+pub struct Excerpt {
+    /// Inclusive and 1-based, in order, with overlapping and adjacent ranges merged.
+    pub lines: Vec<[usize; 2]>,
+    /// What the model receives as the file's contents: a note naming the lines, and those lines,
+    /// each prefixed with its number so that citations keep the file's numbering. An error when
+    /// the file's current contents do not hold the lines.
+    #[serde(skip)]
+    contents: Result<serde_json::Value, String>,
+}
+
+impl Excerpt {
+    fn new(change: &Change, mut lines: Vec<[usize; 2]>) -> Result<Self> {
+        let path = change.path.display();
+        let text = change
+            .after
+            .as_deref()
+            .with_context(|| format!("cannot supply lines of {path}: the change deletes it"))?;
+        let all: Vec<&str> = text.split_inclusive('\n').collect();
+        lines.sort_unstable();
+        let mut merged: Vec<[usize; 2]> = Vec::new();
+        for [start, end] in lines {
+            ensure!(
+                1 <= start && start <= end && end <= all.len(),
+                "{path}:{start}-{end} is not within the file's {} lines",
+                all.len()
+            );
+            match merged.last_mut() {
+                Some(last) if start <= last[1] + 1 => last[1] = last[1].max(end),
+                _ => merged.push([start, end]),
+            }
+        }
+        let mut numbered = String::new();
+        for &[start, end] in &merged {
+            for (number, line) in (start..=end).zip(&all[start - 1..end]) {
+                numbered.push_str(&format!("{number}\t{line}"));
+            }
+        }
+        let contents = serde_json::json!({
+            "excerpt": format!(
+                "Only lines {} of {} were supplied. Each line starts with its line number and a tab.",
+                line_ranges(&merged),
+                all.len()
+            ),
+            "lines": numbered,
+        });
+        Ok(Self {
+            lines: merged,
+            contents: Ok(contents),
+        })
+    }
+
+    /// What the model receives as the file's contents, or why the file cannot supply the lines.
+    pub(crate) fn contents(&self) -> Result<serde_json::Value> {
+        self.contents.clone().map_err(anyhow::Error::msg)
+    }
+}
+
+/// Inclusive line ranges as text, such as `3, 10-12`.
+pub fn line_ranges(lines: &[[usize; 2]]) -> String {
+    let ranges: Vec<_> = (lines.iter())
+        .map(|&[start, end]| {
+            if start == end {
+                start.to_string()
+            } else {
+                format!("{start}-{end}")
+            }
+        })
+        .collect();
+    ranges.join(", ")
+}
+
 impl Plan {
-    pub fn with_context(mut self, paths: &[PathBuf]) -> Result<Self> {
-        let mut seen: BTreeSet<_> = self
-            .context
-            .iter()
-            .map(|change| change.path.clone())
+    /// Supply repository files as context, each once. A file named without lines is supplied
+    /// whole; otherwise only every range named for it. Lines the file no longer holds make it a
+    /// capture error, so recapturing an earlier check shows its input changed; a new check or
+    /// export refuses them with [`Plan::admit_context`].
+    pub fn with_context(mut self, requests: &[SpanRequest]) -> Result<Self> {
+        let mut ranges: BTreeMap<PathBuf, Vec<[usize; 2]>> = (self.excerpts.iter())
+            .map(|(path, excerpt)| (path.clone(), excerpt.lines.clone()))
             .collect();
-        for path in paths {
+        for request in requests {
+            let path = &request.path;
             ensure!(
                 is_source(&self.root, path)?,
                 "context paths must be repository source files: {}",
                 path.display()
             );
-            if !seen.insert(path.clone()) {
+            let known = self.context.iter().any(|change| &change.path == path);
+            match request.lines {
+                None => {
+                    ranges.remove(path);
+                }
+                // A file already supplied whole stays whole.
+                Some(_) if known && !ranges.contains_key(path) => {}
+                Some((start, end)) => ranges.entry(path.clone()).or_default().push([start, end]),
+            }
+            if known {
                 continue;
             }
-            let change = self.read_change(path)?;
+            self.context.push(self.read_change(path)?);
+        }
+        self.excerpts = (self.context.iter())
+            .filter_map(|change| {
+                let lines = ranges.remove(&change.path)?;
+                let excerpt = Excerpt::new(change, lines.clone()).unwrap_or_else(|error| Excerpt {
+                    lines,
+                    contents: Err(format!("{error:#}")),
+                });
+                Some((change.path.clone(), excerpt))
+            })
+            .collect();
+        Ok(self)
+    }
+
+    /// Refuse context that a new check or export cannot send: a file that does not exist, lines
+    /// the file does not hold, or more than the file input limit, as the model receives it, all
+    /// together.
+    pub fn admit_context(&self) -> Result<()> {
+        let mut inputs = Vec::new();
+        for change in &self.context {
             ensure!(
                 change.before.is_some() || change.after.is_some(),
                 "context file does not exist: {}",
-                path.display()
+                change.path.display()
             );
-            self.context.push(change);
+            inputs.push(self.context_input(change)?);
         }
+        let bytes = serde_json::to_vec(&inputs)?.len();
         ensure!(
-            serde_json::to_vec(&self.context)?.len() <= ev_grep_core::MAX_FILE_BYTES,
-            "supplementary context exceeds 64 KiB"
+            bytes <= ev_grep_core::MAX_FILE_BYTES,
+            "supplementary context is {bytes} bytes as the model receives it; limit is {} bytes; \
+             supply only the lines needed with --context PATH:START-END",
+            ev_grep_core::MAX_FILE_BYTES
         );
-        Ok(self)
+        Ok(())
+    }
+
+    /// What the model receives for a `--context` file: its path and resulting contents, or only
+    /// the lines of an excerpt.
+    pub(crate) fn context_input(&self, change: &Change) -> Result<serde_json::Value> {
+        Ok(match self.excerpts.get(&change.path) {
+            Some(excerpt) => serde_json::json!({
+                "path": change.path,
+                "contents": excerpt.contents()?,
+            }),
+            None => change.current_input(),
+        })
     }
 
     /// Whether `contract` governs `path` at its current location or, for a rename, its previous one.

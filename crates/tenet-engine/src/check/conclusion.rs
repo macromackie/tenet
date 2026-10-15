@@ -6,8 +6,8 @@ use tenet_contracts::Contract;
 
 use super::context::{CombinedContext, Unavailable};
 use crate::{
-    CheckResult, ConclusionReason, ContractResult, ContractStatus, Event, EvidencePacket, Mode,
-    RequestedScope, Stage, Status, Summary, review::Answers,
+    CheckResult, ConclusionReason, ContractResult, ContractStatus, Event, EvidencePacket,
+    FailureKind, Mode, RequestFailure, RequestedScope, Stage, Status, Summary, review::Answers,
 };
 
 pub(crate) struct Completion<'a> {
@@ -20,6 +20,7 @@ pub(crate) struct Completion<'a> {
     pub requests: &'a Cell<usize>,
     pub max_requests: usize,
     pub min_confidence: f64,
+    pub classify: fn(&anyhow::Error) -> FailureKind,
     pub local_requests: &'a Cell<usize>,
     /// Requests this contract's assessments needed after the budget was spent.
     pub refused: &'a Cell<usize>,
@@ -75,6 +76,7 @@ impl Completion<'_> {
                     reason_code: ConclusionReason::RequestBudget,
                     reason: "Request budget exhausted before combined assessment.".into(),
                     error: None,
+                    failure: None,
                     context: Some(Box::new(context)),
                 }));
             }
@@ -94,10 +96,16 @@ impl Completion<'_> {
                     assessment
                 }
                 Err(error) => {
+                    let failure = RequestFailure::from((self.classify)(&error));
+                    if let Some(cause) = failure.stops_check() {
+                        return Err(error
+                            .context(format!("{cause}, while assessing {}", self.contract.name)));
+                    }
                     return Ok(self.without_combined(Unavailable {
                         reason_code: ConclusionReason::AssessmentFailed,
                         reason: "Combined assessment failed.".into(),
                         error: Some(error.to_string()),
+                        failure: Some(failure),
                         context: Some(Box::new(context)),
                     }));
                 }
@@ -196,6 +204,7 @@ impl Completion<'_> {
             )
         };
         result.error = unavailable.error;
+        result.failure = unavailable.failure;
         if let Some(context) = unavailable.context {
             result.context = Some(context.summary);
             result.evidence_hash = Some(context.hash);
@@ -262,6 +271,7 @@ pub(super) fn decision(
         routing: None,
         evidence_hash: None,
         error: None,
+        failure: None,
         conflicting_files: Vec::new(),
         request: None,
         cached: false,

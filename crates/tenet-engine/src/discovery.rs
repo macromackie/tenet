@@ -36,7 +36,24 @@ pub struct Plan {
     pub excluded_paths: Vec<ExcludedPath>,
     pub previous_paths: BTreeMap<PathBuf, PathBuf>,
     pub context: Vec<crate::Change>,
+    /// `context` files supplied as line ranges instead of whole; the rest are supplied whole.
+    pub excerpts: BTreeMap<PathBuf, crate::Excerpt>,
     pub contract_changes: Vec<PathBuf>,
+    /// How much of a diff's selected change the contracts govern; `None` for a full check.
+    pub coverage: Option<Coverage>,
+}
+
+/// How much of a diff's selected change any contract governs, whichever contracts a check runs.
+#[derive(Clone, Debug, Serialize)]
+pub struct Coverage {
+    /// Selected changed files, contract documents included.
+    pub changed_files: usize,
+    /// Changed files no contract governs at their current or previous path. Files in a
+    /// `.contracts` folder are contract changes, not ungoverned files.
+    pub ungoverned_files: Vec<PathBuf>,
+    /// Whether a contract governs any changed file or the change edits a contract document. It
+    /// is false when no contract applies, including when nothing changed.
+    pub governed: bool,
 }
 
 /// A selected path where a check assesses nothing, and why.
@@ -168,8 +185,10 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
             })
     })?;
     if let Some(name) = &selection.contract {
-        contracts.retain(|c| &c.name == name);
-        ensure!(!contracts.is_empty(), "unknown contract: {name}");
+        ensure!(
+            contracts.iter().any(|c| &c.name == name),
+            "unknown contract: {name}"
+        );
     }
     ensure!(
         !contracts.is_empty() || selection.base.is_some(),
@@ -239,6 +258,28 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
         .iter()
         .filter(|p| selectors.is_empty() || selectors.iter().any(|s| selects(s, p)))
         .collect();
+    // Coverage counts every discovered contract, not only those this check runs.
+    let coverage = changes.as_ref().map(|_| {
+        let governed = |path: &PathBuf| {
+            contract_changes.contains(path)
+                || contracts
+                    .iter()
+                    .any(|contract| governs(contract, &previous_paths, path))
+        };
+        let ungoverned_files: Vec<_> = selected_candidates
+            .iter()
+            .filter(|path| !is_contract(path) && !governed(path))
+            .map(|path| (*path).clone())
+            .collect();
+        Coverage {
+            changed_files: selected_candidates.len(),
+            governed: selected_candidates.iter().any(|path| governed(path)),
+            ungoverned_files,
+        }
+    });
+    if let Some(name) = &selection.contract {
+        contracts.retain(|c| &c.name == name);
+    }
     if selection.contract.is_none() && !selectors.is_empty() {
         // Keep a contract when a selector covers its scope or selects a file it governs. An empty
         // directory inside its scope keeps it too, so requirements for missing files stay checkable.
@@ -306,7 +347,9 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
         excluded_paths,
         previous_paths,
         context: Vec::new(),
+        excerpts: BTreeMap::new(),
         contract_changes,
+        coverage,
         base: changes.map(|c| c.base),
     })
 }

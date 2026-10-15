@@ -24,6 +24,8 @@ compares the working tree with it.
 
 `.tenet/` ignores itself, and its records and cached answers describe one machine's review. If Git tracks a file in
 it, `check`, `status`, `show`, `record`, and `log` exit 2 until you untrack it with `git rm -r --cached .tenet`.
+When the checkout is read-only, as in a sandboxed reviewer, `--state-dir DIR` or `TENET_STATE_DIR` keeps the same files
+in `DIR` instead; a directory that starts empty starts a new review.
 
 `show` prints what a reviewer needs for one contract: the model's answer and confidence, the scoped files, earlier
 records and assessments, the changes since an outdated one, the `record` command with the conclusions and changed lines
@@ -35,13 +37,15 @@ in `leans no violation · confidence 0.56 < 0.8`. Read every contract. A favorab
 contract from the review. Confirm suspected violations in the code before recording them.
 
 A record cites line ranges in files the check assessed, the selected files and any `--context` files, and a message
-saying what they show. Evidence follows the same path rules as `--context`, so `.git`, `.tenet`, contract documents, and
-links that lead out of the project are refused. In a diff that changed the contract's files, a favorable conclusion
-must cite a line the change wrote, a line beside one, or a file it deleted or emptied; code near the change does not show it was
-preserved. To dispute a model's `failed`, also cite at least one file it flagged. Messages are plain text up to 4 KiB,
-without control, bidirectional, or line separator characters. Record `unresolved` with a message when you cannot decide;
-it exits 3 instead of blocking. Exit 0 means every contract is settled without a violation. Read each claim's scope: selected subjects can
-be `clear` without verifying a whole contract.
+saying what they show. For a supporting `--context` file supplied as an excerpt, it cites lines within the supplied
+ranges.
+Evidence follows the same path rules as `--context`, so `.git`, `.tenet`, contract documents, and links that lead out
+of the project are refused. In a diff that changed the contract's files, a favorable conclusion must cite a line the
+change wrote, a line beside one, or a file it deleted or emptied; code near the change does not show it was preserved.
+To dispute a model's `failed`, also cite at least one file it flagged. Messages are plain text up to 4 KiB, without
+control, bidirectional, or line separator characters. Record `unresolved` with a message when you cannot decide; it
+exits 3 instead of blocking. Exit 0 means every contract is settled without a violation. Read each claim's scope:
+selected subjects can be `clear` without verifying a whole contract.
 
 A record that overrides the model stays visible. `status` and `check` print it as
 `✓ preserved · recorded 2540a6592efb over model failed · violation 100%` and count contracts settled by a record
@@ -60,7 +64,8 @@ changed since. Reverting the edit restores the earlier input, so its record sett
 were not kept.
 
 Repeated checks answer identical requests from `.tenet/answers.jsonl`, so an unchanged contract costs no request and
-keeps its answer. Use `--fresh` to sample the model again. `tenet check --no-model` captures a revision without
+keeps its answer. A failed request caches nothing and leaves its contract pending, so rerunning the check sends only
+the failed requests; `check --dry-run` predicts how many. A record still settles an input whose request failed. Use `--fresh` to sample the model again. `tenet check --no-model` captures a revision without
 credentials; only conclusions for unchanged inputs carry over, and its rows mark them `unchanged`. `tenet log` lists
 every revision and record. Each revision keeps its `--min-confidence`, and `status`, `show`, and `log` print it when it
 differs from the default 0.8.
@@ -149,6 +154,36 @@ Keep the checkout stable during a run. Tenet captures selected and supporting so
 reuses those bytes throughout the run. Capture is not an atomic filesystem snapshot. Capture stdout and exit status
 even when the command returns nonzero.
 
+To supply only part of a long file, add an inclusive line range counted from 1, and repeat `--context` for more
+ranges of the same file:
+
+```sh
+tenet check --base origin/main --contract database-failures \
+  --context src/storage/query.ts:40-75 --context src/storage/query.ts:120-130 --json
+```
+
+The model receives those lines with their numbers and a note that the rest was left out:
+
+```json
+{
+  "path": "src/storage/query.ts",
+  "contents": {
+    "excerpt": "Only lines 40-75, 120-130 of 214 were supplied. Each line starts with its line number and a tab.",
+    "lines": "40\t  } catch (error) {\n41\t    throw new QueryError(sql, error);\n..."
+  }
+}
+```
+
+A path also named without a range is supplied whole. A range must lie within the file's current lines, so a file the
+change deletes cannot be excerpted. All context together, as the model receives it, is limited to 64 KiB. Different
+ranges are different inputs: they are new requests, and a record of one range does not settle another. If a context
+file later changes so that it no longer holds its lines, or no longer fits the limit, `status` shows the contract
+pending with changed inputs until the next check.
+
+Name a selected file's lines to supply them where Tenet [leaves its contents out](./limits.md) for size. The lines
+take the place of those contents, beside the patch, in the file's own check and in the combined assessment, when they
+fit. A record can still cite any line of a selected file.
+
 Use [`tenet export`](./export.md) to export selected contracts and source without calling a model. A saved packet
 can supply a focused question or a description of the change, with references back to each before/after source.
 Descriptions help choose what to inspect; verify their claims against the source and the full English contracts.
@@ -210,7 +245,9 @@ Tenet does not fill spare space with unrelated source. If a file check and final
 Tenet reports `unresolved` with `conflicting_files`. The reviewer decides whether more context or a code change is needed.
 
 Request metadata includes attempts, hedges, elapsed time, and available usage. Recovered transport failures do not
-change the meaning of a model answer. Unresolved assessments remain guidance; execution errors remain errors.
+change the meaning of a model answer. A request that still fails leaves its contract pending, with the failure's kind
+and whether a rerun may answer it; see [failed requests](./output.md#failed-requests). Unresolved assessments remain
+guidance; execution errors remain errors.
 
 ## Agent skill
 

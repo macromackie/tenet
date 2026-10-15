@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.10.0
+
+- `--state-dir DIR`, or `TENET_STATE_DIR`, keeps review state in `DIR` instead of `.tenet/` in the project root, so a
+  reviewer can check a read-only checkout. Every review command reads the directory it names.
+- A model request that fails after Jev's attempts no longer makes `check` exit 2. Its file is `error`, its contract
+  stays pending, and the exit code follows the review, so a check whose only problem is a failed request exits 4.
+  Rerunning the check sends only the failed requests, because every answer received is cached. `check` still exits 2 for
+  invalid arguments or configuration, unreadable review state, and capture failures. A record still settles a contract
+  whose request failed. Credentials the provider rejects (HTTP 401 or 402), and an endpoint or model it does not have
+  (HTTP 404, 405, or a redirect), now stop the check at the first such request and exit 2. If a script retried on exit
+  2, retry when the summary's `retryable_failures` is above 0 instead.
+- `check --dry-run` predicts exactly the requests a check would send. Its summary keeps `requests`, every request the
+  check needs, and adds `cached`, how many of them `.tenet/answers.jsonl` already answers; a check sends the rest, and
+  the `--max-requests` warning counts only those. It accepts `--fresh` to predict as if nothing were cached.
+- `--context PATH:START-END` supplies only those lines of a file, counted from 1 and inclusive, to `check` and `export`;
+  repeat it for more ranges. The model receives each line with its number, after a note that names the supplied ranges
+  and the file's line count. In one review, two files of 104,922 and 70,421 bytes exceeded the context limit whole; 9
+  ranges of 154 lines fit, and the combined input grew from 29,821 to 39,246 bytes. Different ranges are different
+  inputs, so they send new requests and need their own records. A record cites only the supplied lines of an excerpt.
+  JSONL `context` lists `excerpts`, `show --json` files list `excerpt` lines, `log --json` revisions repeat each range
+  in `context`, and evidence packets add `excerpts` and keep complete sources.
+- Lines of a selected file named with `--context PATH:START-END` take the place of its resulting contents wherever Tenet
+  leaves them out for size and the lines fit: in the file's own check and in the combined assessment, beside the patch. Before, only other
+  files' checks received them. In one review, 74 lines of a 57,490-byte file reached its own check, which had seen only
+  its patch, and the combined input grew from 29,821 to 35,364 bytes with 28 lines of another file. The lines are part
+  of the review input, so a record of some lines does not settle a check of others; a record may still cite any line of
+  a selected file. JSONL `context` lists the selected file in `excerpts` when its lines were used, and `show --json`
+  lists them as the file's `excerpt`.
+- `status`, `show`, and `record` no longer exit 2 when a `--context` file changed after the check so that it no longer
+  holds its named lines, was deleted, or exceeds the 64 KiB context limit. The contract is pending with changed inputs,
+  and `show` names a file that no longer holds its lines. `check` and `export` still refuse such context.
+- `show --pending --json` prints every pending contract as `show --json` does, without patches, and each changed file's
+  patch once, under `version: 2`.
+- `docs/json.md` documents every command's JSON format and version, and what can change without a new version.
+- Each failed request reports a `failure` object with a stable `kind`, such as `rate_limited` or `authentication`, and
+  `retryable`, which says whether a rerun may answer it. File `result` events and conclusions carry it, and the summary
+  counts `request_failures` and `retryable_failures`. With `--json`, each failed request and any fatal error also print
+  a line to stderr. The default reporter counts a contract's other files that could not complete.
+- Diff checks report changed files that no contract governs. `check` and `check --dry-run` summaries and `contracts list
+  --base REF --json` include `coverage` with `changed_files`, `ungoverned_files`, and `governed`, which is false when no
+  contract applies to the change. The default reporter prints `No contract governs this change: N changed files` or
+  names the ungoverned files. Such a check still exits 0, and needs no credential. Files in a `.contracts` folder count
+  as contract changes.
+- `check --dry-run` shows a renamed file's previous path, as `previous_path` in JSON.
+- The 64 KiB `--context` limit measures what the model receives: each file's resulting contents, or the numbered lines
+  of an excerpt. It measured prior contents and patches, which context never sends. A full check accepted context of any
+  size and then left each file check carrying it incomplete, and a diff measured a modified file by its prior contents
+  plus its patch.
+
 ## v0.9.0
 
 - Diff checks ask whether the change introduces, extends, or worsens a violation compared with the before contents,

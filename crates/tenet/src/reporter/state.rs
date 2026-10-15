@@ -21,6 +21,10 @@ impl Reporter<'_> {
             self.summary.requests += 1;
         }
         if let Event::Result { result } = event {
+            if let Some(failure) = result.failure {
+                self.summary.request_failures += 1;
+                self.summary.retryable_failures += usize::from(failure.retryable());
+            }
             match result.status {
                 Status::Pass => self.summary.passed += 1,
                 Status::Fail => self.summary.failed += 1,

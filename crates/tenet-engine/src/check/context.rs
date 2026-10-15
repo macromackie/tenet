@@ -22,6 +22,7 @@ pub(super) struct Unavailable {
     pub reason_code: ConclusionReason,
     pub reason: String,
     pub error: Option<String>,
+    pub failure: Option<crate::RequestFailure>,
     pub context: Option<Box<CombinedContext>>,
 }
 
@@ -45,12 +46,14 @@ pub(super) fn prepare(
                 context.summary.input_bytes
             ),
             error: None,
+            failure: None,
             context: Some(Box::new(context)),
         }),
         Err(error) => Err(Unavailable {
             reason_code: ConclusionReason::ContextUnavailable,
             reason: format!("Combined context unavailable: {error:#}"),
             error: Some(format!("{error:#}")),
+            failure: None,
             context: None,
         }),
     }
@@ -59,17 +62,23 @@ pub(super) fn prepare(
 /// Assemble the contract's complete scoped evidence. When it exceeds the input limit, leave out
 /// prior contents, then inventory detail, then the largest resulting contents, until it fits.
 /// Text is left out only where the file's patch remains, and every omission is marked in the
-/// input and listed in the summary.
+/// input and listed in the summary. Lines of a file named with `--context` stand in for its
+/// resulting contents, and are left out last.
 fn capture(evidence: &EvidencePacket<'_>, contract: &Contract) -> Result<CombinedContext> {
     let scope = scope::Scope::new(evidence.plan, contract);
     let mut files = Vec::new();
     let mut changes = Vec::new();
     let mut patched = std::collections::BTreeSet::new();
     for (index, path) in scope.selected.iter().chain(&scope.support).enumerate() {
+        let selected = index < scope.selected.len();
         match evidence.change(path) {
             Ok(change) => {
-                files.push(change.current_input());
-                if evidence.plan.mode == Mode::Diff && index < scope.selected.len() {
+                files.push(if selected {
+                    change.current_input()
+                } else {
+                    evidence.plan.context_input(change)?
+                });
+                if evidence.plan.mode == Mode::Diff && selected {
                     changes.push(serde_json::to_value(change)?);
                     if !change.patch.is_empty() {
                         patched.insert(change.path.clone());
@@ -85,7 +94,7 @@ fn capture(evidence: &EvidencePacket<'_>, contract: &Contract) -> Result<Combine
             },
         }
     }
-    let mut summary = scope.summary(0);
+    let mut summary = scope.summary(evidence.plan, 0);
     let mut inventory = paths::metadata(&scope)?;
     let mut counted_depth = None;
     loop {
@@ -134,10 +143,24 @@ fn capture(evidence: &EvidencePacket<'_>, contract: &Contract) -> Result<Combine
             summary.inventory_counted = true;
             continue;
         } else if let Some(file) = largest {
+            let path: std::path::PathBuf = serde_json::from_value(file["path"].clone())?;
+            file["contents"] = match evidence.plan.excerpts.get(&path) {
+                Some(excerpt) => {
+                    summary.excerpts.insert(path.clone(), excerpt.lines.clone());
+                    excerpt.contents()?
+                }
+                None => omitted("too large; use the patch"),
+            };
+            summary.contents_omitted.push(path);
+            continue;
+        } else if let Some((file, path)) = files.iter_mut().find_map(|file| {
+            let path = std::path::PathBuf::from(file["path"].as_str()?);
+            (file["contents"].get("excerpt").is_some() && patched.contains(&path))
+                .then_some((file, path))
+        }) {
+            // Even the named lines of a changed file do not fit; its patch remains.
             file["contents"] = omitted("too large; use the patch");
-            summary
-                .contents_omitted
-                .push(serde_json::from_value(file["path"].clone())?);
+            summary.excerpts.remove(&path);
             continue;
         }
         return Ok(CombinedContext {

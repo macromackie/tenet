@@ -11,7 +11,7 @@ mod store;
 
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -23,9 +23,9 @@ pub use log::{
     Answer, Assessment, CapturedFile, Conclusion, Entry, FileResult, Record, Revision, Role,
     ScopedFile, Span,
 };
-pub use record::{RecordRequest, Recorded, SpanRequest, conclusions, record};
-pub use store::MAX_BLOB_BYTES;
+pub use record::{RecordRequest, Recorded, conclusions, record};
 use store::Store;
+pub use store::{DIRECTORY, MAX_BLOB_BYTES};
 
 use crate::{ContractState, ContractStatus, EvidencePacket, Mode, Pending, Plan, Selection, git};
 
@@ -59,11 +59,13 @@ pub struct Checked {
 }
 
 impl Checked {
-    /// Cancellation (130) and execution errors (2) take precedence over the review's states.
+    /// Cancellation (130) and execution errors (2) take precedence over the review's states. A
+    /// failed model request leaves its contract pending, so the states decide; a rerun sends it
+    /// again.
     pub fn exit_code(&self) -> u8 {
         if self.summary.cancelled {
             130
-        } else if self.summary.errors > 0 {
+        } else if self.summary.errors > self.summary.request_failures {
             2
         } else {
             exit_code(self.contracts.iter().map(|c| &c.state))
@@ -89,7 +91,7 @@ impl Checked {
 /// What a check was asked to assess, kept so later commands can capture the same inputs again.
 pub struct CheckRequest<'a> {
     pub selection: &'a Selection,
-    pub context: &'a [PathBuf],
+    pub context: &'a [crate::SpanRequest],
     /// The provider and model that answered; absent for `check --no-model`.
     pub model: Option<&'a str>,
     /// The confidence below which answers were routed to unresolved; absent without a model.
@@ -97,20 +99,28 @@ pub struct CheckRequest<'a> {
 }
 
 impl Review {
-    /// Open the project's review state, creating `.tenet/` when needed.
-    pub fn open(root: &Path) -> Result<Self> {
-        Self::load(Store::create(root)?)
+    /// Open the review state in `directory`, creating it when needed.
+    pub fn open(directory: &Path) -> Result<Self> {
+        Self::load(Store::create(directory)?)
     }
 
     /// Open existing review state without writing anything.
-    pub fn existing(root: &Path) -> Result<Self> {
-        let store = Store::existing(root)?.with_context(|| {
+    pub fn existing(directory: &Path) -> Result<Self> {
+        let store = Store::existing(directory)?.with_context(|| {
             format!(
                 "no review state in {}; run tenet check first",
-                root.join(store::DIRECTORY).display()
+                directory.display()
             )
         })?;
         Self::load(store)
+    }
+
+    /// Open review state without writing anything; a project without any has an empty review.
+    pub fn read(directory: &Path) -> Result<Self> {
+        match Store::existing(directory)? {
+            Some(store) => Self::load(store),
+            None => Ok(Self::ephemeral()),
+        }
     }
 
     /// State for one run that keeps nothing, such as a snapshot check.

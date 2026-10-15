@@ -1,5 +1,6 @@
 use crate::{
-    CheckResult, Event, EvidencePacket, Stage, Status, evidence::content_hash, review::Answers,
+    CheckResult, Event, EvidencePacket, FailureKind, RequestFailure, Stage, Status,
+    evidence::content_hash, review::Answers,
 };
 use anyhow::{Context as _, Result};
 use ev_grep_core::{Evaluator, Outcome};
@@ -15,6 +16,7 @@ pub(super) struct Context<'a, E, F> {
     pub(super) requests: &'a Cell<usize>,
     pub(super) max_requests: usize,
     pub(super) min_confidence: f64,
+    pub(super) classify: fn(&anyhow::Error) -> FailureKind,
     pub(super) local_requests: &'a Cell<usize>,
     pub(super) refused: &'a Cell<usize>,
 }
@@ -41,6 +43,7 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
         status: Status::Error,
         message: contract.message.clone(),
         reason: None,
+        failure: None,
         applicability: None,
         applicability_routing: None,
         verification: None,
@@ -67,6 +70,12 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
     }
     .await;
     if let Err(error) = judged {
+        if let Some(cause) = result.failure.and_then(RequestFailure::stops_check) {
+            return Err(error.context(format!(
+                "{cause}, while checking {} against {}",
+                result.path, contract.name
+            )));
+        }
         let (status, reason) = crate::input_status(&error);
         result.status = status;
         result.reason = Some(reason);
@@ -115,10 +124,13 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
             path: result.path.clone(),
             stage: Stage::Applicability,
         })?;
-        let batch = context
-            .evaluator
-            .assess_questions(&questions, &state)
-            .await?;
+        let batch = match context.evaluator.assess_questions(&questions, &state).await {
+            Ok(batch) => batch,
+            Err(error) => {
+                result.failure = Some((context.classify)(&error).into());
+                return Err(error);
+            }
+        };
         context.answers.put(&key, &batch.answers)?;
         result.request = Some(batch.request);
         batch.answers

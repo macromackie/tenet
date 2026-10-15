@@ -27,7 +27,8 @@ pub enum Status {
 pub enum Omitted {
     /// The prior contents; the patch and resulting contents remain.
     Before,
-    /// The resulting contents too; only the patch remains.
+    /// The resulting contents too; only the patch remains, with any lines of the file named with
+    /// `--context`.
     Contents,
 }
 
@@ -48,6 +49,8 @@ pub struct CheckResult {
     pub status: Status,
     pub message: String,
     pub reason: Option<String>,
+    /// Why the file's request returned no answer, when it failed.
+    pub failure: Option<crate::RequestFailure>,
     pub applicability: Option<ev_grep_core::Assessment>,
     pub applicability_routing: Option<ev_grep_core::Routing>,
     pub verification: Option<ev_grep_core::Assessment>,
@@ -64,10 +67,15 @@ pub struct Summary {
     pub failed: usize,
     pub uncertain: usize,
     pub not_applicable: usize,
+    /// Execution errors, failed requests included.
     pub errors: usize,
     pub incomplete: usize,
     pub skipped: usize,
     pub requests: usize,
+    /// Requests that returned no answer; their contracts stay pending.
+    pub request_failures: usize,
+    /// Failed requests that a rerun of the check may answer.
+    pub retryable_failures: usize,
     /// Requests not sent because `--max-requests` was spent; their checks are incomplete.
     pub over_budget: usize,
     /// Request batches answered from the answer cache, and conclusions `check --no-model` reused,
@@ -98,6 +106,8 @@ impl Summary {
         self.incomplete += other.incomplete;
         self.skipped += other.skipped;
         self.requests += other.requests;
+        self.request_failures += other.request_failures;
+        self.retryable_failures += other.retryable_failures;
         self.over_budget += other.over_budget;
         self.cached += other.cached;
         self.attempts += other.attempts;
@@ -121,8 +131,16 @@ impl Summary {
         }
     }
 
+    fn record_failure(&mut self, failure: Option<crate::RequestFailure>) {
+        if let Some(failure) = failure {
+            self.request_failures += 1;
+            self.retryable_failures += usize::from(failure.retryable());
+        }
+    }
+
     pub(crate) fn add(&mut self, result: &CheckResult) {
         self.record_request(result.request.as_ref());
+        self.record_failure(result.failure);
         self.cached += usize::from(result.cached);
         match result.status {
             Status::Pass => self.passed += 1,
@@ -201,6 +219,8 @@ pub enum Event {
         revision: Option<u64>,
         /// Contracts that need a check or a record before the review is final.
         pending: Vec<String>,
+        /// How much of a diff's change the contracts govern; absent for a full check.
+        coverage: Option<crate::Coverage>,
         exit_code: u8,
     },
     Error {
@@ -292,6 +312,9 @@ pub struct ContractResult {
     pub evidence_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Why the combined assessment's request returned no answer, when it failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<crate::RequestFailure>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub conflicting_files: Vec<String>,
     pub request: Option<ev_grep_core::RequestInfo>,
@@ -325,6 +348,10 @@ pub struct ContextSummary {
     pub included_files: usize,
     pub selected_files: Vec<std::path::PathBuf>,
     pub support_files: Vec<std::path::PathBuf>,
+    /// Support files supplied as excerpts, and selected files whose excerpt stood in for contents
+    /// left out to fit the limit, with the inclusive line ranges supplied.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub excerpts: std::collections::BTreeMap<std::path::PathBuf, Vec<[usize; 2]>>,
     /// Scoped inventory files whose contents were not supplied.
     pub omitted_files: usize,
     /// Prior contents left out of every change to fit the limit; patches remain.
@@ -333,7 +360,8 @@ pub struct ContextSummary {
     /// Inventory paths summarized as per-directory file counts to fit the limit.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub inventory_counted: bool,
-    /// Changed files whose resulting contents were left out to fit the limit; patches remain.
+    /// Changed files whose resulting contents were left out to fit the limit; patches and any
+    /// excerpts remain.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub contents_omitted: Vec<std::path::PathBuf>,
 }
@@ -392,6 +420,7 @@ pub enum Pending {
 impl Summary {
     pub(crate) fn conclude(&mut self, conclusion: &ContractResult) {
         self.record_request(conclusion.request.as_ref());
+        self.record_failure(conclusion.failure);
         self.cached += usize::from(conclusion.cached);
         match conclusion.status {
             ContractStatus::Verified => self.contracts_verified += 1,

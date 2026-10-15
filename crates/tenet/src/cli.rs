@@ -1,14 +1,26 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use ev_grep_jev::Provider;
 use std::path::PathBuf;
+use tenet_engine::SpanRequest;
 
 #[derive(Parser)]
 #[command(version, about = "Check code against Markdown contracts")]
 pub(crate) struct Cli {
     #[arg(long, global = true, default_value = ".")]
     pub root: PathBuf,
+    /// Keep review state here instead of `.tenet` in the project root, such as when the checkout
+    /// is read-only.
+    #[arg(long, global = true, env = "TENET_STATE_DIR")]
+    pub state_dir: Option<PathBuf>,
     #[command(subcommand)]
     pub command: Command,
+}
+
+impl Cli {
+    /// Where `check` keeps review state and the other review commands read it.
+    pub(crate) fn state(&self) -> PathBuf {
+        (self.state_dir.clone()).unwrap_or_else(|| self.root.join(tenet_engine::review::DIRECTORY))
+    }
 }
 
 #[derive(Subcommand)]
@@ -30,7 +42,7 @@ pub(crate) enum Command {
         /// The selected paths of the check to show, when the contract stands in several.
         paths: Vec<PathBuf>,
         /// Show every pending contract, printing their shared change once.
-        #[arg(long, conflicts_with_all = ["contract", "json"])]
+        #[arg(long, conflicts_with = "contract")]
         pending: bool,
         #[arg(long)]
         json: bool,
@@ -137,8 +149,8 @@ pub(crate) enum Adoption {
 pub(crate) struct Check {
     #[command(flatten)]
     pub input: Input,
-    /// Show candidate pairs without calling a model or updating the review.
-    #[arg(long, conflicts_with_all = ["no_model", "fresh"])]
+    /// Show candidate pairs and predict requests without calling a model or updating the review.
+    #[arg(long, conflicts_with = "no_model")]
     pub dry_run: bool,
     /// Capture the change and reuse earlier conclusions for unchanged inputs; leave the rest pending.
     #[arg(long, conflicts_with = "fresh")]
@@ -160,7 +172,7 @@ pub(crate) struct Record {
     pub conclusion: String,
     /// Code that supports the conclusion, as PATH, PATH:LINE, or PATH:START-END; repeat as needed.
     #[arg(long, value_name = "PATH[:START-END]")]
-    pub evidence: Vec<String>,
+    pub evidence: Vec<SpanRequest>,
     /// What the evidence shows, or for unresolved, the fact that is missing.
     #[arg(long, short)]
     pub message: String,
@@ -178,9 +190,10 @@ pub(crate) struct Export {
 #[derive(Args)]
 pub(crate) struct Input {
     pub paths: Vec<PathBuf>,
-    /// Supply related repository files without changing contract scope; repeat as needed.
-    #[arg(long)]
-    pub context: Vec<PathBuf>,
+    /// Supply a related repository file, or only some of its lines, without changing contract
+    /// scope; repeat as needed.
+    #[arg(long, value_name = "PATH[:START-END]")]
+    pub context: Vec<SpanRequest>,
     /// Compare this exact revision with the working tree, assuming base compliance.
     #[arg(long, conflicts_with = "snapshot")]
     pub base: Option<String>,

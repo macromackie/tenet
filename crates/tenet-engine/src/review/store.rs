@@ -1,4 +1,5 @@
-//! Files under `.tenet/`: append-only JSON Lines and content-addressed blobs.
+//! Files in the review state directory, `.tenet/` by default: append-only JSON Lines and
+//! content-addressed blobs.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -11,7 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::git;
 
-pub(crate) const DIRECTORY: &str = ".tenet";
+/// The review state directory's name in the project root, unless `--state-dir` names another.
+pub const DIRECTORY: &str = ".tenet";
 pub(crate) const EVENTS: &str = "events.jsonl";
 pub(crate) const ANSWERS: &str = "answers.jsonl";
 /// The largest text `blobs/` keeps. Blobs only let `show` diff later edits, and larger files are
@@ -23,9 +25,9 @@ pub(crate) struct Store {
 }
 
 impl Store {
-    /// Create `.tenet/` with a `.gitignore` that keeps it out of Git and Tenet's own discovery.
-    pub(crate) fn create(root: &Path) -> Result<Self> {
-        let directory = root.join(DIRECTORY);
+    /// Create `directory` with a `.gitignore` that keeps it out of Git and Tenet's own discovery.
+    pub(crate) fn create(directory: &Path) -> Result<Self> {
+        let directory = directory.to_path_buf();
         fs::create_dir_all(directory.join("blobs"))
             .with_context(|| format!("cannot create {}", directory.display()))?;
         let ignore = directory.join(".gitignore");
@@ -37,8 +39,8 @@ impl Store {
         Ok(Self { directory })
     }
 
-    pub(crate) fn existing(root: &Path) -> Result<Option<Self>> {
-        let directory = root.join(DIRECTORY);
+    pub(crate) fn existing(directory: &Path) -> Result<Option<Self>> {
+        let directory = directory.to_path_buf();
         if !directory.is_dir() {
             return Ok(None);
         }
@@ -87,9 +89,10 @@ fn untracked(directory: &Path) -> Result<()> {
         .find(|name| !name.is_empty())
     {
         bail!(
-            "Git tracks {DIRECTORY}/{}, but review state belongs to one machine: committed records \
+            "Git tracks {}/{}, but review state belongs to one machine: committed records \
              and cached answers would settle contracts in every clone. Untrack it with \
-             `git rm -r --cached {DIRECTORY}` and commit the removal",
+             `git rm -r --cached {0}` and commit the removal",
+            directory.display(),
             String::from_utf8_lossy(name)
         );
     }
