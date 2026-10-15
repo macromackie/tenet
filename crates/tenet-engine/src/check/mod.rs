@@ -1,9 +1,12 @@
 mod assess;
 mod conclusion;
-mod context;
+pub(crate) mod context;
 mod prompt;
 
-use crate::{Event, EvidencePacket, Plan, Summary};
+use crate::{
+    CheckResult, ContractResult, ContractState, Event, EvidencePacket, Summary,
+    review::{Checked, Concluded, Conclusion, FileResult, Review},
+};
 use anyhow::{Result, ensure};
 use ev_grep_core::Evaluator;
 use futures_util::{StreamExt, stream};
@@ -18,12 +21,16 @@ pub struct Options {
     pub min_confidence: f64,
 }
 
+/// Assess every planned contract against captured evidence. Answers to requests identical to
+/// earlier ones come from the review's cache, and each conclusion is combined with the review's
+/// records into the contract's state.
 pub async fn run(
-    plan: &Plan,
+    evidence: &EvidencePacket<'_>,
     options: Options,
     evaluator: &impl Evaluator,
+    review: &Review,
     emit: &impl Fn(Event) -> Result<()>,
-) -> Result<Summary> {
+) -> Result<Checked> {
     ensure!(
         (1..=256).contains(&options.jobs) && options.max_requests > 0,
         "jobs must be between 1 and 256 and max-requests must be positive"
@@ -33,13 +40,14 @@ pub async fn run(
         "min-confidence must be between 0 and 1"
     );
     let started = Instant::now();
-    let evidence = plan.capture().await?;
+    let plan = evidence.plan;
     let requests = Cell::new(0);
     let slots = Semaphore::new(options.jobs);
     let shared = Pool {
-        evidence: &evidence,
+        evidence,
         options,
         evaluator,
+        review,
         emit,
         requests: &requests,
         slots: &slots,
@@ -53,37 +61,76 @@ pub async fn run(
     let mut ready = BTreeMap::new();
     let mut next = 0;
     let mut total = Summary::default();
+    let mut contracts = Vec::new();
     while let Some(result) = running.next().await {
-        let (index, (summary, conclusion)) = result?;
-        total.merge(&summary);
-        ready.insert(index, (summary, conclusion));
-        while let Some((summary, conclusion)) = ready.remove(&next) {
+        let (index, assessed) = result?;
+        total.merge(&assessed.summary);
+        ready.insert(index, assessed);
+        while let Some(assessed) = ready.remove(&next) {
+            let contract = &plan.contracts[next];
+            contracts.push(Concluded {
+                contract: contract.name.clone(),
+                input: assessed.conclusion.input.clone(),
+                scope: assessed.conclusion.scope,
+                conclusion: Some(Conclusion {
+                    status: assessed.conclusion.status,
+                    reason_code: assessed.conclusion.reason_code,
+                    reason: assessed.conclusion.reason.clone(),
+                    confidence: assessed.conclusion.confidence,
+                    error: assessed.conclusion.error.clone(),
+                    conflicting_files: assessed.conclusion.conflicting_files.clone(),
+                }),
+                carried_from: None,
+                results: assessed
+                    .results
+                    .iter()
+                    .map(|result| FileResult {
+                        path: result.path.clone(),
+                        status: result.status,
+                        confidence: result.verification.as_ref().map(|a| a.confidence),
+                    })
+                    .collect(),
+                state: assessed.state.clone(),
+            });
             emit(Event::ContractFinished {
-                contract: plan.contracts[next].name.clone(),
-                summary,
-                conclusion: Some(Box::new(conclusion)),
+                contract: contract.name.clone(),
+                summary: assessed.summary,
+                conclusion: Some(Box::new(assessed.conclusion)),
+                state: assessed.state,
             })?;
             next += 1;
         }
     }
     total.requests = requests.get();
     total.elapsed_ms = started.elapsed().as_millis();
-    Ok(total)
+    Ok(Checked {
+        summary: total,
+        contracts,
+    })
+}
+
+struct Assessed {
+    summary: Summary,
+    conclusion: ContractResult,
+    results: Vec<CheckResult>,
+    state: ContractState,
 }
 
 struct Pool<'a, E, F> {
     evidence: &'a EvidencePacket<'a>,
     options: Options,
     evaluator: &'a E,
+    review: &'a Review,
     emit: &'a F,
     requests: &'a Cell<usize>,
     slots: &'a Semaphore,
 }
 
 impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
-    async fn contract(&self, contract: &Contract) -> Result<(Summary, crate::ContractResult)> {
+    async fn contract(&self, contract: &Contract) -> Result<Assessed> {
         let started = Instant::now();
         let local_requests = Cell::new(0);
+        let input = self.evidence.input_key(contract);
         let subjects: Vec<_> = self
             .evidence
             .plan
@@ -96,19 +143,28 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
             path: contract.path.display().to_string(),
             total: subjects.len(),
         })?;
-        let prepared = match context::prepare(self.evidence, contract) {
+        let prepared = match context::prepare(self.evidence, contract, &input) {
             context::Preparation::Ready(context) => context,
             context::Preparation::Unresolved(conclusion) => {
                 let mut summary = Summary::default();
                 summary.conclude(&conclusion);
                 summary.elapsed_ms = started.elapsed().as_millis();
-                return Ok((summary, *conclusion));
+                let state = self
+                    .review
+                    .state(&contract.name, &input, Some(conclusion.status));
+                return Ok(Assessed {
+                    summary,
+                    conclusion: *conclusion,
+                    results: Vec::new(),
+                    state,
+                });
             }
         };
         let context = assess::Context {
             evidence: self.evidence,
             contract,
             evaluator: self.evaluator,
+            answers: &self.review.answers,
             emit: self.emit,
             requests: self.requests,
             max_requests: self.options.max_requests,
@@ -135,6 +191,8 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
         let conclusion = conclusion::Completion {
             evidence: self.evidence,
             contract,
+            input: &input,
+            answers: &self.review.answers,
             results: &results,
             summary: &summary,
             requests: self.requests,
@@ -147,6 +205,14 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
         summary.conclude(&conclusion);
         summary.requests = local_requests.get();
         summary.elapsed_ms = started.elapsed().as_millis();
-        Ok((summary, conclusion))
+        let state = self
+            .review
+            .state(&contract.name, &input, Some(conclusion.status));
+        Ok(Assessed {
+            summary,
+            conclusion,
+            results,
+            state,
+        })
     }
 }

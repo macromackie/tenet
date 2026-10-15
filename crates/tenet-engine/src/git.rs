@@ -128,3 +128,11 @@ pub(crate) fn before(root: &Path, base: &str, path: &Path) -> Result<Option<Stri
         String::from_utf8(bytes).context("base file is not UTF-8")?,
     ))
 }
+
+pub(crate) fn branch(root: &Path) -> Option<String> {
+    output(root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .ok()
+        .and_then(|s| String::from_utf8(s).ok())
+        .map(|s| s.trim().to_owned())
+        .filter(|name| !name.is_empty())
+}

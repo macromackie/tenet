@@ -5,6 +5,7 @@ mod diagnostics;
 mod progress;
 mod report_format;
 mod reporter;
+mod review;
 
 use clap::Parser;
 use cli::{Cli, Command, ReporterKind};
@@ -18,6 +19,7 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
     let json = match &cli.command {
         Command::Check(c) => c.run.json || c.run.reporter == ReporterKind::Jsonl,
+        Command::Status { json } | Command::Show { json, .. } | Command::Log { json, .. } => *json,
         _ => false,
     };
     match commands::execute(&cli).await {
@@ -27,7 +29,7 @@ async fn main() -> ExitCode {
                 let _ = writeln!(
                     io::stdout(),
                     "{}",
-                    serde_json::json!({"version": 3, "type": "error", "message": error.to_string(), "exit_code": 2})
+                    serde_json::json!({"version": 4, "type": "error", "message": error.to_string(), "exit_code": 2})
                 );
             } else {
                 let _ = diagnostics::error(&cli.root, &error, &mut io::stderr());

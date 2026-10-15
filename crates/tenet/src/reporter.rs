@@ -10,9 +10,9 @@ use std::{
 use anyhow::Result;
 use console::Term;
 use tenet_contracts::Contract;
-use tenet_engine::{ContractStatus, Event, Stage, Status, Summary};
+use tenet_engine::{ContractState, ContractStatus, Event, Pending, Stage, Status, Summary};
 
-use crate::report_format::{contract_counts, counts, marker, paint, status, suite};
+use crate::report_format::{contract_counts, counts, marker, paint, status};
 use crate::{cli::ReporterKind, diagnostics};
 
 pub(crate) struct Reporter<'a> {
@@ -55,7 +55,7 @@ impl<'a> Reporter<'a> {
         self.track(&event);
         if self.kind == ReporterKind::Jsonl {
             let mut value = serde_json::to_value(event)?;
-            value["version"] = 3.into();
+            value["version"] = 4.into();
             let mut out = io::stdout().lock();
             serde_json::to_writer(&mut out, &value)?;
             writeln!(out)?;
@@ -87,6 +87,10 @@ impl<'a> Reporter<'a> {
                 self.term.write_line(&format!("Mode: {}", run.mode))?;
                 if let Some(assumption) = run.assumption {
                     self.term.write_line(&format!("Assumption: {assumption}"))?;
+                }
+                if run.model.is_none() {
+                    self.term
+                        .write_line("Model: none; unchanged inputs reuse earlier conclusions")?;
                 }
             }
             Event::ContractStarted {
@@ -136,36 +140,49 @@ impl<'a> Reporter<'a> {
                 contract,
                 summary,
                 conclusion,
+                state,
             } => {
                 let mut progress = self.active.remove(&contract).unwrap_or_default();
-                let state = conclusion.as_ref().map_or_else(
-                    || suite(&summary),
-                    |c| match c.status {
-                        ContractStatus::Verified => "VERIFIED",
-                        ContractStatus::Preserved => "PRESERVED",
-                        ContractStatus::Clear => "CLEAR",
-                        ContractStatus::Unaffected => "UNAFFECTED",
-                        ContractStatus::Failed => "FAILED",
-                        ContractStatus::Unresolved => "UNRESOLVED",
-                    },
-                );
-                *self.contract_statuses.entry(state).or_default() += 1;
-                let text = format!("{} files", progress.done);
+                let (label, detail) = describe(&state, conclusion.as_deref());
+                *self.contract_statuses.entry(label).or_default() += 1;
+                let files = if progress.done > 0 {
+                    progress.done
+                } else {
+                    progress.total
+                };
+                let text = format!("{files} file{}", if files == 1 { "" } else { "s" });
                 self.term.write_line(&format!(
-                    " {} {contract} ({text}) {}{}  {:.1}s",
-                    marker(state),
-                    paint(&state.to_lowercase()),
-                    conclusion
-                        .as_ref()
-                        .and_then(|c| c.confidence)
-                        .map(|score| format!(" ({:.0}% confidence)", score * 100.0))
-                        .unwrap_or_default(),
+                    " {} {contract} ({text}) {}{detail}  {:.1}s",
+                    marker(label),
+                    paint(&label.to_lowercase()),
                     summary.elapsed_ms as f64 / 1000.0
                 ))?;
-                let failed = conclusion
-                    .as_ref()
-                    .is_some_and(|c| c.status == ContractStatus::Failed);
-                if failed {
+                let failed = matches!(
+                    state,
+                    ContractState::Pending {
+                        reason: Pending::ModelFailed
+                    } | ContractState::Settled {
+                        conclusion: ContractStatus::Failed,
+                        ..
+                    }
+                );
+                let record = match &state {
+                    ContractState::Settled {
+                        record: Some(id), ..
+                    } => Some(id),
+                    _ => None,
+                };
+                if let Some(id) = record {
+                    if failed {
+                        self.failures.push(diagnostics::Failure {
+                            reason: Some(format!(
+                                "Recorded {id}; tenet show {contract} gives its evidence."
+                            )),
+                            contract,
+                            issues: Vec::new(),
+                        });
+                    }
+                } else if failed {
                     self.failures.push(diagnostics::Failure {
                         contract,
                         reason: conclusion.as_ref().map(|c| c.reason.clone()),
@@ -208,7 +225,12 @@ impl<'a> Reporter<'a> {
             Event::Skipped { path, reason } => {
                 self.term.write_line(&format!("SKIP {path}: {reason}"))?
             }
-            Event::Summary { summary, .. } => {
+            Event::Summary {
+                summary,
+                revision,
+                pending,
+                ..
+            } => {
                 self.running = false;
 
                 for failure in &self.failures {
@@ -222,14 +244,32 @@ impl<'a> Reporter<'a> {
                     self.term
                         .write_line(&format!("File evidence  {}", counts(&summary)))?;
                 }
+                let cached = if summary.cached > 0 {
+                    format!(" ({} answered from earlier checks)", summary.cached)
+                } else {
+                    String::new()
+                };
                 self.term.write_line(&format!(
-                    " Requests   {}\n Duration   {:.2}s",
+                    " Requests   {}{cached}\n Duration   {:.2}s",
                     summary.requests,
                     summary.elapsed_ms as f64 / 1000.0
                 ))?;
+                if let Some(revision) = revision {
+                    self.term
+                        .write_line(&format!(" Revision   r{revision} in .tenet/events.jsonl"))?;
+                }
                 if summary.cancelled {
                     self.term
                         .write_line("Cancelled; remaining checks were not completed.")?;
+                } else if let Some(first) = pending.first() {
+                    self.term
+                        .write_line(&format!(" Pending    {}", pending.join(", ")))?;
+                    let next = if revision.is_some() {
+                        format!("tenet show {first}")
+                    } else {
+                        "rerun without --snapshot to record conclusions".into()
+                    };
+                    self.term.write_line(&format!(" Next       {next}"))?;
                 }
             }
             Event::Error { message } => self.term.write_line(&format!("ERROR {message}"))?,
@@ -282,6 +322,53 @@ impl<'a> Reporter<'a> {
             )?;
         }
         Ok(())
+    }
+}
+
+/// The contract's label and a short note on where its state came from.
+fn describe(
+    state: &ContractState,
+    conclusion: Option<&tenet_engine::ContractResult>,
+) -> (&'static str, String) {
+    let confidence = conclusion
+        .and_then(|c| c.confidence)
+        .map(|score| format!(" ({:.0}% confidence)", score * 100.0))
+        .unwrap_or_default();
+    let cached = if conclusion.is_some_and(|c| c.cached) {
+        " · unchanged"
+    } else {
+        ""
+    };
+    match state {
+        ContractState::Settled {
+            conclusion: status,
+            record: Some(id),
+        } => (upper(*status), format!(" · recorded {id}")),
+        ContractState::Settled {
+            conclusion: status,
+            record: None,
+        } => (upper(*status), format!("{confidence}{cached}")),
+        ContractState::Pending { reason } => (
+            "PENDING",
+            match reason {
+                Pending::ModelFailed => format!(" · model failed{confidence} · confirm or dispute"),
+                Pending::ModelUnresolved => format!(" · model unresolved{confidence}"),
+                Pending::NotAssessed => " · not assessed".into(),
+                Pending::InputsChanged => " · inputs changed".into(),
+                Pending::NotChecked => " · not checked".into(),
+            },
+        ),
+    }
+}
+
+fn upper(status: ContractStatus) -> &'static str {
+    match status {
+        ContractStatus::Verified => "VERIFIED",
+        ContractStatus::Preserved => "PRESERVED",
+        ContractStatus::Clear => "CLEAR",
+        ContractStatus::Unaffected => "UNAFFECTED",
+        ContractStatus::Failed => "FAILED",
+        ContractStatus::Unresolved => "UNRESOLVED",
     }
 }
 

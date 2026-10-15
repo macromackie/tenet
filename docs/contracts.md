@@ -74,7 +74,7 @@ Numbers do not override contradictory requirements.
 ```sh
 tenet contracts list
 tenet contracts list --for src/users.ts
-tenet contracts view database-failures
+tenet contracts show database-failures
 ```
 
 ## Shared contracts
@@ -92,4 +92,4 @@ Use ordinary fenced code blocks to explain allowed and disallowed behavior. Labe
 Examples are documentation; evaluate real project snapshots and patches through `tenet check`.
 See [evaluation](./evaluation.md). Legacy `tenet:` fences are withheld from check inputs to avoid leaking
 old expected-answer labels; convert them to ordinary examples when editing a contract. The offline
-[evidence archive](./evidence.md) preserves the original document, including those fences.
+[export](./export.md) preserves the original document, including those fences.

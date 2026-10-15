@@ -3,10 +3,14 @@
 ```sh
 tenet check
 tenet check --base origin/main
-tenet evidence src/ --base origin/main > evidence.json
+tenet status [--json]
+tenet show NAME [--json]
+tenet record NAME --conclusion CONCLUSION [--evidence PATH:START-END ...] -m MESSAGE
+tenet log [NAME] [--json]
+tenet export src/ --base origin/main > evidence.json
 tenet validate
 tenet contracts list [--for PATH] [--base REF] [--json]
-tenet contracts view NAME
+tenet contracts show NAME
 tenet contracts add SOURCE/NAME[@REF] (--scope DIR | --path FILE)
 tenet contracts outdated | update | diff PATH | remove PATH
 ```
@@ -61,17 +65,39 @@ If the snapshot has no `.contracts`, Tenet copies `.contracts` from its parent d
 
 Without a patch this is a full check. With a patch it is a diff check. `--base` and `--snapshot` cannot be combined.
 
-## Evidence export
+## Review state
 
-`tenet evidence` exports selected source and complete contract documents without model requests. It accepts the same
-input selection as `check` and writes one JSON object. See [Evidence](./evidence.md) for source identities, scope,
+Each `check` outside a snapshot appends a revision to `.tenet/events.jsonl` with every contract's input and conclusion,
+unless it repeats the latest revision.
+The directory ignores itself, so Git never sees it. Each contract is settled or pending; see [Reviews](./reviews.md).
+
+| Command | Effect | Exit |
+| --- | --- | --- |
+| `status` | Recompute inputs from the working tree and list each contract's state; never writes or calls a model | As `check` |
+| `show NAME` | Show the model's answer, records, changes since an outdated result, the contract, and the change | 0 |
+| `record NAME` | Settle the contract's current input with a conclusion, evidence, and a message | 0, or 2 if refused |
+| `log [NAME]` | List revisions, assessments, and records, newest first; `--json` prints the log in order | 0 |
+
+`record` refuses a contract whose scoped files changed after its latest check: run `check` again first. The conclusion
+must fit the check: `verified` for a full check of the full contract, `preserved` or `unaffected` for a diff, and `clear`
+for selected subjects, plus `failed` and `unresolved` everywhere. `--evidence` cites lines of the current files; it is
+required unless the conclusion is `unresolved`. `show` prints the command with the conclusions that fit.
+
+`check --no-model` captures inputs and appends a revision without credentials or requests. Contracts settled for the
+same input stay settled; the rest are pending. A model check answers repeated identical requests from
+`.tenet/answers.jsonl`; `--fresh` asks the model again. Delete `.tenet/` to forget the review.
+
+## Export
+
+`tenet export` exports selected source and complete contract documents without model requests. It accepts the same
+input selection as `check` and writes one JSON object. See [Export](./export.md) for source identities, scope,
 size limits, and examples of preparing a focused question.
 
 ## Shared contracts
 
 These commands install contracts from a library and record them in `.tenet.lock` at the project root. They are the only
-commands that read the lock or reach the network, and they need `git`. `check`, `evidence`, and `contracts list` and
-`view` never read the lock; `validate` checks its format and that each recorded file exists. See
+commands that read the lock or reach the network, and they need `git`. `check`, `export`, and `contracts list` and
+`show` never read the lock; `validate` checks its format and that each recorded file exists. See
 [Guidance](./guidance.md) for the workflow.
 
 | Command | Effect |
@@ -107,6 +133,8 @@ contracts, so every merge is a reviewable diff.
 | `--model ID` | provider default | Select a supported pinned model |
 | `--reporter KIND` | default | `default`, `verbose`, or `jsonl` |
 | `--json` | off | Shorthand for JSONL |
+| `--no-model` | off | Capture and keep a revision without requests; see [Review state](#review-state) |
+| `--fresh` | off | Ask the model again instead of reusing answers to identical requests |
 
 `check --dry-run` lists candidate pairs and validates each complete file input, including the contract and explicit context,
 without credentials or model requests. JSON records include encoded `input_bytes`, `input_limit_bytes`, and any `error`;
@@ -119,4 +147,4 @@ The inventory respects Git ignore files and `.ignore`. Tool configuration and ot
 Tracked changes to ordinary files are assessed even if current ignore rules hide them from the inventory. Never store credentials in files you submit for assessment.
 
 Symlinks are not followed. Selected symlinks, binary files, unreadable inputs, and oversized inputs do not count as passing checks.
-There is no configuration file, baseline database, generated verifier, or automatic fixer.
+There is no configuration file, stored baseline, generated verifier, or automatic fixer.

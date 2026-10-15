@@ -6,10 +6,13 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use ev_grep_jev::Jev;
-use tenet_engine::{Event, Mode, Options, PreparedSnapshot, RunInfo, Selection};
+use tenet_engine::{
+    Event, Mode, Options, PreparedSnapshot, Review, RunInfo, Selection,
+    review::{CheckRequest, Checked},
+};
 
 use crate::{
-    cli::{Cli, Command, Contracts, Input, ReporterKind, Run},
+    cli::{Check, Cli, Command, Contracts, Input, ReporterKind},
     reporter::Reporter,
 };
 
@@ -67,7 +70,7 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
                         }
                     }
                 }
-                Contracts::View { name } => {
+                Contracts::Show { name } => {
                     let contracts = tenet_engine::discover_contracts(&cli.root)?;
                     let c = contracts
                         .iter()
@@ -79,12 +82,18 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
             Ok(0)
         }
         Command::Check(check) => {
-            let (plan, snapshot) = prepare(&cli.root, &check.input)?;
-            evaluate(&plan, &check.run, check.dry_run, snapshot.as_ref()).await
+            let (plan, selection, snapshot) = prepare(&cli.root, &check.input)?;
+            evaluate(&plan, &selection, check, snapshot.as_ref()).await
         }
-        Command::Evidence(evidence) => {
-            let (plan, _snapshot) = prepare(&cli.root, &evidence.input)?;
-            let capture = plan.export_evidence(evidence.max_bytes as usize);
+        Command::Status { json } => crate::review::status(&cli.root, *json).await,
+        Command::Show { contract, json } => crate::review::show(&cli.root, contract, *json).await,
+        Command::Record(record) => crate::review::record(&cli.root, record).await,
+        Command::Log { contract, json } => {
+            crate::review::log(&cli.root, contract.as_deref(), *json)
+        }
+        Command::Export(export) => {
+            let (plan, _selection, _snapshot) = prepare(&cli.root, &export.input)?;
+            let capture = plan.export_evidence(export.max_bytes as usize);
             let bytes = tokio::select! {
                 result = capture => result?,
                 signal = tokio::signal::ctrl_c() => {
@@ -98,7 +107,10 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
     }
 }
 
-fn prepare(root: &Path, input: &Input) -> Result<(tenet_engine::Plan, Option<PreparedSnapshot>)> {
+fn prepare(
+    root: &Path,
+    input: &Input,
+) -> Result<(tenet_engine::Plan, Selection, Option<PreparedSnapshot>)> {
     let snapshot = input
         .snapshot
         .as_ref()
@@ -115,22 +127,23 @@ fn prepare(root: &Path, input: &Input) -> Result<(tenet_engine::Plan, Option<Pre
         contract: input.contract.clone(),
     };
     let plan = tenet_engine::plan(root, &selection)?.with_context(&input.context)?;
-    Ok((plan, snapshot))
+    Ok((plan, selection, snapshot))
 }
 
 async fn evaluate(
     plan: &tenet_engine::Plan,
-    run: &Run,
-    dry: bool,
+    selection: &Selection,
+    check: &Check,
     snapshot: Option<&PreparedSnapshot>,
 ) -> Result<u8> {
+    let run = &check.run;
     let kind = if run.json {
         ReporterKind::Jsonl
     } else {
         run.reporter
     };
     let reporter = RefCell::new(Reporter::new(kind, &plan.contracts));
-    if dry {
+    if check.dry_run {
         let evidence = plan.capture().await?;
         let mut errors = 0;
         for c in &plan.contracts {
@@ -154,7 +167,7 @@ async fn evaluate(
                     writeln!(
                         io::stdout(),
                         "{}",
-                        serde_json::json!({"version":3,"type":"selected","contract":c.name,"scope":scope,"path":path,"contract_hash":c.hash,"input_bytes":input_bytes,"input_limit_bytes":tenet_engine::MAX_FILE_BYTES,"error":error})
+                        serde_json::json!({"version":4,"type":"selected","contract":c.name,"scope":scope,"path":path,"contract_hash":c.hash,"input_bytes":input_bytes,"input_limit_bytes":tenet_engine::MAX_FILE_BYTES,"error":error})
                     )?;
                 } else {
                     writeln!(io::stdout(), "{}  {}", c.name, path.display())?;
@@ -168,10 +181,69 @@ async fn evaluate(
             writeln!(
                 io::stdout(),
                 "{}",
-                serde_json::json!({"version":3,"type":"summary","dry_run":true,"files":plan.files.len(),"mode":plan.mode,"assume_base_valid":plan.mode == Mode::Diff,"deleted":plan.deleted,"errors":errors,"exit_code":if errors > 0 { 2 } else { 0 }})
+                serde_json::json!({"version":4,"type":"summary","dry_run":true,"files":plan.files.len(),"mode":plan.mode,"assume_base_valid":plan.mode == Mode::Diff,"deleted":plan.deleted,"errors":errors,"exit_code":if errors > 0 { 2 } else { 0 }})
             )?;
         }
         return Ok(if errors > 0 { 2 } else { 0 });
+    }
+    // A snapshot is a temporary copy, so its review is discarded with it.
+    let mut review = if snapshot.is_some() {
+        Review::ephemeral()
+    } else {
+        Review::open(&plan.root)?
+    };
+    let evidence = plan.capture().await?;
+    let emit = |event| reporter.borrow_mut().emit(event);
+    let begin = |provider: Option<String>, model: Option<String>| RunInfo {
+        version: env!("CARGO_PKG_VERSION").into(),
+        root: plan.root.display().to_string(),
+        provider,
+        model,
+        mode: if plan.mode == Mode::Diff {
+            "diff"
+        } else {
+            "full"
+        }
+        .into(),
+        base: plan.base.clone(),
+        head: plan.head.clone(),
+        assumption: (plan.mode == Mode::Diff)
+            .then(|| "The base satisfies the selected contracts.".into()),
+        snapshot: snapshot.map(|s| s.snapshot.display().to_string()),
+        patch_hash: snapshot.and_then(|s| s.patch_hash.clone()),
+        jobs: run.jobs.into(),
+        max_requests: run.max_requests as usize,
+        min_confidence: run.min_confidence,
+    };
+    if check.no_model {
+        emit(Event::Begin {
+            run: begin(None, None),
+        })?;
+        let checked = review.carry(&evidence);
+        for (contract, concluded) in plan.contracts.iter().zip(&checked.contracts) {
+            emit(Event::ContractStarted {
+                contract: concluded.contract.clone(),
+                path: String::new(),
+                total: plan
+                    .files
+                    .iter()
+                    .filter(|path| plan.in_scope(path, &contract.scope))
+                    .count(),
+            })?;
+            emit(Event::ContractFinished {
+                contract: concluded.contract.clone(),
+                summary: tenet_engine::Summary::default(),
+                conclusion: None,
+                state: concluded.state.clone(),
+            })?;
+        }
+        let request = CheckRequest {
+            selection,
+            context: &check.input.context,
+            model: None,
+        };
+        let revision = review.commit(&evidence, &request, &checked)?;
+        return finish(&emit, checked, revision);
     }
     let model = run.provider.model(run.model.as_deref())?;
     let key = std::env::var(run.provider.key_variable()).with_context(|| {
@@ -187,55 +259,60 @@ async fn evaluate(
         run.endpoint.as_deref().unwrap_or(run.provider.endpoint()),
     )?
     .with_jobs(usize::from(run.jobs))?;
-    let emit = |event| reporter.borrow_mut().emit(event);
+    let identity = format!("{}/{model}", run.provider);
+    review.use_model(&identity, !check.fresh)?;
     emit(Event::Begin {
-        run: RunInfo {
-            version: env!("CARGO_PKG_VERSION").into(),
-            root: plan.root.display().to_string(),
-            provider: run.provider.to_string(),
-            model,
-            mode: if plan.mode == Mode::Diff {
-                "diff"
-            } else {
-                "full"
-            }
-            .into(),
-            base: plan.base.clone(),
-            head: plan.head.clone(),
-            assumption: (plan.mode == Mode::Diff)
-                .then(|| "The base satisfies the selected contracts.".into()),
-            snapshot: snapshot.map(|s| s.snapshot.display().to_string()),
-            patch_hash: snapshot.and_then(|s| s.patch_hash.clone()),
-            jobs: run.jobs.into(),
-            max_requests: run.max_requests as usize,
-            min_confidence: run.min_confidence,
-        },
+        run: begin(Some(run.provider.to_string()), Some(model)),
     })?;
     let options = Options {
         jobs: run.jobs.into(),
         max_requests: run.max_requests as usize,
         min_confidence: run.min_confidence,
     };
-    let future = tenet_engine::run(plan, options, &evaluator, &emit);
+    let future = tenet_engine::run(&evidence, options, &evaluator, &review, &emit);
     tokio::pin!(future);
     let mut refresh = tokio::time::interval(std::time::Duration::from_millis(100));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let live = reporter.borrow().is_live();
-    let summary = loop {
+    let checked = loop {
         tokio::select! {
             result = &mut future => break result?,
             _ = refresh.tick(), if live => reporter.borrow_mut().refresh()?,
             signal = tokio::signal::ctrl_c() => {
                 signal?;
+                // Answers already received stay in the cache; an incomplete check adds no revision.
                 let mut summary = reporter.borrow().summary.clone();
                 summary.cancelled = true;
-                break summary;
+                emit(Event::Summary {
+                    summary,
+                    revision: None,
+                    pending: Vec::new(),
+                    exit_code: 130,
+                })?;
+                return Ok(130);
             }
         }
     };
-    let code = summary.exit_code();
+    let request = CheckRequest {
+        selection,
+        context: &check.input.context,
+        model: Some(&identity),
+    };
+    let revision = review.commit(&evidence, &request, &checked)?;
+    finish(&emit, checked, revision)
+}
+
+fn finish(
+    emit: &impl Fn(Event) -> Result<()>,
+    checked: Checked,
+    revision: Option<u64>,
+) -> Result<u8> {
+    let code = checked.exit_code();
+    let pending = checked.pending();
     emit(Event::Summary {
-        summary,
+        summary: checked.summary,
+        revision,
+        pending,
         exit_code: code,
     })?;
     Ok(code)

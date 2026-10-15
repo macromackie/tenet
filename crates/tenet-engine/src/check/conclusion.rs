@@ -6,12 +6,14 @@ use tenet_contracts::Contract;
 
 use crate::{
     CheckResult, ConclusionReason, ContractResult, ContractStatus, Event, EvidencePacket, Mode,
-    RequestedScope, Stage, Status, Summary,
+    RequestedScope, Stage, Status, Summary, review::Answers,
 };
 
 pub(crate) struct Completion<'a> {
     pub evidence: &'a EvidencePacket<'a>,
     pub contract: &'a Contract,
+    pub input: &'a str,
+    pub answers: &'a Answers,
     pub results: &'a [CheckResult],
     pub summary: &'a Summary,
     pub requests: &'a Cell<usize>,
@@ -27,7 +29,14 @@ impl Completion<'_> {
         reason_code: ConclusionReason,
         reason: &str,
     ) -> ContractResult {
-        decision(self.evidence, self.contract, status, reason_code, reason)
+        decision(
+            self.evidence,
+            self.contract,
+            self.input,
+            status,
+            reason_code,
+            reason,
+        )
     }
 
     pub(crate) async fn assess(
@@ -43,38 +52,57 @@ impl Completion<'_> {
                 "File checks could not complete; see their errors or budget results.",
             ));
         }
-        if self.requests.get() >= self.max_requests {
-            return Ok(self.decision(
-                ContractStatus::Unresolved,
-                ConclusionReason::RequestBudget,
-                "Request budget exhausted before combined assessment.",
-            ));
-        }
         let super::context::CombinedContext {
             state,
             summary: context,
             hash: evidence_hash,
         } = context;
         let query = super::prompt::query(Stage::Completeness, self.evidence.plan.mode);
-        self.requests.set(self.requests.get() + 1);
-        self.local_requests.set(self.local_requests.get() + 1);
-        emit(Event::StageStarted {
-            contract: self.contract.name.clone(),
-            path: "<combined>".into(),
-            stage: Stage::Completeness,
-        })?;
-        let assessment = match evaluator.assess_context(&query, &state).await {
-            Ok(assessment) => assessment,
-            Err(error) => {
-                let mut result = self.decision(
+        let questions = [ev_grep_core::Question {
+            id: "match",
+            query: &query,
+        }];
+        let key = self.answers.key(&questions, &state);
+        let cached = self
+            .answers
+            .get(&key)
+            .and_then(|mut answers| answers.remove("match"));
+        let assessment = if let Some(assessment) = &cached {
+            assessment.clone()
+        } else {
+            if self.requests.get() >= self.max_requests {
+                return Ok(self.decision(
                     ContractStatus::Unresolved,
-                    ConclusionReason::AssessmentFailed,
-                    "Combined assessment failed.",
-                );
-                result.error = Some(error.to_string());
-                result.evidence_hash = Some(evidence_hash);
-                result.context = Some(context);
-                return Ok(result);
+                    ConclusionReason::RequestBudget,
+                    "Request budget exhausted before combined assessment.",
+                ));
+            }
+            self.requests.set(self.requests.get() + 1);
+            self.local_requests.set(self.local_requests.get() + 1);
+            emit(Event::StageStarted {
+                contract: self.contract.name.clone(),
+                path: "<combined>".into(),
+                stage: Stage::Completeness,
+            })?;
+            match evaluator.assess_context(&query, &state).await {
+                Ok(assessment) => {
+                    self.answers.put(
+                        &key,
+                        &std::collections::BTreeMap::from([("match".into(), assessment.clone())]),
+                    )?;
+                    assessment
+                }
+                Err(error) => {
+                    let mut result = self.decision(
+                        ContractStatus::Unresolved,
+                        ConclusionReason::AssessmentFailed,
+                        "Combined assessment failed.",
+                    );
+                    result.error = Some(error.to_string());
+                    result.evidence_hash = Some(evidence_hash);
+                    result.context = Some(context);
+                    return Ok(result);
+                }
             }
         };
         let routing = assessment.route(self.min_confidence);
@@ -109,6 +137,7 @@ impl Completion<'_> {
         result.evidence_hash = Some(evidence_hash);
         result.context = Some(context);
         result.request = assessment.request.clone();
+        result.cached = cached.is_some();
         if routing.outcome == Outcome::NoMatch {
             result.conflicting_files = self
                 .results
@@ -165,6 +194,7 @@ impl Completion<'_> {
 pub(super) fn decision(
     evidence: &EvidencePacket<'_>,
     contract: &Contract,
+    input: &str,
     status: ContractStatus,
     reason_code: ConclusionReason,
     reason: &str,
@@ -172,6 +202,7 @@ pub(super) fn decision(
     ContractResult {
         status,
         scope: evidence.plan.requested_scope(contract),
+        input: input.to_owned(),
         confidence: None,
         reason: reason.into(),
         reason_code,
@@ -182,5 +213,6 @@ pub(super) fn decision(
         error: None,
         conflicting_files: Vec::new(),
         request: None,
+        cached: false,
     }
 }

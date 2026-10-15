@@ -1,18 +1,58 @@
 # Reviews
 
-Tenet supplies fast, model-based checks. The reviewing agent reads the contracts, investigates the code,
-runs appropriate project checks, and writes the final review.
+Tenet supplies fast, model-based checks and remembers what each contract concluded for the exact code it saw.
+The reviewing agent reads the contracts, investigates the code, runs appropriate project checks, records a
+conclusion for each pending contract, and writes the final review.
 
 ```sh
-tenet contracts list --base origin/main --json
-tenet contracts view database-failures
-tenet check --base origin/main --json > report.jsonl
+tenet check --base origin/main
+tenet status
+tenet show database-failures
+tenet record database-failures --conclusion failed \
+  --evidence src/storage/query.ts:40-52 -m "query errors become an empty list"
 ```
 
-Read every contract in the inventory. Use failed, unresolved, and lower-confidence assessments to decide where
-to investigate first. A favorable assessment can save time; it does not remove the contract from the review.
-Confirm suspected violations before commenting on code. Exit 0 means the requested claims completed without violations. Read each claim's scope: selected subjects can be
-`clear` without verifying a whole contract. Unresolved results exit 3.
+`check` captures the change, asks the model, and appends revision `rN` to `.tenet/events.jsonl`. `status` recomputes
+each contract's input from the working tree and reports it settled or pending without calling a model. A model's
+favorable conclusion settles a contract; its `failed` or `unresolved` stays pending until someone records a conclusion.
+See [review states](./output.md#review-states).
+
+`show` prints what a reviewer needs for one contract: the model's answer and confidence, the scoped files, earlier
+records and assessments, the changes since an outdated one, the `record` command with the conclusions that fit, the
+complete contract, and the change. Read every contract. A favorable assessment can save time; it does not remove the
+contract from the review. Confirm suspected violations in the code before recording them.
+
+A record cites line ranges of the current files and a message saying what they show. Record `unresolved` with a
+message when you cannot decide; it exits 3 instead of blocking. Exit 0 means every contract is settled without a
+violation. Read each claim's scope: selected subjects can be `clear` without verifying a whole contract.
+
+## Keep reviews current
+
+Every conclusion is bound to its input. Editing a scoped file makes its contract pending with `inputs_changed`, and
+`record` refuses it until the next `check`. Then `show` lists the earlier record as outdated with a diff of what
+changed since. Reverting the edit restores the earlier input, so its record settles the contract again.
+
+Repeated checks answer identical requests from `.tenet/answers.jsonl`, so an unchanged contract costs no request and
+keeps its answer. Use `--fresh` to sample the model again. `tenet check --no-model` captures a revision without
+credentials; only conclusions for unchanged inputs carry over. `tenet log` lists every revision and record.
+
+An agent can split the work: give one subagent each pending contract with `tenet show NAME`, and have it record a
+conclusion. Records for different contracts do not conflict.
+
+To keep an agent working until every contract is settled, run `tenet status` when it tries to stop. In Claude Code,
+a `Stop` hook that exits 2 sends its stderr back to the agent:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "tenet status >&2; [ $? -ne 4 ] || exit 2" }] }
+    ]
+  }
+}
+```
+
+The hook blocks only on exit 4. Without a `.tenet/` directory, `status` exits 2 and the agent can stop.
 
 ## Add context
 
@@ -28,7 +68,7 @@ Keep the checkout stable during a run. Tenet captures selected and supporting so
 reuses those bytes throughout the run. Capture is not an atomic filesystem snapshot. Capture stdout and exit status
 even when the command returns nonzero.
 
-Use [`tenet evidence`](./evidence.md) to export selected contracts and source without calling a model. A saved packet
+Use [`tenet export`](./export.md) to export selected contracts and source without calling a model. A saved packet
 can supply a focused question or a description of the change, with references back to each before/after source.
 Descriptions help choose what to inspect; verify their claims against the source and the full English contracts.
 

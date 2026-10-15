@@ -25,7 +25,7 @@ and original documents, plus distinct source records including paths, patches, a
 captured payload, not total process memory. Capture overflow exits 2 before any model requests. Increasing the
 request budget does not raise this bound.
 
-The offline [`evidence` export](./evidence.md#bounds-and-errors) has a separate packet limit; it does not enlarge model inputs.
+The offline [`export` command](./export.md#bounds-and-errors) has a separate packet limit; it does not enlarge model inputs.
 
 `tenet contracts update` merges line by line with `git merge-file`. Rewrapping a paragraph changes every line in it,
 so an upstream edit to that paragraph conflicts as a whole. Shared contracts keep one sentence per line to limit this.
@@ -36,8 +36,8 @@ Each file uses one request that asks relevance and violation together. A contrac
 File and repository assessments share the jobs limit across independent contracts. Final summaries retain scope and numeric order.
 
 Jev requests share a 15-second budget across at most three attempts, with a five-second limit per attempt. One slow request may use a spare worker to race a duplicate after one second. Rate limits pause new requests; the first valid answer wins. Duplicate or interrupted requests may still incur charges.
-Model answers can differ between runs on the same input, especially for borderline files. Compare repeated runs
-before treating a change in results as an improvement.
+Model answers can differ between runs on the same input, especially for borderline files. A repeated check reuses the
+earlier answers, so compare `--fresh` runs before treating a change in results as an improvement.
 
 Every answer uses `--min-confidence` (default 0.8). Lower-confidence and explicit uncertain answers route to
 uncertain while their raw choices and probabilities remain visible. Every relevance outcome retains selected source

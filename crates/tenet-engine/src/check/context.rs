@@ -1,5 +1,5 @@
 mod paths;
-mod scope;
+pub(crate) mod scope;
 
 use anyhow::Result;
 use serde_json::Value;
@@ -23,10 +23,15 @@ pub(super) enum Preparation {
     Unresolved(Box<ContractResult>),
 }
 
-pub(super) fn prepare(evidence: &EvidencePacket<'_>, contract: &Contract) -> Preparation {
+pub(super) fn prepare(
+    evidence: &EvidencePacket<'_>,
+    contract: &Contract,
+    input: &str,
+) -> Preparation {
     let mut result = conclusion::decision(
         evidence,
         contract,
+        input,
         ContractStatus::Unresolved,
         ConclusionReason::ContextUnavailable,
         "Combined context unavailable.",

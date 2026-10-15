@@ -23,7 +23,7 @@ tenet check --base origin/main     # Assess changes, assuming a valid base
 
 For example, a contract can require database failures to reach the caller rather than become empty results.
 Tenet checks relevant files and their combined context, then reports one conclusion per contract.
-Each model conclusion preserves raw confidence separately from routing. Unresolved contracts need follow-up and exit 3.
+Each model conclusion preserves raw confidence separately from routing. A model's failed or unresolved conclusion stays pending, with exit 4, until a reviewer records one.
 Selected-path checks assess their combined evidence and can report `clear` without claiming full contract verification.
 
 Install shared contracts from the public [tenet-contracts](https://github.com/macromackie/tenet-contracts) library:
@@ -40,13 +40,18 @@ Read every applicable contract during a review. Tenet helps choose where to inve
 ## Review changes
 
 ```sh
-tenet check --base origin/main --json > review.jsonl
+tenet check --base origin/main     # Assess the change and append a revision to .tenet/
+tenet status                       # Settled and pending contracts, without a model
+tenet show database-failures       # The model's answer, history, and the record command
+tenet record database-failures --conclusion failed --evidence src/query.ts:40-52 -m "returns [] on failure"
 ```
 
-A reviewer investigates failures and unresolved contracts with ordinary repository tools. Model judgments can be wrong; a successful exit does not mean every contract was verified.
+A reviewer investigates pending contracts with ordinary repository tools and records a conclusion for each. A record
+is bound to the exact code it judged; editing a scoped file makes it outdated. Model judgments can be wrong; a
+successful exit does not mean every contract was verified.
 Selected code and contract rules go to the configured provider, using your API key.
 
-Use [`tenet evidence`](docs/evidence.md) to export selected contracts and source offline for a review or a focused question.
+Use [`tenet export`](docs/export.md) to export selected contracts and source offline for a review or a focused question.
 
 Read [commands](docs/cli.md), [output](docs/output.md), and [reviewing with an agent](docs/reviews.md).
 The same docs are at [tenet-contracts.com/docs](https://tenet-contracts.com/docs).

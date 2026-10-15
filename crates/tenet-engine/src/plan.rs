@@ -52,7 +52,7 @@ impl Plan {
         Ok(self)
     }
 
-    pub(crate) fn in_scope(&self, path: &Path, scope: &Path) -> bool {
+    pub fn in_scope(&self, path: &Path, scope: &Path) -> bool {
         path.starts_with(scope)
             || self
                 .previous_paths

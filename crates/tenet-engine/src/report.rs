@@ -8,7 +8,7 @@ pub enum Stage {
     Completeness,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Pass,
@@ -40,6 +40,8 @@ pub struct CheckResult {
     pub verification: Option<ev_grep_core::Assessment>,
     pub verification_routing: Option<ev_grep_core::Routing>,
     pub request: Option<ev_grep_core::RequestInfo>,
+    /// The answers came from the review's answer cache; no request was sent.
+    pub cached: bool,
     pub elapsed_ms: u128,
 }
 
@@ -52,6 +54,8 @@ pub struct Summary {
     pub errors: usize,
     pub incomplete: usize,
     pub requests: usize,
+    /// Request batches answered from the answer cache instead of the provider.
+    pub cached: usize,
     pub attempts: usize,
     pub hedges: usize,
     pub input_tokens: u64,
@@ -75,6 +79,7 @@ impl Summary {
         self.errors += other.errors;
         self.incomplete += other.incomplete;
         self.requests += other.requests;
+        self.cached += other.cached;
         self.attempts += other.attempts;
         self.hedges += other.hedges;
         self.input_tokens += other.input_tokens;
@@ -98,6 +103,7 @@ impl Summary {
 
     pub(crate) fn add(&mut self, result: &CheckResult) {
         self.record_request(result.request.as_ref());
+        self.cached += usize::from(result.cached);
         match result.status {
             Status::Pass => self.passed += 1,
             Status::Fail => self.failed += 1,
@@ -107,26 +113,15 @@ impl Summary {
             Status::Incomplete => self.incomplete += 1,
         }
     }
-
-    pub fn exit_code(&self) -> u8 {
-        if self.cancelled {
-            130
-        } else if self.errors > 0 {
-            2
-        } else if self.incomplete > 0 || self.contracts_unresolved > 0 {
-            3
-        } else {
-            u8::from(self.contracts_failed > 0)
-        }
-    }
 }
 
 #[derive(Serialize)]
 pub struct RunInfo {
     pub version: String,
     pub root: String,
-    pub provider: String,
-    pub model: String,
+    /// Absent for `check --no-model`.
+    pub provider: Option<String>,
+    pub model: Option<String>,
     pub mode: String,
     pub base: Option<String>,
     pub head: Option<String>,
@@ -171,6 +166,7 @@ pub enum Event {
         contract: String,
         summary: Summary,
         conclusion: Option<Box<ContractResult>>,
+        state: ContractState,
     },
     Skipped {
         path: String,
@@ -178,6 +174,10 @@ pub enum Event {
     },
     Summary {
         summary: Summary,
+        /// The revision this check appended to `.tenet/events.jsonl`; absent when nothing is kept.
+        revision: Option<u64>,
+        /// Contracts that need a check or a record before the review is final.
+        pending: Vec<String>,
         exit_code: u8,
     },
     Error {
@@ -196,18 +196,46 @@ pub enum ContractStatus {
     Unresolved,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+impl ContractStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::Preserved => "preserved",
+            Self::Clear => "clear",
+            Self::Unaffected => "unaffected",
+            Self::Failed => "failed",
+            Self::Unresolved => "unresolved",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            Self::Verified,
+            Self::Preserved,
+            Self::Clear,
+            Self::Unaffected,
+            Self::Failed,
+            Self::Unresolved,
+        ]
+        .into_iter()
+        .find(|status| status.as_str() == value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestedScope {
     FullContract,
     SelectedSubjects,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ContractResult {
     #[serde(rename = "assessment")]
     pub status: ContractStatus,
     pub scope: RequestedScope,
+    /// Identifies the contract document and every scoped fact the assessment covered.
+    pub input: String,
     pub confidence: Option<f64>,
     pub reason: String,
     pub reason_code: ConclusionReason,
@@ -224,9 +252,11 @@ pub struct ContractResult {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub conflicting_files: Vec<String>,
     pub request: Option<ev_grep_core::RequestInfo>,
+    /// The combined answer came from the answer cache; no request was sent.
+    pub cached: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConclusionReason {
     FileChecksIncomplete,
@@ -242,7 +272,7 @@ pub enum ConclusionReason {
     ConflictingAssessments,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ContextSummary {
     pub input_bytes: usize,
     pub limit_bytes: usize,
@@ -252,9 +282,45 @@ pub struct ContextSummary {
     pub omitted_files: Vec<std::path::PathBuf>,
 }
 
+/// Where a contract stands in its review once records and model conclusions are combined.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ContractState {
+    /// A favorable model conclusion, or a record bound to the current input.
+    Settled {
+        conclusion: ContractStatus,
+        /// The record that settled the contract; absent when the model's conclusion did.
+        record: Option<String>,
+    },
+    /// The result is not final until a check or a record settles it.
+    Pending { reason: Pending },
+}
+
+impl ContractState {
+    pub fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending { .. })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Pending {
+    /// The model reports a violation; an agent confirms or disputes it with a record.
+    ModelFailed,
+    /// The model could not decide, or the assessment could not complete.
+    ModelUnresolved,
+    /// Captured without a model, and no earlier assessment had the same input.
+    NotAssessed,
+    /// Scoped files or the contract changed after the last check.
+    InputsChanged,
+    /// The contract entered the review's scope and has not been checked.
+    NotChecked,
+}
+
 impl Summary {
     pub(crate) fn conclude(&mut self, conclusion: &ContractResult) {
         self.record_request(conclusion.request.as_ref());
+        self.cached += usize::from(conclusion.cached);
         match conclusion.status {
             ContractStatus::Verified => self.contracts_verified += 1,
             ContractStatus::Clear => self.contracts_clear += 1,

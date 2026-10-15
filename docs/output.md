@@ -4,7 +4,7 @@ The default reporter shows progress while files are assessed, then one final res
 
 Use `--reporter verbose` for individual file judgments. JSONL retains all intermediate evidence, including uncertainty that a later repository assessment resolves.
 Human reports go to stderr. JSONL goes to stdout.
-The offline [`evidence` command](./evidence.md) has a separate JSON format containing source and contract documents.
+The offline [`export` command](./export.md) has a separate JSON format containing source and contract documents.
 
 ```sh
 tenet check --base origin/main --reporter jsonl > report.jsonl
@@ -24,6 +24,22 @@ tenet check --base origin/main --reporter jsonl > report.jsonl
 A full check cannot conclude unaffected or preserved. A diff check cannot newly verify the baseline.
 These are model judgments, not formal proofs. No findings alone is insufficient for verification.
 
+## Review states
+
+Each contract is settled or pending for the exact input a check captured: the contract text, mode, scope, and the
+content of every scoped file. A record from `tenet record` settles its input. Otherwise a model's `verified`,
+`preserved`, `unaffected`, or `clear` settles it. Every other contract is pending:
+
+| Reason | Meaning |
+| --- | --- |
+| `model_failed` | The model found a violation; confirm or dispute it with a record |
+| `model_unresolved` | The model could not decide, or its evidence or execution was incomplete |
+| `not_assessed` | `check --no-model` captured the input without asking the model |
+| `inputs_changed` | A scoped file or the contract changed after the latest check (`status` only) |
+| `not_checked` | The contract joined the review after the latest check (`status` only) |
+
+A record or conclusion never carries to a different input. `tenet show` lists outdated ones with the changes since.
+
 File results remain `pass`, `fail`, `not_applicable`, `uncertain`, `error`, or `incomplete`.
 After confidence routing, a violation `match` produces `fail` even when relevance says `no_match`. Otherwise, relevance `no_match`
 produces `not_applicable`; that status retains the source for the combined assessment. For other relevance outcomes,
@@ -33,11 +49,12 @@ The verbose reporter shows uncertain file judgments as `UNRESOLVED`. A repositor
 
 ## JSONL
 
-Each event has `version: 3` and a `type`. The `begin` event records `full` or `diff` mode, provider/model, root, base and HEAD when available, the confidence threshold, and the baseline assumption. Snapshot runs include the original snapshot path and patch hash.
+Each event has `version: 4` and a `type`. The `begin` event records `full` or `diff` mode, provider/model (`null` for `--no-model`), root, base and HEAD when available, the confidence threshold, and the baseline assumption. Snapshot runs include the original snapshot path and patch hash.
 
 `result` contains file evidence: mode, change kind, previous path for renames, before/after hashes, contract hash, judgments, and timing. `source_hash` identifies the complete encoded change input. `input_bytes` measures the encoded state including contract and explicit context, before provider instructions and question wrappers; it is not a token count.
 
-`contract_finished` includes a `conclusion`:
+`contract_finished` includes the contract's `state`, such as `{"state": "pending", "reason": "model_failed"}` or
+`{"state": "settled", "conclusion": "failed", "record": "d370e7dc32d8"}`, and the model's `conclusion`:
 
 ```json
 {
@@ -85,24 +102,28 @@ source is never truncated to fit.
 Inventory metadata may use [compact directory trees](./limits.md); scope diagnostics retain expanded paths, while
 `input_bytes` and `evidence_hash` describe the actual encoded assessment input.
 
-Version 3 replaces the run-wide `partial` flag with each conclusion's `scope` (`full_contract` or `selected_subjects`)
-and separates raw answers from routing. Consumers should retain useful diagnostics and ignore unknown fields. A reason describes the evidence limit; it does not turn an unresolved assessment into a pass.
+Version 4 adds each contract's `state`, the summary's `revision` and `pending` contracts, and `cached` counts for
+results answered from earlier identical requests. Version 3 replaced the run-wide `partial` flag with each conclusion's
+`scope` and separated raw answers from routing. Consumers should retain useful diagnostics and ignore unknown fields. A reason describes the evidence limit; it does not turn an unresolved assessment into a pass.
 
 Other events include `contract_started`, `check_started`, `stage_started`, `stage_completed`, `summary`, and `error`. Stages are `applicability`, `verification`, and `completeness`.
-The summary includes file counts, contract counts, request count, and exit code. Source contents and credentials are not printed.
+The summary includes file counts, contract counts, request and cached counts, the appended `revision` (`null` for a snapshot), the `pending` contract names, and the exit code. Source contents and credentials are not printed.
 
 ## Check exit codes
 
+`check` and `status` share these codes:
+
 | Code | Meaning |
 | --- | --- |
-| 0 | Every requested claim completed without a violation |
-| 1 | Contract failures |
+| 0 | Every contract is settled without a violation |
+| 1 | A settled violation: a recorded failure |
 | 2 | Invalid input or execution error |
-| 3 | Unresolved semantics or incomplete requested work, including exhausted budgets |
+| 3 | A recorded `unresolved` conclusion |
+| 4 | A contract is pending, including model failures, unresolved answers, and exhausted budgets |
 | 130 | Cancelled |
 
-Unresolved contracts exit 3. Exit 0 can include `clear` results for selected subjects, so it does not imply full
-contract verification. Cancellation takes precedence, then execution errors, unresolved or incomplete work, and
-confirmed violations. Findings remain available even when another contract causes exit 2 or 3.
+Cancellation takes precedence, then execution errors, pending contracts, violations, and recorded unresolved
+conclusions. A model's `failed` exits 4 until a record confirms it. Exit 0 can include `clear` results for selected
+subjects, so it does not imply full contract verification. Findings remain available whatever decides the exit code.
 
 File diagnostics highlight the contract requirement; Tenet does not invent an exact source span for a file-level judgment. The reviewing agent locates actionable code.

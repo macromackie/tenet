@@ -13,10 +13,30 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Assess a repository, or whether a change preserves its contracts.
+    /// Assess a repository, or whether a change preserves its contracts, and update the review.
     Check(Check),
+    /// Show which contracts are settled and which are pending, without calling a model.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show what a reviewer needs to settle one contract: rule, change, model answer, and history.
+    Show {
+        contract: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record a conclusion for a contract's current input, with the evidence that supports it.
+    Record(Record),
+    /// List checks and records, newest first.
+    Log {
+        contract: Option<String>,
+        /// Print the matching review events as JSON Lines.
+        #[arg(long)]
+        json: bool,
+    },
     /// Export captured contracts and source as JSON without calling a model.
-    Evidence(Evidence),
+    Export(Export),
     /// Validate contract documents without calling a model.
     Validate,
     /// Browse contract requirements and scope.
@@ -37,7 +57,7 @@ pub(crate) enum Contracts {
         #[arg(long)]
         json: bool,
     },
-    View {
+    Show {
         name: String,
     },
     #[command(flatten)]
@@ -107,15 +127,35 @@ pub(crate) enum Adoption {
 pub(crate) struct Check {
     #[command(flatten)]
     pub input: Input,
-    /// Show candidate pairs without calling a model.
-    #[arg(long)]
+    /// Show candidate pairs without calling a model or updating the review.
+    #[arg(long, conflicts_with_all = ["no_model", "fresh"])]
     pub dry_run: bool,
+    /// Capture the change and reuse earlier conclusions for unchanged inputs; leave the rest pending.
+    #[arg(long, conflicts_with = "fresh")]
+    pub no_model: bool,
+    /// Ask the model again instead of reusing answers to identical earlier requests.
+    #[arg(long)]
+    pub fresh: bool,
     #[command(flatten)]
     pub run: Run,
 }
 
 #[derive(Args)]
-pub(crate) struct Evidence {
+pub(crate) struct Record {
+    pub contract: String,
+    /// One of the conclusions a check of this contract's mode and scope can reach.
+    #[arg(long)]
+    pub conclusion: String,
+    /// Code that supports the conclusion, as PATH, PATH:LINE, or PATH:START-END; repeat as needed.
+    #[arg(long, value_name = "PATH[:START-END]")]
+    pub evidence: Vec<String>,
+    /// What the evidence shows, or for unresolved, the fact that is missing.
+    #[arg(long, short)]
+    pub message: String,
+}
+
+#[derive(Args)]
+pub(crate) struct Export {
     #[command(flatten)]
     pub input: Input,
     /// Maximum encoded packet size in bytes; oversized input is rejected, never truncated.

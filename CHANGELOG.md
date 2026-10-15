@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.8.0
+
+- Keep review state in `.tenet/`, which ignores itself. Each `check` appends a revision to `events.jsonl` with every
+  contract's exact input and conclusion. Unchanged requests reuse answers from `answers.jsonl`; `--fresh` asks again.
+- Add `tenet status`, `show`, `record`, and `log`. `status` reports each contract settled or pending without writing or
+  calling a model. `record` settles a contract's current input with a conclusion, cited lines, and a message, and
+  refuses input that changed after the latest check. An outdated record shows the changes since it was made.
+- A model's `failed` or `unresolved` conclusion stays pending until a record settles it. `check` and `status` exit 4
+  while any contract is pending, 1 for a recorded failure, and 3 for a recorded `unresolved` conclusion.
+- Add `check --no-model` to capture a revision without credentials or requests.
+- Rename `tenet evidence` to `tenet export` and `tenet contracts view` to `tenet contracts show`. The packet format is
+  unchanged. JSONL output moves to version 4 with each contract's `state` and the summary's `revision` and `pending`.
+- Trust the operating system's certificate store as well as bundled roots, through ev-grep 0.6.3. Checks behind a
+  TLS-inspecting proxy no longer fail with `Jev transport failed`; `SSL_CERT_FILE` and `SSL_CERT_DIR` apply when set.
+
 ## v0.7.0
 
 - Install shared contracts with `tenet contracts add tenet/NAME --scope DIR`. Contracts come from the public

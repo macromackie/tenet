@@ -2,16 +2,16 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use ev_grep_core::{MAX_FILE_BYTES, Source, SourceRead, SourceTooLarge};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
     Full,
     Diff,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeKind {
     Added,

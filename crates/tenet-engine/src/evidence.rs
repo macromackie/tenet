@@ -8,7 +8,11 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
-use crate::{Change, Plan};
+use crate::{
+    Change, Plan,
+    check::context::scope::Scope,
+    review::{Role, ScopedFile},
+};
 
 pub const MAX_CAPTURE_BYTES: usize = 64 * 1024 * 1024;
 
@@ -141,6 +145,54 @@ impl EvidencePacket<'_> {
         crate::change::check_size("complete file input", serde_json::to_vec(&state)?.len())?;
         Ok(state)
     }
+
+    /// Identities of the selected and supporting files one contract's assessment covers.
+    pub fn scoped_files(&self, contract: &tenet_contracts::Contract) -> Vec<ScopedFile> {
+        let scope = Scope::new(self.plan, contract);
+        let selected = scope.selected.iter().map(|path| (*path, Role::Selected));
+        let support = scope.support.iter().map(|path| (*path, Role::Support));
+        selected
+            .chain(support)
+            .map(|(path, role)| match self.change(path) {
+                Ok(change) => ScopedFile {
+                    path: path.clone(),
+                    role,
+                    previous_path: change.previous_path.clone(),
+                    before: change.before.as_deref().map(content_hash),
+                    after: change.after.as_deref().map(content_hash),
+                    error: None,
+                },
+                Err(error) => ScopedFile {
+                    path: path.clone(),
+                    role,
+                    previous_path: self.plan.previous_paths.get(path).cloned(),
+                    before: None,
+                    after: None,
+                    error: Some(format!("{error:#}")),
+                },
+            })
+            .collect()
+    }
+
+    /// Identify everything one contract's assessment covers: the contract document, mode, requested
+    /// scope, every selected and supporting file, and the scoped inventory. Model settings are not
+    /// part of it, so a record keeps applying to the code it describes.
+    pub fn input_key(&self, contract: &tenet_contracts::Contract) -> String {
+        let scope = Scope::new(self.plan, contract);
+        let facts = serde_json::json!({
+            "contract": contract.hash,
+            "path": contract.path,
+            "mode": self.plan.mode,
+            "scope": scope.requested,
+            "files": self.scoped_files(contract),
+            "inventory": scope.inventory,
+        });
+        content_hash(&facts.to_string())
+    }
+}
+
+pub(crate) fn content_hash(text: &str) -> String {
+    blake3::hash(text.as_bytes()).to_hex().to_string()
 }
 
 #[cfg(test)]

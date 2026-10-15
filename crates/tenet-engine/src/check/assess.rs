@@ -1,4 +1,6 @@
-use crate::{CheckResult, Event, EvidencePacket, Stage, Status};
+use crate::{
+    CheckResult, Event, EvidencePacket, Stage, Status, evidence::content_hash, review::Answers,
+};
 use anyhow::{Context as _, Result};
 use ev_grep_core::{Evaluator, Outcome};
 use std::{cell::Cell, path::Path, time::Instant};
@@ -8,6 +10,7 @@ pub(super) struct Context<'a, E, F> {
     pub(super) evidence: &'a EvidencePacket<'a>,
     pub(super) contract: &'a Contract,
     pub(super) evaluator: &'a E,
+    pub(super) answers: &'a Answers,
     pub(super) emit: &'a F,
     pub(super) requests: &'a Cell<usize>,
     pub(super) max_requests: usize,
@@ -42,6 +45,7 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
         verification: None,
         verification_routing: None,
         request: None,
+        cached: false,
         elapsed_ms: 0,
     };
     (context.emit)(Event::CheckStarted {
@@ -56,16 +60,10 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
             .previous_path
             .as_ref()
             .map(|p| p.display().to_string());
-        result.before_hash = change
-            .before
-            .as_ref()
-            .map(|s| blake3::hash(s.as_bytes()).to_hex().to_string());
-        result.after_hash = change
-            .after
-            .as_ref()
-            .map(|s| blake3::hash(s.as_bytes()).to_hex().to_string());
+        result.before_hash = change.before.as_deref().map(content_hash);
+        result.after_hash = change.after.as_deref().map(content_hash);
         let source = change.source()?;
-        result.source_hash = Some(blake3::hash(source.text.as_bytes()).to_hex().to_string());
+        result.source_hash = Some(content_hash(&source.text));
         judge(context, change, &mut result).await
     }
     .await;
@@ -86,43 +84,47 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
         .evidence
         .file_input(context.contract, &change.path)?;
     result.input_bytes = Some(serde_json::to_vec(&state)?.len());
-    if context.requests.get() >= context.max_requests {
-        result.status = Status::Incomplete;
-        result.reason = Some("request budget exhausted".into());
-        return Ok(());
-    }
-    context.requests.set(context.requests.get() + 1);
-    context.local_requests.set(context.local_requests.get() + 1);
-    (context.emit)(Event::StageStarted {
-        contract: context.contract.name.clone(),
-        path: result.path.clone(),
-        stage: Stage::Applicability,
-    })?;
     let relevance = super::prompt::query(Stage::Applicability, result.mode);
     let violation = super::prompt::query(Stage::Verification, result.mode);
-    let mut batch = context
-        .evaluator
-        .assess_questions(
-            &[
-                ev_grep_core::Question {
-                    id: "relevance",
-                    query: &relevance,
-                },
-                ev_grep_core::Question {
-                    id: "violation",
-                    query: &violation,
-                },
-            ],
-            &state,
-        )
-        .await?;
-    result.request = Some(batch.request);
-    let applicability = batch
-        .answers
+    let questions = [
+        ev_grep_core::Question {
+            id: "relevance",
+            query: &relevance,
+        },
+        ev_grep_core::Question {
+            id: "violation",
+            query: &violation,
+        },
+    ];
+    let key = context.answers.key(&questions, &state);
+    let mut answers = if let Some(answers) = context.answers.get(&key) {
+        result.cached = true;
+        answers
+    } else {
+        if context.requests.get() >= context.max_requests {
+            result.status = Status::Incomplete;
+            result.reason = Some("request budget exhausted".into());
+            return Ok(());
+        }
+        context.requests.set(context.requests.get() + 1);
+        context.local_requests.set(context.local_requests.get() + 1);
+        (context.emit)(Event::StageStarted {
+            contract: context.contract.name.clone(),
+            path: result.path.clone(),
+            stage: Stage::Applicability,
+        })?;
+        let batch = context
+            .evaluator
+            .assess_questions(&questions, &state)
+            .await?;
+        context.answers.put(&key, &batch.answers)?;
+        result.request = Some(batch.request);
+        batch.answers
+    };
+    let applicability = answers
         .remove("relevance")
         .context("missing relevance answer")?;
-    let verification = batch
-        .answers
+    let verification = answers
         .remove("violation")
         .context("missing violation answer")?;
     let applicability_routing = applicability.route(context.min_confidence);

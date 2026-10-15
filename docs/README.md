@@ -30,7 +30,7 @@ Each contract finishes with one result:
 | `failed` | `failed` |
 | `unresolved` | `unresolved` |
 
-Failures include the requirement and evidence. Unresolved results need follow-up and exit 3. A `clear` result applies only to the requested selection. These are model judgments, so inspect findings before acting on them. See [Output](./output.md).
+Failures include the requirement and evidence. A `clear` result applies only to the requested selection. These are model judgments, so a model's `failed` or `unresolved` result stays pending until a reviewer records a conclusion. See [Output](./output.md).
 
 ## Try a contract
 
@@ -44,9 +44,14 @@ Compare a working project with a small change that breaks its contract. See [Eva
 ## Use in a review
 
 ```sh
-tenet check --base origin/main --json > review.jsonl
+tenet check --base origin/main
+tenet status
+tenet show database-failures
+tenet record database-failures --conclusion failed --evidence src/storage/query.ts:40-52 -m "returns [] when the query fails"
 ```
 
-A [reviewing agent](./reviews.md) reads the report, investigates failures and unresolved contracts, and writes the review. Tenet uses Jev through OpenRouter or TypeSafe; selected code and contract rules go to that provider.
+`check` keeps each result in `.tenet/`, keyed by the exact code it assessed. A [reviewing agent](./reviews.md) settles
+each pending contract by recording a conclusion with evidence. Editing a scoped file makes the record outdated. Tenet uses
+Jev through OpenRouter or TypeSafe; selected code and contract rules go to that provider.
 
-Use [`tenet evidence`](./evidence.md) to export selected contracts and source offline for a review or a focused question.
+Use [`tenet export`](./export.md) to export selected contracts and source offline for a review or a focused question.

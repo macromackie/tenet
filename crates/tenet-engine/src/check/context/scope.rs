@@ -4,7 +4,7 @@ use tenet_contracts::Contract;
 
 use crate::{ContextSummary, Plan, RequestedScope};
 
-pub(super) struct Scope<'a> {
+pub(crate) struct Scope<'a> {
     pub requested: RequestedScope,
     pub selected: Vec<&'a PathBuf>,
     pub support: Vec<&'a PathBuf>,
@@ -14,7 +14,7 @@ pub(super) struct Scope<'a> {
 }
 
 impl<'a> Scope<'a> {
-    pub(super) fn new(plan: &'a Plan, contract: &Contract) -> Self {
+    pub(crate) fn new(plan: &'a Plan, contract: &Contract) -> Self {
         let selected: Vec<_> = plan
             .files
             .iter()

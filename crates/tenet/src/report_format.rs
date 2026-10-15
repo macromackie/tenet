@@ -10,21 +10,6 @@ pub(super) fn status(state: Status) -> &'static str {
         Status::Incomplete => "INCOMPLETE",
     }
 }
-pub(super) fn suite(s: &Summary) -> &'static str {
-    if s.errors > 0 {
-        "ERROR"
-    } else if s.incomplete > 0 {
-        "INCOMPLETE"
-    } else if s.failed > 0 {
-        "FAIL"
-    } else if s.uncertain > 0 {
-        "UNCERTAIN"
-    } else if s.passed > 0 {
-        "PASS"
-    } else {
-        "EMPTY"
-    }
-}
 pub(super) fn counts(s: &Summary) -> String {
     let entries = [
         (s.passed, "passed"),
@@ -52,7 +37,7 @@ pub(super) fn paint(state: &str) -> String {
     match state.to_ascii_uppercase().as_str() {
         "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => styled.green().to_string(),
         "FAIL" | "FAILED" | "ERROR" => styled.red().bold().to_string(),
-        "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" => styled.yellow().to_string(),
+        "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" | "PENDING" => styled.yellow().to_string(),
         _ => styled.dim().to_string(),
     }
 }
@@ -61,7 +46,7 @@ pub(super) fn marker(state: &str) -> String {
     let symbol = match state {
         "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => "✓",
         "FAIL" | "FAILED" | "ERROR" => "×",
-        "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" => "?",
+        "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" | "PENDING" => "?",
         _ => "−",
     };
     match state {
@@ -69,7 +54,7 @@ pub(super) fn marker(state: &str) -> String {
             console::style(symbol).for_stderr().green().to_string()
         }
         "FAIL" | "FAILED" | "ERROR" => console::style(symbol).for_stderr().red().to_string(),
-        "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" => {
+        "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" | "PENDING" => {
             console::style(symbol).for_stderr().yellow().to_string()
         }
         _ => console::style(symbol).for_stderr().dim().to_string(),

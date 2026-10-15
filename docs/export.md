@@ -1,10 +1,10 @@
-# Evidence
+# Export
 
-`tenet evidence` exports selected source, complete contract documents, and scope information as one JSON object.
+`tenet export` exports selected source, complete contract documents, and scope information as one JSON object.
 It works offline without model credentials. Use it to preserve review inputs or prepare a focused question for another tool.
 
 ```sh
-tenet evidence src/storage/query.ts --contract database-failures \
+tenet export src/storage/query.ts --contract database-failures \
   --context src/storage/caller.ts --base origin/main > evidence.json
 ```
 

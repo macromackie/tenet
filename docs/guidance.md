@@ -5,6 +5,10 @@ skills. A contract becomes a requirement only when a project installs it. Releas
 [changelog](https://github.com/macromackie/tenet-contracts/blob/main/CHANGELOG.md) marks each tightened, loosened,
 clarified, added, or removed rule. A tightened or removed rule is a major release.
 
+Contract names start with an area, followed by any technology the rules depend on. `security-api-key-lifecycle`
+applies to any stack; `ui-react-interaction-ownership` applies only to React code. The library
+[README](https://github.com/macromackie/tenet-contracts#contracts) lists every contract by area.
+
 ## Shared contracts
 
 Install a contract into the scope it should govern:
