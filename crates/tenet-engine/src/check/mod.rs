@@ -5,7 +5,7 @@ mod prompt;
 
 use crate::{
     CheckResult, ContractResult, ContractState, Event, EvidencePacket, Summary,
-    review::{Checked, Concluded, Conclusion, FileResult, Review},
+    review::{Answer, Checked, Concluded, Conclusion, FileResult, Review},
 };
 use anyhow::{Result, ensure};
 use ev_grep_core::Evaluator;
@@ -39,7 +39,6 @@ pub async fn run(
         options.min_confidence.is_finite() && (0.0..=1.0).contains(&options.min_confidence),
         "min-confidence must be between 0 and 1"
     );
-    let started = Instant::now();
     let plan = evidence.plan;
     let requests = Cell::new(0);
     let slots = Semaphore::new(options.jobs);
@@ -68,17 +67,22 @@ pub async fn run(
         ready.insert(index, assessed);
         while let Some(assessed) = ready.remove(&next) {
             let contract = &plan.contracts[next];
+            let result = &assessed.conclusion;
             contracts.push(Concluded {
                 contract: contract.name.clone(),
-                input: assessed.conclusion.input.clone(),
-                scope: assessed.conclusion.scope,
+                input: result.input.clone(),
+                scope: result.scope,
                 conclusion: Some(Conclusion {
-                    status: assessed.conclusion.status,
-                    reason_code: assessed.conclusion.reason_code,
-                    reason: assessed.conclusion.reason.clone(),
-                    confidence: assessed.conclusion.confidence,
-                    error: assessed.conclusion.error.clone(),
-                    conflicting_files: assessed.conclusion.conflicting_files.clone(),
+                    status: result.status,
+                    reason_code: result.reason_code,
+                    reason: result.reason.clone(),
+                    violation: result.violation,
+                    answer: result.assessment.as_ref().map(|answer| Answer {
+                        choice: answer.choice,
+                        confidence: answer.confidence,
+                    }),
+                    error: result.error.clone(),
+                    conflicting_files: result.conflicting_files.clone(),
                 }),
                 carried_from: None,
                 results: assessed
@@ -87,7 +91,8 @@ pub async fn run(
                     .map(|result| FileResult {
                         path: result.path.clone(),
                         status: result.status,
-                        confidence: result.verification.as_ref().map(|a| a.confidence),
+                        violation: result.verification.as_ref().map(crate::violation),
+                        omitted: result.omitted.clone(),
                     })
                     .collect(),
                 state: assessed.state.clone(),
@@ -102,11 +107,78 @@ pub async fn run(
         }
     }
     total.requests = requests.get();
-    total.elapsed_ms = started.elapsed().as_millis();
     Ok(Checked {
         summary: total,
         contracts,
     })
+}
+
+/// Reuse earlier conclusions for unchanged inputs without asking a model, reporting each contract
+/// as `run` does. A reused conclusion counts as answered from an earlier check.
+pub fn carry(
+    evidence: &EvidencePacket<'_>,
+    review: &Review,
+    emit: &impl Fn(Event) -> Result<()>,
+) -> Result<Checked> {
+    let plan = evidence.plan;
+    let mut summary = Summary::default();
+    let mut contracts = Vec::new();
+    for contract in &plan.contracts {
+        emit(Event::ContractStarted {
+            contract: contract.name.clone(),
+            path: contract.path.display().to_string(),
+            total: plan
+                .files
+                .iter()
+                .filter(|p| plan.governs(contract, p))
+                .count(),
+        })?;
+        let input = evidence.input_key(contract);
+        let scope = plan.requested_scope(contract);
+        let earlier = review
+            .assessment(&contract.name, &input)
+            .filter(|a| a.conclusion.is_some());
+        let conclusion = earlier.and_then(|a| a.conclusion.clone());
+        let state = review.state(
+            plan,
+            contract,
+            &input,
+            conclusion.as_ref().map(|c| c.status),
+        );
+        let result = conclusion.as_ref().map(|c| ContractResult {
+            status: c.status,
+            scope,
+            input: input.clone(),
+            violation: c.violation,
+            reason: c.reason.clone(),
+            reason_code: c.reason_code,
+            context: None,
+            assessment: None,
+            routing: None,
+            evidence_hash: None,
+            error: c.error.clone(),
+            conflicting_files: c.conflicting_files.clone(),
+            request: None,
+            cached: true,
+        });
+        summary.cached += usize::from(result.is_some());
+        emit(Event::ContractFinished {
+            contract: contract.name.clone(),
+            summary: Summary::default(),
+            conclusion: result.map(Box::new),
+            state: state.clone(),
+        })?;
+        contracts.push(Concluded {
+            contract: contract.name.clone(),
+            input,
+            scope,
+            conclusion,
+            carried_from: earlier.map(|a| a.carried_from.unwrap_or(a.rev)),
+            results: earlier.map(|a| a.results.clone()).unwrap_or_default(),
+            state,
+        });
+    }
+    Ok(Checked { summary, contracts })
 }
 
 struct Assessed {
@@ -130,36 +202,21 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
     async fn contract(&self, contract: &Contract) -> Result<Assessed> {
         let started = Instant::now();
         let local_requests = Cell::new(0);
+        let refused = Cell::new(0);
         let input = self.evidence.input_key(contract);
         let subjects: Vec<_> = self
             .evidence
             .plan
             .files
             .iter()
-            .filter(|p| self.evidence.plan.in_scope(p, &contract.scope))
+            .filter(|p| self.evidence.plan.governs(contract, p))
             .collect();
         (self.emit)(Event::ContractStarted {
             contract: contract.name.clone(),
             path: contract.path.display().to_string(),
             total: subjects.len(),
         })?;
-        let prepared = match context::prepare(self.evidence, contract, &input) {
-            context::Preparation::Ready(context) => context,
-            context::Preparation::Unresolved(conclusion) => {
-                let mut summary = Summary::default();
-                summary.conclude(&conclusion);
-                summary.elapsed_ms = started.elapsed().as_millis();
-                let state = self
-                    .review
-                    .state(&contract.name, &input, Some(conclusion.status));
-                return Ok(Assessed {
-                    summary,
-                    conclusion: *conclusion,
-                    results: Vec::new(),
-                    state,
-                });
-            }
-        };
+        let prepared = context::prepare(self.evidence, contract);
         let context = assess::Context {
             evidence: self.evidence,
             contract,
@@ -170,6 +227,7 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
             max_requests: self.options.max_requests,
             min_confidence: self.options.min_confidence,
             local_requests: &local_requests,
+            refused: &refused,
         };
         let mut running = stream::iter(subjects)
             .map(|path| async {
@@ -199,15 +257,20 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
             max_requests: self.options.max_requests,
             min_confidence: self.options.min_confidence,
             local_requests: &local_requests,
+            refused: &refused,
         }
         .assess(prepared, self.evaluator, self.emit)
         .await?;
         summary.conclude(&conclusion);
         summary.requests = local_requests.get();
+        summary.over_budget = refused.get();
         summary.elapsed_ms = started.elapsed().as_millis();
-        let state = self
-            .review
-            .state(&contract.name, &input, Some(conclusion.status));
+        let state = self.review.state(
+            self.evidence.plan,
+            contract,
+            &input,
+            Some(conclusion.status),
+        );
         Ok(Assessed {
             summary,
             conclusion,

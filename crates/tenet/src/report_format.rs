@@ -1,15 +1,147 @@
-use tenet_engine::{Status, Summary};
+use tenet_engine::{
+    ContextSummary, ContractState, ContractStatus, MAX_FILE_BYTES, Omitted, Outcome, Pending,
+    Status, Summary, review::Answer,
+};
 
 pub(super) fn status(state: Status) -> &'static str {
     match state {
         Status::Pass => "PASS",
         Status::Fail => "FAIL",
-        Status::NotApplicable => "EXCLUDED",
-        Status::Uncertain => "UNRESOLVED",
+        Status::NotApplicable => "NOT APPLICABLE",
+        Status::Uncertain => "UNCERTAIN",
         Status::Error => "ERROR",
         Status::Incomplete => "INCOMPLETE",
+        Status::Skipped => "SKIPPED",
     }
 }
+/// The model's probability of a violation, as a note after a state.
+pub(super) fn violation(probability: Option<f64>) -> String {
+    probability
+        .map(|p| format!(" · violation {:.0}%", p * 100.0))
+        .unwrap_or_default()
+}
+
+/// The model's conclusion for a contract's input, its probability of a violation, and its raw
+/// answer with the confidence threshold that routed it.
+#[derive(Clone, Copy)]
+pub(super) struct Model {
+    pub status: ContractStatus,
+    pub violation: Option<f64>,
+    pub answer: Option<Answer>,
+    pub min_confidence: Option<f64>,
+}
+
+/// Which way an unresolved answer leaned, and whether its confidence fell short of the threshold.
+fn lean(model: Model) -> String {
+    let Some(answer) = model.answer else {
+        return String::new();
+    };
+    let below = match model.min_confidence {
+        Some(threshold) if answer.confidence < threshold => format!(" < {threshold}"),
+        _ => String::new(),
+    };
+    let choice = match answer.choice {
+        Outcome::Match => "leans violation",
+        Outcome::NoMatch => "leans no violation",
+        Outcome::Uncertain => "answered uncertain",
+    };
+    format!(" · {choice} · confidence {:.2}{below}", answer.confidence)
+}
+
+/// A contract state's label and a note on what decided it: a record, and the model conclusion it
+/// overrides; the model; or why the contract is pending. `detail` follows the model's answer.
+pub(super) fn state(
+    state: &ContractState,
+    model: Option<Model>,
+    detail: &str,
+) -> (&'static str, String) {
+    let violation = violation(model.and_then(|model| model.violation));
+    let answer = |status: &str| format!("model {status}{violation}{detail}");
+    let model_status = model.map_or("not assessed", |model| model.status.as_str());
+    match state {
+        ContractState::Settled {
+            conclusion,
+            record: Some(id),
+        } => {
+            let over = match model {
+                Some(model) if model.status != *conclusion => {
+                    format!(" over {}", answer(model_status))
+                }
+                _ => String::new(),
+            };
+            (upper(*conclusion), format!("recorded {id}{over}"))
+        }
+        ContractState::Settled {
+            conclusion,
+            record: None,
+        } => (upper(*conclusion), format!("model{violation}{detail}")),
+        ContractState::Pending { reason } => {
+            let note = match reason {
+                Pending::ModelFailed => format!("{} · confirm or dispute", answer("failed")),
+                Pending::ModelUnresolved => {
+                    format!(
+                        "{}{}",
+                        answer("unresolved"),
+                        model.map(lean).unwrap_or_default()
+                    )
+                }
+                Pending::NotAssessed => "not assessed".into(),
+                Pending::InputsChanged => "inputs changed".into(),
+                Pending::NotChecked => "not checked".into(),
+                Pending::ContractChanged => {
+                    format!("contract changed in this diff · {}", answer(model_status))
+                }
+            };
+            ("PENDING", note)
+        }
+    }
+}
+
+fn upper(status: ContractStatus) -> &'static str {
+    match status {
+        ContractStatus::Verified => "VERIFIED",
+        ContractStatus::Preserved => "PRESERVED",
+        ContractStatus::Clear => "CLEAR",
+        ContractStatus::Unaffected => "UNAFFECTED",
+        ContractStatus::Failed => "FAILED",
+        ContractStatus::Unresolved => "UNRESOLVED",
+    }
+}
+
+/// What a file check left out of its model input.
+pub(super) fn omitted(omitted: &[Omitted]) -> String {
+    if omitted.contains(&Omitted::Contents) {
+        "judged from its patch only".into()
+    } else if omitted.contains(&Omitted::Before) {
+        "judged without prior contents".into()
+    } else {
+        String::new()
+    }
+}
+
+/// The combined input's size and what was left out to fit the limit.
+pub(super) fn context(context: &ContextSummary) -> String {
+    let mut text = format!("{} of {MAX_FILE_BYTES} bytes", context.input_bytes);
+    if context.input_bytes > MAX_FILE_BYTES {
+        text.push_str(", too large; file checks only");
+    }
+    let mut omitted = Vec::new();
+    if context.before_omitted {
+        omitted.push("prior contents".to_owned());
+    }
+    if context.inventory_counted {
+        omitted.push("inventory paths (counted)".to_owned());
+    }
+    if !context.contents_omitted.is_empty() {
+        omitted.push(format!("{} file contents", context.contents_omitted.len()));
+    }
+    if !omitted.is_empty() {
+        text.push_str(" · omitted ");
+        text.push_str(&omitted.join(", "));
+    }
+    text
+}
+
 pub(super) fn counts(s: &Summary) -> String {
     let entries = [
         (s.passed, "passed"),
@@ -18,6 +150,7 @@ pub(super) fn counts(s: &Summary) -> String {
         (s.not_applicable, "not applicable"),
         (s.errors, "errors"),
         (s.incomplete, "incomplete"),
+        (s.skipped, "skipped"),
     ];
     let counts = entries
         .into_iter()
@@ -43,21 +176,12 @@ pub(super) fn paint(state: &str) -> String {
 }
 
 pub(super) fn marker(state: &str) -> String {
-    let symbol = match state {
-        "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => "✓",
-        "FAIL" | "FAILED" | "ERROR" => "×",
-        "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" | "PENDING" => "?",
-        _ => "−",
-    };
+    let symbol = |symbol| console::style(symbol).for_stderr();
     match state {
-        "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => {
-            console::style(symbol).for_stderr().green().to_string()
-        }
-        "FAIL" | "FAILED" | "ERROR" => console::style(symbol).for_stderr().red().to_string(),
-        "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" | "PENDING" => {
-            console::style(symbol).for_stderr().yellow().to_string()
-        }
-        _ => console::style(symbol).for_stderr().dim().to_string(),
+        "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => symbol("✓").green().to_string(),
+        "FAIL" | "FAILED" | "ERROR" => symbol("×").red().to_string(),
+        "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" | "PENDING" => symbol("?").yellow().to_string(),
+        _ => symbol("−").dim().to_string(),
     }
 }
 

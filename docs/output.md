@@ -27,31 +27,35 @@ These are model judgments, not formal proofs. No findings alone is insufficient 
 ## Review states
 
 Each contract is settled or pending for the exact input a check captured: the contract text, mode, scope, and the
-content of every scoped file. A record from `tenet record` settles its input. Otherwise a model's `verified`,
+content of every scoped file. A full check's input also lists every file in the contract's scope, so a new file leaves
+it pending. A diff check's does not, because it assumes the base complies: rebasing onto a base that only gains
+unrelated files keeps its conclusions. A record from `tenet record` settles its input. Otherwise a model's `verified`,
 `preserved`, `unaffected`, or `clear` settles it. Every other contract is pending:
 
 | Reason | Meaning |
 | --- | --- |
 | `model_failed` | The model found a violation; confirm or dispute it with a record |
-| `model_unresolved` | The model could not decide, or its evidence or execution was incomplete |
+| `model_unresolved` | The model could not decide, or its evidence or execution was incomplete; `status` and `show` print its lean, as in `leans no violation · confidence 0.56 < 0.8` |
 | `not_assessed` | `check --no-model` captured the input without asking the model |
 | `inputs_changed` | A scoped file or the contract changed after the latest check (`status` only) |
-| `not_checked` | The contract joined the review after the latest check (`status` only) |
+| `not_checked` | No check assessed the contract: it joined the review later, or a diff check named another contract (`status` only) |
+| `contract_changed` | The diff adds or edits the contract, so a favorable diff answer cannot settle it |
 
 A record or conclusion never carries to a different input. `tenet show` lists outdated ones with the changes since.
 
-File results remain `pass`, `fail`, `not_applicable`, `uncertain`, `error`, or `incomplete`.
+File results are `pass`, `fail`, `not_applicable`, `uncertain`, `error`, `incomplete`, or `skipped`.
+`skipped` marks a file with no text to judge: empty, binary, not UTF-8, or a symbolic link. `incomplete` marks a file the request budget did not reach, or whose input exceeds the limit even with only its patch.
 After confidence routing, a violation `match` produces `fail` even when relevance says `no_match`. Otherwise, relevance `no_match`
 produces `not_applicable`; that status retains the source for the combined assessment. For other relevance outcomes,
 violation `no_match` produces `pass` and uncertain violation produces `uncertain`. Raw answers and routing remain visible.
 
-The verbose reporter shows uncertain file judgments as `UNRESOLVED`. A repository assessment can resolve them when combined context supplies the missing evidence; the original file judgments remain in the report. Operational errors and exhausted budgets retain separate counts and exit codes.
+The verbose reporter shows uncertain file judgments as `UNCERTAIN`. A repository assessment can resolve them when combined context supplies the missing evidence; the original file judgments remain in the report. Operational errors and exhausted budgets retain separate counts and exit codes.
 
 ## JSONL
 
-Each event has `version: 4` and a `type`. The `begin` event records `full` or `diff` mode, provider/model (`null` for `--no-model`), root, base and HEAD when available, the confidence threshold, and the baseline assumption. Snapshot runs include the original snapshot path and patch hash.
+Each event has `version: 4` and a `type`. The `begin` event records `full` or `diff` mode, provider/model (`null` for `--no-model`), root, base and HEAD when available, the confidence threshold, the baseline assumption, and `deleted_contracts`, the contract documents a diff deletes. Snapshot runs include the original snapshot path and patch hash.
 
-`result` contains file evidence: mode, change kind, previous path for renames, before/after hashes, contract hash, judgments, and timing. `source_hash` identifies the complete encoded change input. `input_bytes` measures the encoded state including contract and explicit context, before provider instructions and question wrappers; it is not a token count.
+`result` contains file evidence: mode, change kind, previous path for renames, before/after hashes, contract hash, judgments, and timing. `omitted` lists `before` or `contents` when they were left out to fit the limit; the patch remains. `input_bytes` measures the encoded state including contract and explicit context, before provider instructions and question wrappers; it is not a token count.
 
 `contract_finished` includes the contract's `state`, such as `{"state": "pending", "reason": "model_failed"}` or
 `{"state": "settled", "conclusion": "failed", "record": "d370e7dc32d8"}`, and the model's `conclusion`:
@@ -60,23 +64,29 @@ Each event has `version: 4` and a `type`. The `begin` event records `full` or `d
 {
   "assessment": "clear",
   "scope": "selected_subjects",
-  "confidence": 0.95,
+  "violation": 0.03,
   "reason": "No violation found in the selected subjects; this does not verify the full contract scope.",
   "reason_code": "selected_subjects_clear",
   "request": null
 }
 ```
 
-Confidence is the model's score for its selected answer, not a measured probability that the contract holds.
-The raw `choice`, `confidence`, and probabilities stay unchanged. `routing` separately records the outcome after
+Under `check --no-model`, `conclusion` is the earlier conclusion for the same input with `cached: true`, or `null`
+when there is none.
+
+`violation` is the probability the model gave a violation in the requested scope. When no combined assessment ran,
+it is the highest probability among the file checks. `status` and `show` print it as `violation N%`; `status` suggests the pending
+contract with the highest value first. It is a model estimate, not a measured accuracy.
+The raw `choice`, `confidence`, and probabilities stay unchanged in `model_assessment`. `routing` separately records the outcome after
 applying `--min-confidence` (default 0.8). Low-confidence and explicit uncertain answers route to unresolved.
 File results retain the same distinction in `applicability_routing` and `verification_routing`. When there is no final
-model assessment, confidence is null. Errors add an `error` field.
+model answer, `violation` is null. Errors add an `error` field.
 
 `reason` explains the conclusion, including selected-path coverage, unavailable context, model uncertainty, and
 conflicting judgments. When a repository assessment ran, `model_assessment` preserves its answer and probabilities,
 and `evidence_hash` identifies its encoded input without printing source. `conflicting_files` lists file failures
-that contradict a favorable repository answer. Those disagreements remain unresolved.
+that contradict a favorable repository answer. Those disagreements remain unresolved. When the repository answer is
+uncertain or could not run, a file `fail` fails the contract with `file_violation`.
 
 `reason_code` supports routing without parsing prose:
 
@@ -86,28 +96,29 @@ that contradict a favorable repository answer. Those disagreements remain unreso
 | `selected_subjects_clear` | Review the remaining scope before claiming full verification |
 | `no_relevant_changes` | Retain the compliant-base assumption |
 | `request_budget` | Account for unassessed work before increasing the budget |
-| `context_too_large` | Use bounded evidence and manual review; do not silently omit required source |
+| `context_too_large` | Read the file checks, then narrow paths or review the remaining scope manually |
 | `context_unavailable` | Inspect the source-read error |
 | `assessment_failed` | Inspect the provider error |
 | `model_uncertain` | Investigate missing evidence and the raw assessment |
 | `conflicting_assessments` | Trace the flagged files against the combined evidence |
+| `file_violation` | Confirm the flagged file's violation |
 | `violation` / `compliance` | Review the model's conclusion and evidence |
 
 When combined context was assembled, `context` reports `input_bytes`, `limit_bytes`, `included_files`,
-`selected_files`, `support_files`, and `omitted_files` (paths only). All captured selected source in the contract scope
-is retained regardless of relevance answers. Omitted paths come from inventory outside the supplied source. These
-fields describe the supplied state, not proof that it contains every necessary implementation.
-The same diagnostics and evidence hash remain available if the provider fails. Oversize reasons give measured bytes;
-source is never truncated to fit.
-Inventory metadata may use [compact directory trees](./limits.md); scope diagnostics retain expanded paths, while
-`input_bytes` and `evidence_hash` describe the actual encoded assessment input.
+`selected_files`, `support_files`, and `omitted_files`, the number of scoped inventory files whose contents were not
+supplied. All captured selected source in the contract scope is retained regardless of relevance answers. When the
+context was [reduced to fit](./limits.md), `before_omitted`, `inventory_counted`, and `contents_omitted` say how.
+These fields describe the supplied state, not proof that it contains every necessary implementation.
+The same diagnostics and evidence hash remain available if the provider fails. `input_bytes` and `evidence_hash`
+describe the actual encoded assessment input.
 
 Version 4 adds each contract's `state`, the summary's `revision` and `pending` contracts, and `cached` counts for
 results answered from earlier identical requests. Version 3 replaced the run-wide `partial` flag with each conclusion's
 `scope` and separated raw answers from routing. Consumers should retain useful diagnostics and ignore unknown fields. A reason describes the evidence limit; it does not turn an unresolved assessment into a pass.
 
 Other events include `contract_started`, `check_started`, `stage_started`, `stage_completed`, `summary`, and `error`. Stages are `applicability`, `verification`, and `completeness`.
-The summary includes file counts, contract counts, request and cached counts, the appended `revision` (`null` for a snapshot), the `pending` contract names, and the exit code. Source contents and credentials are not printed.
+The summary includes file counts, contract counts, request and cached counts, `over_budget` for requests that
+`--max-requests` stopped, `elapsed_ms` for the whole check, the appended `revision` (`null` for a snapshot), the `pending` contract names, and the exit code. Source contents and credentials are not printed.
 
 ## Check exit codes
 

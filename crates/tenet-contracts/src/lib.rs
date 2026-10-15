@@ -3,6 +3,7 @@
 mod lock;
 mod markdown;
 mod parse;
+mod scope;
 
 use std::{ops::Range, path::PathBuf};
 
@@ -25,4 +26,7 @@ pub struct Contract {
     pub hash: String,
     #[serde(skip)]
     pub document: String,
+    /// The front matter's `paths` patterns; every file in scope when absent. See [`Contract::governs`].
+    #[serde(skip)]
+    pub(crate) paths: Option<scope::Patterns>,
 }

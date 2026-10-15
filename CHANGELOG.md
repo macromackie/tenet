@@ -1,5 +1,98 @@
 # Changelog
 
+## v0.9.0
+
+- Diff checks ask whether the change introduces, extends, or worsens a violation compared with the before contents,
+  not whether the resulting code violates the contract. A violation the base already had no longer fails an unrelated
+  edit to the same file. Another instance, a copy, or a violation created by moving code still fails. Full checks are
+  unchanged.
+- Large changes still reach the model. When a file input exceeds 64 KiB, Tenet leaves out its prior and then its
+  resulting contents while the patch still shows the change. The combined input also counts omitted inventory paths
+  per directory and leaves out the contents of the largest changed files. `omitted` and `context` list each reduction.
+- File checks run even when the combined input cannot fit. A file check that finds a violation fails the contract with
+  `file_violation` when the combined assessment is uncertain or cannot run; otherwise the contract stays unresolved.
+- Skip empty, binary, non-UTF-8, and symbolic-link files instead of exiting 2. They stay in the inventory, and
+  `export` lists them as `unreadable`. A file whose patch alone exceeds the limit is `incomplete`. `check --dry-run`
+  reports empty files as skipped too.
+- Report `violation`, the model's probability of a violation, in place of routing confidence in conclusions, the
+  review log, and `status`. `status` suggests the pending contract the model leans hardest toward violating first.
+- `check --dry-run` reports each contract's combined input size and reductions, and exits 2 only for execution errors.
+  Its summary predicts the requests a check would send and counts contracts whose combined input exceeds the limit
+  after reduction, and it warns on stderr when the prediction exceeds `--max-requests`. A 94-file change predicts
+  1,022 requests, 17 of 28 combined inputs over the limit; commit 521c054 predicts 1,051. A 2-file change predicted 41
+  and sent 41. A diff with no changes prints `No changes since BASE; nothing to check.` A check that reaches the budget
+  says how many requests it did not send, and the summary's `over_budget` counts them.
+- Context summaries count omitted inventory files instead of listing them, and file results drop `source_hash`.
+  Verbose file states read `NOT APPLICABLE` and `UNCERTAIN`, matching JSON.
+- Discover files in folders named `target`, `node_modules`, `dist`, `out`, `.context`, and `.agents` at any depth.
+  Only `.git`, `.tenet`, `.tenet.lock`, `.env`, and `.env.*` are excluded by name; ignore files exclude everything
+  else. Nested repositories and worktrees, such as `.claude/worktrees/`, are skipped instead of failing on duplicate
+  contract names. A source folder such as `src/out/` is no longer skipped. Add build output to `.gitignore` or `.ignore` if
+  it is not already listed there.
+- Add an optional `paths` frontmatter list of glob patterns, relative to the contract's scope directory. A contract with
+  `paths` assesses, inventories, and exports only matching files, and `contracts list --for` reports it only for them. A
+  pattern that starts with `!` excludes the files it matches, such as a committed lockfile that ignore files cannot hide
+  from a diff; a list of only exclusions governs every other file. Files inside `.contracts` are subjects only for a
+  pattern that names `.contracts`. A diff that changes none of a contract's files, and not the contract, concludes
+  `unaffected` without a model request. `tenet validate` rejects an empty list and absolute, parent-relative, or invalid
+  patterns, including exclusions.
+- A positional selection no longer runs a contract that governs none of the selected files. `check` and `export`
+  warn on stderr when a selected path yields nothing to assess, instead of exiting 0 silently.
+- Evidence packets move to `version: 2`. `inventory` lists only files the exported contracts govern, and the
+  top-level `omitted_files` list is removed; each contract keeps its own `omitted_files`.
+- Keep a review on the commit `check --base` resolved. `status` no longer resolves the ref again, so committing the
+  change keeps its pending and recorded contracts. The review's label names the base commit and selected paths, and
+  `status` says when the working tree has no changes. `status --base REF` reports the review against that commit and
+  exits 4 when no check compares the working tree with it. An unknown `--base` names the ref instead of Git's
+  `Needed a single revision`.
+- A diff check's input no longer includes the list of files in each contract's scope, because a diff assumes the base
+  complies. Rebasing onto a base that only gains an unrelated file keeps conclusions and records: in a 17-contract
+  change rebased onto a base that added `workspaces/core/NOTES.md`, `check --no-model` reused 0 of 17 conclusions and
+  neither record before, and 17 of 17 and both records after. Full checks still include the list, so a new file in
+  scope leaves a contract pending. Diff records made before this change show as outdated once; check and record again.
+- Checks against the same base commit form one review. A later check replaces an earlier assessment of a contract only
+  when it selects every earlier path or the contract's whole scope; otherwise both stand, and the contract is settled
+  only when each is. `status` notes an earlier check's paths, and `show` and `record` take them after the name. In a
+  diff review, a check that names one contract leaves the change's other contracts `not_checked`.
+- Show records that override the model. `check` and `status` print `recorded ID over model failed · violation N%` and
+  count contracts settled by a record; `status --json` adds `model_violation`, `model_answer`, `selection`, and
+  `min_confidence`. An unresolved row shows the model's lean, as in `leans no violation · confidence 0.56 < 0.8`, and
+  logged conclusions keep the answer's choice and confidence.
+  `check --no-model` rows and JSONL `contract_finished` events carry the reused conclusion, with `cached: true`.
+  The summary's duration covers the whole check, from discovery to the review update, so `--no-model` no longer
+  reports 0.00 s.
+- `record` accepts evidence only in files the check assessed, under the `--context` path rules, with or without a
+  leading `./`. In a diff, a favorable record must cite a line the change wrote, a line beside one, or a file it deleted
+  or emptied, and one over the model's `failed` must also cite a file the model flagged. When the diff changed none of
+  the contract's files, a favorable record instead needs a `verified` full check of the same contract text. Messages are
+  limited to 4 KiB of text without control, bidirectional, or line separator characters other than newlines and tabs.
+  `record` names the record it replaces when the conclusions differ. Reading the log rejects a record line that
+  `record` would refuse, names the line, and says to move `.tenet` aside, run `check`, and record the review again;
+  records that 0.8.0 wrote are checked only for the revision and input they name. JSON errors carry the full cause.
+- `check`, `status`, `show`, `record`, and `log` exit 2 while Git tracks a file in `.tenet/`, and say how to untrack
+  it.
+- A diff that adds or edits a contract leaves it pending as `contract_changed` despite a favorable answer. `check`,
+  `status`, and the JSONL `begin` event list contract documents the diff deletes, including one moved to a path that
+  is not a contract.
+- Each revision records `--min-confidence`; `status`, `show`, and `log` print a threshold other than 0.8.
+- Each revision stores its captured files once, and its assessments refer to them. A 58-contract check of this
+  repository logs 198 KB instead of 1.85 MB. Diff revisions also record each file's changed lines. Tenet reads 0.8.0
+  logs and appends the new format to them; Tenet 0.8.0 cannot read a log 0.9.0 has written. `.tenet/blobs` no longer
+  keeps files over 1 MiB. Commands read the log once: at 12,500 revisions, `status` takes 0.8 s instead of 12.6 s and
+  `log` 0.8 s instead of 71 s.
+- For a scope over 20 files, `show` counts files and file results by kind and lists only those that need attention,
+  naming five unreadable files and counting the rest. It lists the latest five records and assessments; `log NAME`
+  lists the rest. `show --pending` prints every pending contract and their shared change once. `show --json` and `log --json` move to
+  `version: 2`, and `show --json` lists the scoped files once instead of in every assessment.
+- `status` suggests the check command, with the review's base commit, contract, and context, for contracts captured
+  without a model. In a diff review, `show` prints each file's change once. `tenet log | head` prints no broken-pipe
+  error.
+- The Reviews page's Claude Code recipe pins the session's starting commit, and its stop hook runs `status --base`
+  without a model. It blocks once per stop, using Claude Code's `stop_hook_active`, while a contract is pending or the
+  review cannot be read. The page states that the hook is a reminder, not enforcement.
+- `contracts add --source tenet=PATH` says that `tenet` always names the public library and suggests another alias,
+  instead of claiming `.tenet.lock` records it when no lock exists.
+
 ## v0.8.0
 
 - Keep review state in `.tenet/`, which ignores itself. Each `check` appends a revision to `events.jsonl` with every

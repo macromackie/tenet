@@ -47,13 +47,14 @@ async function listUsers() {
 ````
 
 `name`, `message`, and a nonempty body are required. Names are unique throughout the project.
-Numbers have at least three digits, start at 001, and are unique within a scope. Unknown frontmatter fields are errors.
+Numbers have at least three digits, start at 001, and are unique within a scope. `paths` is optional; see
+[Scope](#scope). Other frontmatter fields are errors.
 
 Use `Rules` and `Checks` for ordinary contracts. Other headings are welcome; Tenet reads the whole body,
 including rationale, exceptions, and ordinary code examples. Keep these inline where possible.
 
 A contract can govern code, configuration, tests, or documentation. State its scope in the body, such as
-"Markdown notes under `docs/`", and Tenet judges each file in that scope against the contract.
+"Markdown notes under `docs/`". Tenet judges each file the contract governs against it.
 
 Give each contract one concern. Tenet asks one question about the whole contract per file, so a single clause in a
 long contract can be missed. Move a mechanical requirement, such as a required metadata field or an import rule, into a
@@ -71,11 +72,40 @@ Root contracts come first, followed by deeper scopes, and contracts within each 
 Independent checks may run concurrently; results are reported in that order.
 Numbers do not override contradictory requirements.
 
+A contract governs every discovered file in its scope except files inside `.contracts` folders. List glob patterns
+under `paths` to govern only matching files, such as the source of one language:
+
+```yaml
+---
+name: python-errors
+message: Preserve failures in Python code.
+paths: ["**/*.py"]
+---
+```
+
+Patterns are relative to the directory that holds `.contracts`. `*` matches within one path segment, and `**` matches
+any number of directories, so `"*.py"` matches only files directly in that directory. Quote each pattern; YAML reads
+a leading `*` as an alias. Files that match no pattern are not assessed and are left out of the contract's inventory.
+A pattern that starts with `!` excludes the files it matches, whatever else matches them. A list of only exclusions
+governs every file in scope except those. Use one to leave out generated files that are still committed, such as a
+lockfile, which ignore files cannot hide from a diff:
+
+```yaml
+paths: ["!**/package-lock.json"]
+```
+
+A pattern reaches files inside `.contracts` only when it names `.contracts`, such as `".contracts/*/CONTRACT.md"`
+for a contract about contracts. `tenet validate` rejects an empty list and absolute, parent-relative, or invalid
+patterns, including exclusions. The patterns are part of the document, so editing them leaves earlier conclusions
+outdated like any other edit.
+
 ```sh
 tenet contracts list
 tenet contracts list --for src/users.ts
 tenet contracts show database-failures
 ```
+
+`contracts list --for FILE` lists the contracts that govern that file.
 
 ## Shared contracts
 

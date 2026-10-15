@@ -17,6 +17,18 @@ pub enum Status {
     Uncertain,
     Error,
     Incomplete,
+    /// No text to judge: an empty, binary, non-UTF-8, or symbolic-link file.
+    Skipped,
+}
+
+/// Part of a file's change left out of its model input to fit the input limit.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Omitted {
+    /// The prior contents; the patch and resulting contents remain.
+    Before,
+    /// The resulting contents too; only the patch remains.
+    Contents,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -30,8 +42,9 @@ pub struct CheckResult {
     pub contract_path: String,
     pub contract_hash: String,
     pub path: String,
-    pub source_hash: Option<String>,
     pub input_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub omitted: Vec<Omitted>,
     pub status: Status,
     pub message: String,
     pub reason: Option<String>,
@@ -53,13 +66,18 @@ pub struct Summary {
     pub not_applicable: usize,
     pub errors: usize,
     pub incomplete: usize,
+    pub skipped: usize,
     pub requests: usize,
-    /// Request batches answered from the answer cache instead of the provider.
+    /// Requests not sent because `--max-requests` was spent; their checks are incomplete.
+    pub over_budget: usize,
+    /// Request batches answered from the answer cache, and conclusions `check --no-model` reused,
+    /// instead of the provider.
     pub cached: usize,
     pub attempts: usize,
     pub hedges: usize,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// A contract's assessment time; a run's whole wall-clock time, which its caller measures.
     pub elapsed_ms: u128,
     pub cancelled: bool,
     pub contracts_verified: usize,
@@ -78,7 +96,9 @@ impl Summary {
         self.not_applicable += other.not_applicable;
         self.errors += other.errors;
         self.incomplete += other.incomplete;
+        self.skipped += other.skipped;
         self.requests += other.requests;
+        self.over_budget += other.over_budget;
         self.cached += other.cached;
         self.attempts += other.attempts;
         self.hedges += other.hedges;
@@ -111,6 +131,7 @@ impl Summary {
             Status::NotApplicable => self.not_applicable += 1,
             Status::Error => self.errors += 1,
             Status::Incomplete => self.incomplete += 1,
+            Status::Skipped => self.skipped += 1,
         }
     }
 }
@@ -131,6 +152,8 @@ pub struct RunInfo {
     pub jobs: usize,
     pub max_requests: usize,
     pub min_confidence: f64,
+    /// Contract documents the diff deletes; their requirements no longer apply.
+    pub deleted_contracts: Vec<std::path::PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -222,11 +245,30 @@ impl ContractStatus {
     }
 }
 
+/// The probability an answer assigns to a violation, whatever its routed outcome.
+pub fn violation(assessment: &ev_grep_core::Assessment) -> f64 {
+    assessment
+        .probabilities
+        .get(&ev_grep_core::Outcome::Match)
+        .copied()
+        .unwrap_or(0.0)
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestedScope {
     FullContract,
     SelectedSubjects,
+}
+
+impl RequestedScope {
+    /// What a conclusion about this scope covers, in prose.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::FullContract => "the full contract",
+            Self::SelectedSubjects => "selected subjects",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -236,7 +278,8 @@ pub struct ContractResult {
     pub scope: RequestedScope,
     /// Identifies the contract document and every scoped fact the assessment covered.
     pub input: String,
-    pub confidence: Option<f64>,
+    /// The model's probability that the requested scope violates the contract.
+    pub violation: Option<f64>,
     pub reason: String,
     pub reason_code: ConclusionReason,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -252,7 +295,8 @@ pub struct ContractResult {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub conflicting_files: Vec<String>,
     pub request: Option<ev_grep_core::RequestInfo>,
-    /// The combined answer came from the answer cache; no request was sent.
+    /// The combined answer came from the answer cache, or `check --no-model` reused an earlier
+    /// check's conclusion for the same input; no request was sent.
     pub cached: bool,
 }
 
@@ -266,6 +310,8 @@ pub enum ConclusionReason {
     ContextUnavailable,
     AssessmentFailed,
     Violation,
+    /// File checks found a violation the combined assessment did not confirm or could not run.
+    FileViolation,
     Compliance,
     SelectedSubjectsClear,
     ModelUncertain,
@@ -279,7 +325,30 @@ pub struct ContextSummary {
     pub included_files: usize,
     pub selected_files: Vec<std::path::PathBuf>,
     pub support_files: Vec<std::path::PathBuf>,
-    pub omitted_files: Vec<std::path::PathBuf>,
+    /// Scoped inventory files whose contents were not supplied.
+    pub omitted_files: usize,
+    /// Prior contents left out of every change to fit the limit; patches remain.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub before_omitted: bool,
+    /// Inventory paths summarized as per-directory file counts to fit the limit.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub inventory_counted: bool,
+    /// Changed files whose resulting contents were left out to fit the limit; patches remain.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub contents_omitted: Vec<std::path::PathBuf>,
+}
+
+impl ContextSummary {
+    /// Whether the combined input fits its limit, so the combined assessment can run.
+    pub fn fits(&self) -> bool {
+        self.input_bytes <= self.limit_bytes
+    }
+
+    /// Whether anything was left out of a combined input that fit the limit.
+    pub fn is_reduced(&self) -> bool {
+        self.fits()
+            && (self.before_omitted || self.inventory_counted || !self.contents_omitted.is_empty())
+    }
 }
 
 /// Where a contract stands in its review once records and model conclusions are combined.
@@ -315,6 +384,9 @@ pub enum Pending {
     InputsChanged,
     /// The contract entered the review's scope and has not been checked.
     NotChecked,
+    /// The diff adds or edits the contract itself, so a diff check's favorable conclusion, which
+    /// assumes the base complied, does not settle it; a full check informs the record that does.
+    ContractChanged,
 }
 
 impl Summary {

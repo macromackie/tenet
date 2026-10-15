@@ -32,14 +32,16 @@ Each contract finishes with one result:
 
 Failures include the requirement and evidence. A `clear` result applies only to the requested selection. These are model judgments, so a model's `failed` or `unresolved` result stays pending until a reviewer records a conclusion. See [Output](./output.md).
 
-## Try a contract
+## Try a shared contract
 
 ```sh
-tenet check --snapshot fixtures/cache/project
-tenet check --snapshot fixtures/cache/project --patch fixtures/cache/patches/broken-hit.patch
+tenet contracts add tenet/code-comment-attribution --scope .
+tenet check --dry-run
+tenet check
 ```
 
-Compare a working project with a small change that breaks its contract. See [Evaluation](./evaluation.md).
+Install a contract from the [shared library](./guidance.md) into the folder it governs, list the requests a check
+would make, then run it. To compare code that follows a contract with a change that breaks it, see [Evaluation](./evaluation.md).
 
 ## Use in a review
 

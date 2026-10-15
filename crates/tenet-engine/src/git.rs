@@ -34,18 +34,25 @@ pub(crate) struct Changes {
     pub base: String,
 }
 
-pub(crate) fn changed(root: &Path, reference: &str, discovered: &[PathBuf]) -> Result<Changes> {
+/// The commit `reference` names.
+pub(crate) fn commit(root: &Path, reference: &str) -> Result<String> {
     ensure!(
         !reference.starts_with('-'),
         "Git reference cannot start with '-'"
     );
-    let top = top(root)?;
-    let base = String::from_utf8(output(
+    let oid = output(
         root,
         &["rev-parse", "--verify", &format!("{reference}^{{commit}}")],
-    )?)?
-    .trim()
-    .to_owned();
+    )
+    .with_context(|| {
+        format!("base {reference} is not a commit in this repository; fetch it or check the name")
+    })?;
+    Ok(String::from_utf8(oid)?.trim().to_owned())
+}
+
+pub(crate) fn changed(root: &Path, reference: &str, discovered: &[PathBuf]) -> Result<Changes> {
+    let base = commit(root, reference)?;
+    let top = top(root)?;
     let names = output(
         &top,
         &["diff", "--name-status", "--find-renames", "-z", &base, "--"],
@@ -113,20 +120,19 @@ pub(crate) fn before(root: &Path, base: &str, path: &Path) -> Result<Option<Stri
     if listing.is_empty() {
         return Ok(None);
     }
+    if listing.starts_with(b"120000 ") {
+        return Err(crate::change::Unreadable::SymbolicLink.into());
+    }
     ensure!(
         listing.starts_with(b"100644 ") || listing.starts_with(b"100755 "),
         "base input must be a regular file: {relative}"
     );
     let object = format!("{base}:{relative}");
-    let size: usize = String::from_utf8(output(&top, &["cat-file", "-s", &object])?)?
+    let size = String::from_utf8(output(&top, &["cat-file", "-s", &object])?)?
         .trim()
         .parse()?;
-    crate::change::check_size("base file", size)?;
-    let bytes = output(&top, &["cat-file", "blob", &object])?;
-    ensure!(!bytes.contains(&0), "binary base file: {relative}");
-    Ok(Some(
-        String::from_utf8(bytes).context("base file is not UTF-8")?,
-    ))
+    crate::change::check_capture_size(path, size)?;
+    crate::change::decode(output(&top, &["cat-file", "blob", &object])?).map(Some)
 }
 
 pub(crate) fn branch(root: &Path) -> Option<String> {

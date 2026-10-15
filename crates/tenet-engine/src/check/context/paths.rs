@@ -7,6 +7,8 @@ use super::scope::Scope;
 
 pub(super) const ENCODING: &str = "The supplied_source and omitted_source trees partition the current scoped inventory. Directory keys end in / and prepend descendants. Arrays list filenames; an empty key lists files in the current directory. Omitted source contents are not supplied.";
 
+const COUNTS_ENCODING: &str = "supplied_source is a directory tree of the supplied scoped files: directory keys end in / and prepend descendants, arrays list filenames, and an empty key lists files in the current directory. omitted_source_counts maps directory prefixes to how many further scoped files are beneath them; those paths and contents are not supplied. An empty prefix covers the whole scope.";
+
 const MAX_DIRECTORY_DEPTH: usize = 32;
 
 pub(super) fn metadata(scope: &Scope<'_>) -> Result<Map<String, Value>> {
@@ -27,6 +29,42 @@ pub(super) fn metadata(scope: &Scope<'_>) -> Result<Map<String, Value>> {
     } else {
         Ok(expanded)
     }
+}
+
+/// The next directory depth at which to count omitted inventory files, coarser than `current`;
+/// `None` once every omitted file is counted in a single total.
+pub(super) fn coarser(scope: &Scope<'_>, current: Option<usize>) -> Option<usize> {
+    match current {
+        Some(depth) => depth.checked_sub(1),
+        None => scope
+            .omitted
+            .iter()
+            .map(|path| path.components().count().saturating_sub(1))
+            .max(),
+    }
+}
+
+/// Inventory metadata that lists supplied paths exactly and counts omitted files per directory
+/// prefix of at most `depth` directories.
+pub(super) fn counts(scope: &Scope<'_>, depth: usize) -> Result<Map<String, Value>> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for path in &scope.omitted {
+        let path = path.to_str().context("inventory path is not UTF-8")?;
+        let directories: Vec<_> = path.split('/').collect();
+        let prefix: String = directories[..depth.min(directories.len() - 1)]
+            .iter()
+            .map(|directory| format!("{directory}/"))
+            .collect();
+        *counts.entry(prefix).or_default() += 1;
+    }
+    Ok(Map::from_iter([(
+        "inventory".into(),
+        serde_json::json!({
+            "encoding": COUNTS_ENCODING,
+            "supplied_source": encode(&scope.supplied_inventory)?,
+            "omitted_source_counts": counts,
+        }),
+    )]))
 }
 
 #[derive(Default)]

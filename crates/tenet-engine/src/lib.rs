@@ -12,13 +12,13 @@ pub mod review;
 mod snapshot;
 
 pub use change::{Change, ChangeKind, Mode};
-pub use check::{Options, run};
-pub use discovery::{Plan, Selection, discover_contracts, plan};
-pub use ev_grep_core::{MAX_FILE_BYTES, MIN_CONFIDENCE};
-pub use evidence::{EvidencePacket, MAX_CAPTURE_BYTES};
+pub use check::{Options, carry, run};
+pub use discovery::{ExcludedPath, Exclusion, Plan, Selection, discover_contracts, plan};
+pub use ev_grep_core::{MAX_FILE_BYTES, MIN_CONFIDENCE, Outcome};
+pub use evidence::{EvidencePacket, MAX_CAPTURE_BYTES, input_status};
 pub use report::{
     CheckResult, ConclusionReason, ContextSummary, ContractResult, ContractState, ContractStatus,
-    Event, Pending, RequestedScope, RunInfo, Stage, Status, Summary,
+    Event, Omitted, Pending, RequestedScope, RunInfo, Stage, Status, Summary, violation,
 };
 pub use review::Review;
 pub use snapshot::PreparedSnapshot;

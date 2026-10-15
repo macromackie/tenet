@@ -10,27 +10,34 @@ mod record;
 mod store;
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
-use serde_json::Value;
+use anyhow::{Context, Result, anyhow, bail, ensure};
 
 pub(crate) use answers::Answers;
-pub use current::{Current, CurrentContract, current};
+pub use current::{Current, CurrentContract, Unchecked, current};
 pub use log::{
-    Assessment, Conclusion, Entry, FileResult, Record, Revision, Role, ScopedFile, Span,
+    Answer, Assessment, CapturedFile, Conclusion, Entry, FileResult, Record, Revision, Role,
+    ScopedFile, Span,
 };
-pub use record::{RecordRequest, SpanRequest, conclusions, record};
+pub use record::{RecordRequest, Recorded, SpanRequest, conclusions, record};
+pub use store::MAX_BLOB_BYTES;
 use store::Store;
 
-use crate::{ContractState, ContractStatus, EvidencePacket, Pending, Selection, Summary, git};
+use crate::{ContractState, ContractStatus, EvidencePacket, Mode, Pending, Plan, Selection, git};
 
 pub struct Review {
     store: Option<Store>,
     /// The log in the order it was written.
     entries: Vec<Entry>,
+    /// Each revision's position in `entries`; its assessments follow it.
+    revisions: HashMap<u64, usize>,
+    /// The number of log lines read, and the byte offset after them.
+    lines: usize,
+    end: u64,
     pub(crate) answers: Answers,
 }
 
@@ -46,7 +53,8 @@ pub struct Concluded {
 }
 
 pub struct Checked {
-    pub summary: Summary,
+    pub summary: crate::Summary,
+    /// One per planned contract, in plan order.
     pub contracts: Vec<Concluded>,
 }
 
@@ -62,12 +70,19 @@ impl Checked {
         }
     }
 
+    /// Pending contracts, the one the model leans hardest toward violating first.
     pub fn pending(&self) -> Vec<String> {
-        self.contracts
+        let violation = |c: &Concluded| c.conclusion.as_ref().and_then(|c| c.violation);
+        let mut pending: Vec<_> = self
+            .contracts
             .iter()
             .filter(|c| c.state.is_pending())
-            .map(|c| c.contract.clone())
-            .collect()
+            .collect();
+        pending.sort_by(|a, b| {
+            let (a, b) = (violation(a).unwrap_or(-1.0), violation(b).unwrap_or(-1.0));
+            b.total_cmp(&a)
+        });
+        pending.into_iter().map(|c| c.contract.clone()).collect()
     }
 }
 
@@ -77,6 +92,8 @@ pub struct CheckRequest<'a> {
     pub context: &'a [PathBuf],
     /// The provider and model that answered; absent for `check --no-model`.
     pub model: Option<&'a str>,
+    /// The confidence below which answers were routed to unresolved; absent without a model.
+    pub min_confidence: Option<f64>,
 }
 
 impl Review {
@@ -87,7 +104,7 @@ impl Review {
 
     /// Open existing review state without writing anything.
     pub fn existing(root: &Path) -> Result<Self> {
-        let store = Store::existing(root).with_context(|| {
+        let store = Store::existing(root)?.with_context(|| {
             format!(
                 "no review state in {}; run tenet check first",
                 root.join(store::DIRECTORY).display()
@@ -101,32 +118,105 @@ impl Review {
         Self {
             store: None,
             entries: Vec::new(),
+            revisions: HashMap::new(),
+            lines: 0,
+            end: 0,
             answers: Answers::new(None),
         }
     }
 
     fn load(store: Store) -> Result<Self> {
+        let events = store.path(store::EVENTS);
         let mut review = Self {
             answers: Answers::new(Some(store.path(store::ANSWERS))),
-            entries: Vec::new(),
-            store: None,
+            store: Some(store),
+            ..Self::ephemeral()
         };
-        for value in store::read(&store.path(store::EVENTS))? {
-            review
-                .entries
-                .push(serde_json::from_value(value).context("invalid review event")?);
-        }
-        review.store = Some(store);
+        let (text, end) = store::read(&events, 0)?;
+        review.extend(&events, &text, end)?;
         Ok(review)
+    }
+
+    /// Read lines that follow those already read, refusing any that `check` or `record` would not
+    /// have written, so an edited line cannot settle a contract.
+    fn extend(&mut self, path: &Path, text: &str, end: u64) -> Result<()> {
+        let mut moved = HashMap::new();
+        for line in store::lines(path, text, self.lines) {
+            let (number, format, line) = line?;
+            let entry = log::parse(format, line, self.last_revision(), &mut moved)
+                .and_then(|entry| self.check(&entry, format).map(|()| entry))
+                .with_context(|| format!("{}:{number}", path.display()))?;
+            if let Entry::Revision(revision) = &entry {
+                self.revisions.insert(revision.rev, self.entries.len());
+            }
+            self.entries.push(entry);
+        }
+        self.lines += text.lines().count();
+        self.end = end;
+        Ok(())
+    }
+
+    /// The revision a following assessment belongs to: the latest, unless a record came after it.
+    fn last_revision(&mut self) -> Option<&mut Revision> {
+        let position = match self.entries.last()? {
+            Entry::Revision(_) => self.entries.len() - 1,
+            Entry::Assessment(assessment) => self.revisions[&assessment.rev],
+            Entry::Record(_) => return None,
+        };
+        match &mut self.entries[position] {
+            Entry::Revision(revision) => Some(revision),
+            _ => None,
+        }
+    }
+
+    /// Refuse an entry whose references to earlier entries `check` or `record` could not have
+    /// written. A record in the current format must also pass every rule `record` applies; one
+    /// Tenet 0.8 wrote keeps the rules of its time, so only its references are checked.
+    fn check(&self, entry: &Entry, format: u64) -> Result<()> {
+        match entry {
+            Entry::Revision(revision) => ensure!(
+                !self.revisions.contains_key(&revision.rev),
+                "r{} appears twice",
+                revision.rev
+            ),
+            Entry::Assessment(assessment) => {
+                if let Some(carried) = assessment.carried_from {
+                    self.revision(carried)?;
+                }
+            }
+            Entry::Record(record) => {
+                self.revision(record.rev)
+                    .and_then(|revision| {
+                        let assessment = (self.assessments_in(record.rev))
+                            .find(|a| a.contract == record.contract && a.input == record.input)
+                            .with_context(|| {
+                                format!(
+                                    "r{} assessed {} with other input",
+                                    record.rev, record.contract
+                                )
+                            })?;
+                        if format == log::FORMAT {
+                            record::validate(record, assessment, revision, self)?;
+                        }
+                        Ok(())
+                    })
+                    .map_err(|error| {
+                        anyhow!(
+                            "record {} for {} is invalid: {error:#}. Tenet trusts no record that \
+                             `tenet record` would refuse, and never edits the log. Move .tenet \
+                             aside, run tenet check, and record the review again",
+                            record.id,
+                            record.contract
+                        )
+                    })?;
+            }
+        }
+        Ok(())
     }
 
     /// Answer from earlier identical requests unless `reuse` is off; new answers are always kept.
     pub fn use_model(&mut self, identity: &str, reuse: bool) -> Result<()> {
         self.answers.load(identity, reuse)
-    }
-
-    pub fn is_persistent(&self) -> bool {
-        self.store.is_some()
     }
 
     pub fn entries(&self) -> &[Entry] {
@@ -140,8 +230,31 @@ impl Review {
         })
     }
 
+    pub fn revision(&self, rev: u64) -> Result<&Revision> {
+        match self
+            .revisions
+            .get(&rev)
+            .map(|&position| &self.entries[position])
+        {
+            Some(Entry::Revision(revision)) => Ok(revision),
+            _ => bail!("r{rev} is not in the review log"),
+        }
+    }
+
     pub fn assessments(&self) -> impl DoubleEndedIterator<Item = &Assessment> {
         self.entries.iter().filter_map(|entry| match entry {
+            Entry::Assessment(assessment) => Some(assessment),
+            _ => None,
+        })
+    }
+
+    /// The assessments one revision made, which follow it in the log.
+    pub fn assessments_in(&self, rev: u64) -> impl Iterator<Item = &Assessment> {
+        let start = self
+            .revisions
+            .get(&rev)
+            .map_or(self.entries.len(), |p| p + 1);
+        self.entries[start..].iter().map_while(|entry| match entry {
             Entry::Assessment(assessment) => Some(assessment),
             _ => None,
         })
@@ -162,24 +275,36 @@ impl Review {
     }
 
     /// The latest record for this exact input settles the contract. Otherwise a favorable model
-    /// conclusion does, and anything else waits for a record.
+    /// conclusion does, unless a diff changed the contract itself: a diff check assumes the base
+    /// complied with the contract, which says nothing about a new or edited requirement. Anything
+    /// else waits for a record.
     pub fn state(
         &self,
-        contract: &str,
+        plan: &Plan,
+        contract: &tenet_contracts::Contract,
         input: &str,
         model: Option<ContractStatus>,
     ) -> ContractState {
         if let Some(record) = self
             .records()
             .rev()
-            .find(|record| record.contract == contract && record.input == input)
+            .find(|record| record.contract == contract.name && record.input == input)
         {
             return ContractState::Settled {
                 conclusion: record.conclusion,
                 record: Some(record.id.clone()),
             };
         }
+        let changed = plan.mode == Mode::Diff && plan.contract_changes.contains(&contract.path);
         match model {
+            Some(
+                ContractStatus::Verified
+                | ContractStatus::Preserved
+                | ContractStatus::Unaffected
+                | ContractStatus::Clear,
+            ) if changed => ContractState::Pending {
+                reason: Pending::ContractChanged,
+            },
             Some(
                 conclusion @ (ContractStatus::Verified
                 | ContractStatus::Preserved
@@ -208,45 +333,11 @@ impl Review {
             .find(|a| a.contract == contract && a.input == input)
     }
 
-    /// Reuse earlier conclusions for unchanged inputs without asking a model.
-    pub fn carry(&self, evidence: &EvidencePacket<'_>) -> Checked {
-        let contracts = evidence
-            .plan
-            .contracts
-            .iter()
-            .map(|contract| {
-                let input = evidence.input_key(contract);
-                let earlier = self.assessments().rev().find(|a| {
-                    a.contract == contract.name && a.input == input && a.conclusion.is_some()
-                });
-                let conclusion = earlier.and_then(|a| a.conclusion.clone());
-                let state = self.state(
-                    &contract.name,
-                    &input,
-                    conclusion.as_ref().map(|c| c.status),
-                );
-                Concluded {
-                    contract: contract.name.clone(),
-                    scope: evidence.plan.requested_scope(contract),
-                    conclusion,
-                    carried_from: earlier.map(|a| a.rev),
-                    results: earlier.map(|a| a.results.clone()).unwrap_or_default(),
-                    input,
-                    state,
-                }
-            })
-            .collect();
-        Checked {
-            summary: Summary::default(),
-            contracts,
-        }
-    }
-
     /// Append one revision and its assessments, and keep the captured contents for later diffs.
     /// A check that repeats the latest revision's selection, inputs, and conclusions appends
     /// nothing. Returns the revision number, or `None` when this review keeps no state.
     pub fn commit(
-        &self,
+        &mut self,
         evidence: &EvidencePacket<'_>,
         request: &CheckRequest<'_>,
         checked: &Checked,
@@ -255,37 +346,42 @@ impl Review {
             return Ok(None);
         };
         let plan = evidence.plan;
+        let mut files = Vec::new();
+        let mut positions = HashMap::new();
         let mut assessments = Vec::new();
-        for concluded in &checked.contracts {
-            let Some(contract) = plan.contracts.iter().find(|c| c.name == concluded.contract)
-            else {
-                continue;
-            };
+        for (contract, concluded) in plan.contracts.iter().zip(&checked.contracts) {
             store.write_blob(&contract.document)?;
-            let files = evidence.scoped_files(contract);
-            for file in files.iter().filter(|file| file.after.is_some()) {
-                if let Some(after) = &evidence.change(&file.path)?.after {
-                    store.write_blob(after)?;
-                }
-            }
-            assessments.push((concluded, &contract.hash, files));
-        }
-        let selection = request.selection;
-        let mut revision_number = 0;
-        store::append_after(&store.path(store::EVENTS), |existing| {
-            let entries = existing
-                .iter()
-                .map(|value| serde_json::from_value::<Entry>(value.clone()))
-                .collect::<Result<Vec<_>, _>>()
-                .context("invalid review event")?;
-            let latest = entries.iter().rev().find_map(|entry| match entry {
-                Entry::Revision(revision) => Some(revision),
-                _ => None,
+            let scoped = evidence.scoped_files(contract);
+            let (selected, support) = log::add_files(&mut files, &mut positions, scoped);
+            assessments.push(Assessment {
+                rev: 0,
+                contract: concluded.contract.clone(),
+                contract_hash: contract.hash.clone(),
+                input: concluded.input.clone(),
+                scope: concluded.scope,
+                conclusion: concluded.conclusion.clone(),
+                carried_from: concluded.carried_from,
+                selected,
+                support,
+                results: concluded.results.clone(),
             });
+        }
+        for file in files.iter().filter(|file| file.after.is_some()) {
+            if let Some(after) = &evidence.change(&file.path)?.after {
+                store.write_blob(after)?;
+            }
+        }
+
+        let selection = request.selection;
+        let events = store.path(store::EVENTS);
+        let mut number = 0;
+        store::append_after(&events, self.end, log::FORMAT, |appended| {
+            self.extend(&events, appended, self.end + appended.len() as u64)?;
+            let latest = self.revisions().next_back();
             let revision = Revision {
                 rev: latest.map_or(1, |latest| latest.rev + 1),
                 at: now()?,
-                review: review_label(&plan.root, selection.base.as_deref()),
+                review: review_label(plan, selection.base.as_deref()),
                 base: selection.base.clone(),
                 paths: selection.paths.clone(),
                 contract: selection.contract.clone(),
@@ -294,38 +390,51 @@ impl Review {
                 base_oid: plan.base.clone(),
                 head_oid: plan.head.clone(),
                 model: request.model.map(str::to_owned),
+                min_confidence: request.min_confidence,
                 tenet: env!("CARGO_PKG_VERSION").into(),
+                files,
             };
             if let Some(latest) = latest
-                && repeats(latest, &revision, &entries, &assessments)
+                && self.repeats(latest, &revision, &assessments)
             {
-                revision_number = latest.rev;
+                number = latest.rev;
                 return Ok(Vec::new());
             }
-            revision_number = revision.rev;
-            let mut lines = vec![serde_json::to_value(Entry::Revision(revision))?];
-            for (concluded, contract_hash, files) in assessments {
-                lines.push(serde_json::to_value(Entry::Assessment(Assessment {
-                    rev: revision_number,
-                    contract: concluded.contract.clone(),
-                    contract_hash: contract_hash.clone(),
-                    input: concluded.input.clone(),
-                    scope: concluded.scope,
-                    conclusion: concluded.conclusion.clone(),
-                    carried_from: concluded.carried_from,
-                    files,
-                    results: concluded.results.clone(),
-                }))?);
-            }
+            number = revision.rev;
+            let mut lines = vec![Entry::Revision(revision)];
+            lines.extend(assessments.into_iter().map(|assessment| {
+                Entry::Assessment(Assessment {
+                    rev: number,
+                    ..assessment
+                })
+            }));
             Ok(lines)
         })?;
-        Ok(Some(revision_number))
+        Ok(Some(number))
+    }
+
+    /// Whether a new revision would only repeat the latest one: the same selection and model, and
+    /// for every contract the same input and conclusion.
+    fn repeats(&self, latest: &Revision, revision: &Revision, assessments: &[Assessment]) -> bool {
+        let same_selection = latest.same_review(revision)
+            && latest.selects(&revision.paths)
+            && latest.contract == revision.contract
+            && latest.context == revision.context
+            && latest.mode == revision.mode
+            && latest.model == revision.model
+            && latest.min_confidence == revision.min_confidence;
+        let previous = self
+            .assessments_in(latest.rev)
+            .map(|a| (&a.contract, &a.input, &a.conclusion));
+        same_selection
+            && previous.eq(assessments
+                .iter()
+                .map(|a| (&a.contract, &a.input, &a.conclusion)))
     }
 
     fn append(&self, entry: Entry) -> Result<()> {
         let store = self.store.as_ref().context("this review keeps no state")?;
-        let line: Value = serde_json::to_value(entry)?;
-        store::append(&store.path(store::EVENTS), vec![line])
+        store::append(&store.path(store::EVENTS), log::FORMAT, &[entry])
     }
 
     fn keep(&self, text: &str) -> Result<String> {
@@ -334,35 +443,6 @@ impl Review {
             None => Ok(crate::evidence::content_hash(text)),
         }
     }
-}
-
-/// Whether a new revision would only repeat the latest one: the same selection and model, and for
-/// every contract the same input and conclusion.
-fn repeats(
-    latest: &Revision,
-    revision: &Revision,
-    entries: &[Entry],
-    assessments: &[(&Concluded, &String, Vec<ScopedFile>)],
-) -> bool {
-    let same_selection = latest.same_review(revision)
-        && latest.contract == revision.contract
-        && latest.context == revision.context
-        && latest.mode == revision.mode
-        && latest.model == revision.model;
-    let previous: Vec<_> = entries
-        .iter()
-        .filter_map(|entry| match entry {
-            Entry::Assessment(a) if a.rev == latest.rev => {
-                Some((a.contract.as_str(), a.input.as_str(), a.conclusion.as_ref()))
-            }
-            _ => None,
-        })
-        .collect();
-    let current: Vec<_> = assessments
-        .iter()
-        .map(|(c, ..)| (c.contract.as_str(), c.input.as_str(), c.conclusion.as_ref()))
-        .collect();
-    same_selection && previous == current
 }
 
 /// Exit status for a review's states: 4 while anything is pending, then 1 for a settled failure,
@@ -393,11 +473,18 @@ pub fn exit_code<'a>(states: impl IntoIterator<Item = &'a ContractState>) -> u8 
     code
 }
 
-fn review_label(root: &Path, base: Option<&str>) -> String {
-    let branch = git::branch(root).unwrap_or_else(|| "worktree".into());
-    match base {
-        Some(base) => format!("{branch}…{base}"),
-        None => format!("{branch} (full)"),
+/// The branch and the base commit the change is measured from, for display.
+fn review_label(plan: &Plan, base: Option<&str>) -> String {
+    let branch = git::branch(&plan.root)
+        .filter(|branch| branch != "HEAD")
+        .map(|branch| format!("{branch}: "))
+        .unwrap_or_default();
+    match (base, &plan.base) {
+        (Some(base), Some(oid)) if oid.starts_with(base) => {
+            format!("{branch}changes since {}", &oid[..12])
+        }
+        (Some(base), Some(oid)) => format!("{branch}changes since {base} ({})", &oid[..12]),
+        _ => format!("{branch}full check"),
     }
 }
 

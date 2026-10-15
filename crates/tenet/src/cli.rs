@@ -17,12 +17,21 @@ pub(crate) enum Command {
     Check(Check),
     /// Show which contracts are settled and which are pending, without calling a model.
     Status {
+        /// Report the diff review against this commit instead of the latest check's review.
+        #[arg(long)]
+        base: Option<String>,
         #[arg(long)]
         json: bool,
     },
     /// Show what a reviewer needs to settle one contract: rule, change, model answer, and history.
     Show {
-        contract: String,
+        #[arg(required_unless_present = "pending")]
+        contract: Option<String>,
+        /// The selected paths of the check to show, when the contract stands in several.
+        paths: Vec<PathBuf>,
+        /// Show every pending contract, printing their shared change once.
+        #[arg(long, conflicts_with_all = ["contract", "json"])]
+        pending: bool,
         #[arg(long)]
         json: bool,
     },
@@ -49,7 +58,8 @@ pub(crate) enum Command {
 #[derive(Subcommand)]
 pub(crate) enum Contracts {
     List {
-        #[arg(long = "for")]
+        /// List only the contracts that govern this file.
+        #[arg(long = "for", value_name = "FILE")]
         path: Option<PathBuf>,
         /// Select scopes touched since this revision, including contract changes.
         #[arg(long)]
@@ -143,6 +153,8 @@ pub(crate) struct Check {
 #[derive(Args)]
 pub(crate) struct Record {
     pub contract: String,
+    /// The selected paths of the check to settle, when the contract stands in several.
+    pub paths: Vec<PathBuf>,
     /// One of the conclusions a check of this contract's mode and scope can reach.
     #[arg(long)]
     pub conclusion: String,
