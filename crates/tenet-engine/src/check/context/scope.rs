@@ -45,13 +45,16 @@ impl<'a> Scope<'a> {
         }
     }
 
-    pub(super) fn summary(&self, input_bytes: usize) -> ContextSummary {
+    pub(super) fn summary(&self, plan: &Plan, input_bytes: usize) -> ContextSummary {
         ContextSummary {
             input_bytes,
             limit_bytes: ev_grep_core::MAX_FILE_BYTES,
             included_files: self.selected.len() + self.support.len(),
             selected_files: self.selected.iter().map(|path| (*path).clone()).collect(),
             support_files: self.support.iter().map(|path| (*path).clone()).collect(),
+            excerpts: (self.support.iter())
+                .filter_map(|path| Some(((*path).clone(), plan.excerpts.get(*path)?.lines.clone())))
+                .collect(),
             omitted_files: self.omitted.len(),
             before_omitted: false,
             inventory_counted: false,

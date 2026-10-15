@@ -35,7 +35,7 @@ unrelated files keeps its conclusions. A record from `tenet record` settles its 
 | Reason | Meaning |
 | --- | --- |
 | `model_failed` | The model found a violation; confirm or dispute it with a record |
-| `model_unresolved` | The model could not decide, or its evidence or execution was incomplete; `status` and `show` print its lean, as in `leans no violation · confidence 0.56 < 0.8` |
+| `model_unresolved` | The model could not decide, or its evidence or execution was incomplete, such as a [failed request](#failed-requests); `status` and `show` print its lean, as in `leans no violation · confidence 0.56 < 0.8` |
 | `not_assessed` | `check --no-model` captured the input without asking the model |
 | `inputs_changed` | A scoped file or the contract changed after the latest check (`status` only) |
 | `not_checked` | No check assessed the contract: it joined the review later, or a diff check named another contract (`status` only) |
@@ -106,7 +106,9 @@ uncertain or could not run, a file `fail` fails the contract with `file_violatio
 
 When combined context was assembled, `context` reports `input_bytes`, `limit_bytes`, `included_files`,
 `selected_files`, `support_files`, and `omitted_files`, the number of scoped inventory files whose contents were not
-supplied. All captured selected source in the contract scope is retained regardless of relevance answers. When the
+supplied. `excerpts` maps each support file supplied as an [excerpt](./reviews.md#add-context) to its line ranges,
+and each selected file whose excerpt took the place of contents left out to fit.
+All captured selected source in the contract scope is retained regardless of relevance answers. When the
 context was [reduced to fit](./limits.md), `before_omitted`, `inventory_counted`, and `contents_omitted` say how.
 These fields describe the supplied state, not proof that it contains every necessary implementation.
 The same diagnostics and evidence hash remain available if the provider fails. `input_bytes` and `evidence_hash`
@@ -114,11 +116,63 @@ describe the actual encoded assessment input.
 
 Version 4 adds each contract's `state`, the summary's `revision` and `pending` contracts, and `cached` counts for
 results answered from earlier identical requests. Version 3 replaced the run-wide `partial` flag with each conclusion's
-`scope` and separated raw answers from routing. Consumers should retain useful diagnostics and ignore unknown fields. A reason describes the evidence limit; it does not turn an unresolved assessment into a pass.
+`scope` and separated raw answers from routing. Consumers should retain useful diagnostics and ignore unknown fields; see [JSON](./json.md#compatibility). A reason describes the evidence limit; it does not turn an unresolved assessment into a pass.
 
 Other events include `contract_started`, `check_started`, `stage_started`, `stage_completed`, `summary`, and `error`. Stages are `applicability`, `verification`, and `completeness`.
 The summary includes file counts, contract counts, request and cached counts, `over_budget` for requests that
-`--max-requests` stopped, `elapsed_ms` for the whole check, the appended `revision` (`null` for a snapshot), the `pending` contract names, and the exit code. Source contents and credentials are not printed.
+`--max-requests` stopped, `request_failures` and `retryable_failures`, `elapsed_ms` for the whole check, the appended
+`revision` (`null` for a snapshot), the `pending` contract names, `coverage`, and the exit code. `errors` counts every
+execution error, failed requests included. Source contents and credentials are not printed.
+
+## Failed requests
+
+Jev retries a failed request within its own [budget](./limits.md). When a request still returns no answer, its file
+result is `error`, or the conclusion's `reason_code` is `assessment_failed` when the combined assessment failed. The
+contract stays pending unless a record already settles its input. The `result` event, or the conclusion for a combined
+assessment, adds a `failure` object:
+
+```json
+{ "kind": "rate_limited", "retryable": true }
+```
+
+`retryable` says whether rerunning the same check may answer the request:
+
+| Kind | Cause | Retryable |
+| --- | --- | --- |
+| `timeout` | The request used its 15-second budget, or the provider answered HTTP 408 | yes |
+| `connection` | No attempt received an HTTP response | yes |
+| `rate_limited` | HTTP 429 | yes |
+| `interrupted` | HTTP 499 | yes |
+| `server_error` | HTTP 5xx | yes |
+| `authentication` | HTTP 401 or 402: the provider rejected the credential or its account | no |
+| `configuration` | HTTP 404, 405, or a redirect: the endpoint or model does not exist | no |
+| `input_too_large` | HTTP 413, or the encoded request exceeds 96 KiB | no |
+| `invalid_request` | Any other HTTP status | no |
+| `unknown` | A failure Tenet does not recognize, such as an answer that failed validation three times | no |
+
+An `authentication` or `configuration` failure stops the check at once, because every other request would fail too.
+It exits 2 like other fatal errors and appends no revision. JSONL also writes one line to stderr for each failed request, naming the
+contract, the file or combined assessment, the kind, and whether it is retryable. A fatal error appears both as the
+`error` event and on stderr.
+
+Answers are cached when they arrive, and a failed request caches nothing. Rerunning the check therefore sends only the
+failed requests, plus any whose input changed; `check --dry-run` predicts them. A `--snapshot` check keeps no answers,
+so a rerun sends every request again.
+
+## Coverage
+
+In a diff check, the summary's `coverage` reports how much of the selected change any contract governs, whichever
+contracts the check runs:
+
+```json
+{ "changed_files": 271, "ungoverned_files": ["README.md", "docs/setup.md"], "governed": true }
+```
+
+`ungoverned_files` lists every changed file that no contract governs at its current or previous path. Files in a
+`.contracts` folder are contract changes, not ungoverned files. `governed` is false when no contract applies to the change,
+including a diff with no changes. A full check reports `null`, because it checks contract scopes rather than a change.
+The default reporter prints `No contract governs this change: 3 changed files`, or names the ungoverned files when
+contracts govern the rest. A check that no contract governs still exits 0 and needs no credential: nothing in the review is pending.
 
 ## Check exit codes
 
@@ -128,13 +182,14 @@ The summary includes file counts, contract counts, request and cached counts, `o
 | --- | --- |
 | 0 | Every contract is settled without a violation |
 | 1 | A settled violation: a recorded failure |
-| 2 | Invalid input or execution error |
+| 2 | Invalid arguments or configuration, credentials or an endpoint the provider rejected, unreadable review state, a capture failure, or another execution error |
 | 3 | A recorded `unresolved` conclusion |
-| 4 | A contract is pending, including model failures, unresolved answers, and exhausted budgets |
+| 4 | A contract is pending, including model failures, unresolved answers, failed requests, and exhausted budgets |
 | 130 | Cancelled |
 
 Cancellation takes precedence, then execution errors, pending contracts, violations, and recorded unresolved
-conclusions. A model's `failed` exits 4 until a record confirms it. Exit 0 can include `clear` results for selected
+conclusions. A model's `failed` exits 4 until a record confirms it. A [failed request](#failed-requests) leaves its
+contract pending, so the check exits 4, unless a record settles the contract or the failure stopped the check. Exit 0 can include `clear` results for selected
 subjects, so it does not imply full contract verification. Findings remain available whatever decides the exit code.
 
 File diagnostics highlight the contract requirement; Tenet does not invent an exact source span for a file-level judgment. The reviewing agent locates actionable code.

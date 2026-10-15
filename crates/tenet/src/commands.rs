@@ -8,12 +8,14 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use ev_grep_jev::Jev;
 use tenet_engine::{
-    Event, Exclusion, Mode, Options, PreparedSnapshot, Review, RunInfo, Selection, Status,
+    Coverage, Event, Exclusion, Mode, Options, PreparedSnapshot, Review, RunInfo, Selection,
+    Status,
     review::{CheckRequest, Checked},
 };
 
 use crate::{
-    cli::{Check, Cli, Command, Contracts, Input, ReporterKind},
+    cli::{Check, Cli, Command, Contracts, Input, ReporterKind, Run},
+    provider::Model,
     reporter::Reporter,
 };
 
@@ -42,7 +44,7 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
                             "--for path must be relative to the project root"
                         );
                     }
-                    let (contracts, contract_changes) = if let Some(base) = base {
+                    let (contracts, contract_changes, coverage) = if let Some(base) = base {
                         let plan = tenet_engine::plan(
                             &cli.root,
                             &Selection {
@@ -50,9 +52,13 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
                                 ..Selection::default()
                             },
                         )?;
-                        (plan.contracts, plan.contract_changes)
+                        (plan.contracts, plan.contract_changes, plan.coverage)
                     } else {
-                        (tenet_engine::discover_contracts(&cli.root)?, Vec::new())
+                        (
+                            tenet_engine::discover_contracts(&cli.root)?,
+                            Vec::new(),
+                            None,
+                        )
                     };
                     let selected: Vec<_> = contracts
                         .iter()
@@ -63,7 +69,7 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
                         writeln!(
                             io::stdout(),
                             "{}",
-                            serde_json::json!({"version":1,"contracts":entries,"contract_changes":contract_changes})
+                            serde_json::json!({"version":1,"contracts":entries,"contract_changes":contract_changes,"coverage":coverage})
                         )?;
                     } else {
                         for c in selected {
@@ -82,20 +88,24 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
             }
             Ok(0)
         }
-        Command::Check(check) => evaluate(&cli.root, check).await,
+        Command::Check(check) => evaluate(&cli.root, &cli.state(), check).await,
         Command::Status { base, json } => {
-            crate::review::status(&cli.root, base.as_deref(), *json).await
+            crate::review::status(&cli.root, &cli.state(), base.as_deref(), *json).await
         }
         Command::Show {
             contract: Some(contract),
             paths,
             json,
             ..
-        } => crate::review::show(&cli.root, contract, paths, *json).await,
-        Command::Show { contract: None, .. } => crate::review::show_pending(&cli.root).await,
-        Command::Record(record) => crate::review::record(&cli.root, record).await,
+        } => crate::review::show(&cli.root, &cli.state(), contract, paths, *json).await,
+        Command::Show {
+            contract: None,
+            json,
+            ..
+        } => crate::review::show_pending(&cli.root, &cli.state(), *json).await,
+        Command::Record(record) => crate::review::record(&cli.root, &cli.state(), record).await,
         Command::Log { contract, json } => {
-            crate::review::log(&cli.root, contract.as_deref(), *json)
+            crate::review::log(&cli.state(), contract.as_deref(), *json)
         }
         Command::Export(export) => {
             let (plan, _selection, _snapshot) = prepare(&cli.root, &export.input)?;
@@ -133,6 +143,7 @@ fn prepare(
         contract: input.contract.clone(),
     };
     let plan = tenet_engine::plan(root, &selection)?.with_context(&input.context)?;
+    plan.admit_context()?;
     for excluded in &plan.excluded_paths {
         let reason = match excluded.reason {
             Exclusion::NotDiscovered => {
@@ -149,7 +160,7 @@ fn prepare(
     Ok((plan, selection, snapshot))
 }
 
-async fn evaluate(root: &Path, check: &Check) -> Result<u8> {
+async fn evaluate(root: &Path, state: &Path, check: &Check) -> Result<u8> {
     // The summary's duration covers the whole check, from discovery to the review update.
     let started = Instant::now();
     let (plan, selection, prepared) = prepare(root, &check.input)?;
@@ -163,17 +174,24 @@ async fn evaluate(root: &Path, check: &Check) -> Result<u8> {
     let reporter = RefCell::new(Reporter::new(kind, &plan.contracts));
     if check.dry_run {
         let evidence = plan.capture().await?;
+        // Answers a check would reuse; reading the review writes nothing.
+        let mut review = if snapshot.is_some() {
+            Review::ephemeral()
+        } else {
+            Review::read(state)?
+        };
+        review.use_model(&identity(run)?, !check.fresh)?;
+        let prediction = tenet_engine::predict(&evidence, &review, run.jobs.into()).await?;
         let mut errors = 0;
-        // What a model check would send before reusing earlier answers, and the contracts whose
-        // combined input stays over the limit after reduction.
-        let (mut file_requests, mut combined_requests, mut over_limit) = (0, 0, 0);
+        // Contracts whose combined input stays over the limit after reduction.
+        let mut over_limit = 0;
         for c in &plan.contracts {
             let scope = (kind == ReporterKind::Jsonl).then(|| plan.requested_scope(c));
             for path in plan.files.iter().filter(|path| plan.governs(c, path)) {
+                let previous_path = plan.previous_paths.get(path);
                 let input = evidence.file_input(c, path);
                 let (input_bytes, omitted, note) = match input {
                     Ok((state, omitted)) => {
-                        file_requests += 1;
                         (Some(serde_json::to_vec(&state)?.len()), omitted, None)
                     }
                     Err(error) => {
@@ -187,7 +205,7 @@ async fn evaluate(root: &Path, check: &Check) -> Result<u8> {
                     writeln!(
                         io::stdout(),
                         "{}",
-                        serde_json::json!({"version":4,"type":"selected","contract":c.name,"scope":scope,"path":path,"contract_hash":c.hash,"input_bytes":input_bytes,"input_limit_bytes":tenet_engine::MAX_FILE_BYTES,"omitted":omitted,"status":status,"reason":reason})
+                        serde_json::json!({"version":4,"type":"selected","contract":c.name,"scope":scope,"path":path,"previous_path":previous_path,"contract_hash":c.hash,"input_bytes":input_bytes,"input_limit_bytes":tenet_engine::MAX_FILE_BYTES,"omitted":omitted,"status":status,"reason":reason})
                     )?;
                 } else {
                     let note = match (&note, omitted.as_slice()) {
@@ -198,18 +216,23 @@ async fn evaluate(root: &Path, check: &Check) -> Result<u8> {
                         (None, []) => String::new(),
                         (None, omitted) => format!("  {}", crate::report_format::omitted(omitted)),
                     };
-                    writeln!(io::stdout(), "{}  {}{note}", c.name, path.display())?;
+                    let renamed = previous_path
+                        .map(|old| format!(" (renamed from {})", old.display()))
+                        .unwrap_or_default();
+                    writeln!(
+                        io::stdout(),
+                        "{}  {}{renamed}{note}",
+                        c.name,
+                        path.display()
+                    )?;
                 }
             }
             let context = evidence.combined_summary(c);
             if let Ok(context) = &context
                 && !plan.untouched(c)
+                && !context.fits()
             {
-                if context.fits() {
-                    combined_requests += 1;
-                } else {
-                    over_limit += 1;
-                }
+                over_limit += 1;
             }
             if kind == ReporterKind::Jsonl {
                 let (context, error) = match context {
@@ -233,36 +256,51 @@ async fn evaluate(root: &Path, check: &Check) -> Result<u8> {
                 )?;
             }
         }
-        let requests = file_requests + combined_requests;
+        // Answers from earlier checks spend none of the budget.
+        let unsent = prediction.file_requests + prediction.combined_requests;
         let budget = run.max_requests as usize;
+        let coverage = plan
+            .coverage
+            .as_ref()
+            .and_then(crate::report_format::coverage);
         if kind == ReporterKind::Jsonl {
             writeln!(
                 io::stdout(),
                 "{}",
-                serde_json::json!({"version":4,"type":"summary","dry_run":true,"files":plan.files.len(),"mode":plan.mode,"assume_base_valid":plan.mode == Mode::Diff,"deleted":plan.deleted,"requests":requests,"max_requests":budget,"combined_over_limit":over_limit,"errors":errors,"exit_code":if errors > 0 { 2 } else { 0 }})
+                serde_json::json!({"version":4,"type":"summary","dry_run":true,"files":plan.files.len(),"mode":plan.mode,"assume_base_valid":plan.mode == Mode::Diff,"deleted":plan.deleted,"requests":unsent + prediction.cached,"cached":prediction.cached,"max_requests":budget,"combined_over_limit":over_limit,"coverage":plan.coverage,"errors":errors,"exit_code":if errors > 0 { 2 } else { 0 }})
             )?;
         } else if plan.contracts.is_empty() {
             // A full check with nothing to assess has already warned about its selection.
             if let Some(base) = &selection.base {
-                let what = if plan.candidate_files.is_empty() {
-                    "No changes"
-                } else {
-                    "No contract governs the changes"
-                };
-                writeln!(io::stdout(), "{what} since {base}; nothing to check.")?;
+                match (coverage, plan.candidate_files.is_empty()) {
+                    (Some(coverage), _) => writeln!(io::stdout(), "{coverage}; nothing to check.")?,
+                    (None, true) => {
+                        writeln!(io::stdout(), "No changes since {base}; nothing to check.")?
+                    }
+                    (None, false) => writeln!(
+                        io::stdout(),
+                        "No contract governs the changes since {base}; nothing to check."
+                    )?,
+                }
             }
         } else {
             writeln!(
                 io::stdout(),
-                "Requests  {requests} predicted ({file_requests} file, {combined_requests} combined) before reusing earlier answers; budget {budget}\nCombined  {over_limit} of {} contracts over the input limit after reduction",
+                "Requests  {unsent} to send ({} file, {} combined), {} answered from earlier checks; budget {budget}\nCombined  {over_limit} of {} contracts over the input limit after reduction",
+                prediction.file_requests,
+                prediction.combined_requests,
+                prediction.cached,
                 plan.contracts.len()
             )?;
+            if let Some(coverage) = coverage {
+                writeln!(io::stdout(), "{coverage}")?;
+            }
         }
-        if requests > budget {
+        if unsent > budget {
             writeln!(
                 io::stderr(),
-                "warning: {requests} predicted requests exceed --max-requests {budget}; {} checks would stay incomplete",
-                requests - budget
+                "warning: {unsent} predicted requests exceed --max-requests {budget}; {} checks would stay incomplete",
+                unsent - budget
             )?;
         }
         return Ok(if errors > 0 { 2 } else { 0 });
@@ -271,7 +309,7 @@ async fn evaluate(root: &Path, check: &Check) -> Result<u8> {
     let mut review = if snapshot.is_some() {
         Review::ephemeral()
     } else {
-        Review::open(&plan.root)?
+        Review::open(state)?
     };
     let evidence = plan.capture().await?;
     let emit = |event| reporter.borrow_mut().emit(event);
@@ -304,23 +342,30 @@ async fn evaluate(root: &Path, check: &Check) -> Result<u8> {
             min_confidence: None,
         };
         let revision = review.commit(&evidence, &request, &checked)?;
-        return finish(&emit, checked, revision, started);
+        return finish(&emit, checked, revision, plan.coverage.clone(), started);
     }
     let model = run.provider.model(run.model.as_deref())?;
-    let key = std::env::var(run.provider.key_variable()).with_context(|| {
-        format!(
-            "set {} to run model evaluations",
-            run.provider.key_variable()
-        )
-    })?;
-    let evaluator = Jev::with_endpoint(
-        run.provider,
-        &model,
-        &key,
-        run.endpoint.as_deref().unwrap_or(run.provider.endpoint()),
-    )?
-    .with_jobs(usize::from(run.jobs))?;
-    let identity = format!("{}/{model}", run.provider);
+    let identity = identity(run)?;
+    // A diff that no contract governs sends no request, so it needs no credential.
+    let evaluator = if plan.contracts.iter().all(|c| plan.untouched(c)) {
+        Model::Unneeded
+    } else {
+        let key = std::env::var(run.provider.key_variable()).with_context(|| {
+            format!(
+                "set {} to run model evaluations",
+                run.provider.key_variable()
+            )
+        })?;
+        Model::Jev(Box::new(
+            Jev::with_endpoint(
+                run.provider,
+                &model,
+                &key,
+                run.endpoint.as_deref().unwrap_or(run.provider.endpoint()),
+            )?
+            .with_jobs(usize::from(run.jobs))?,
+        ))
+    };
     review.use_model(&identity, !check.fresh)?;
     emit(Event::Begin {
         run: begin(Some(run.provider.to_string()), Some(model)),
@@ -329,6 +374,7 @@ async fn evaluate(root: &Path, check: &Check) -> Result<u8> {
         jobs: run.jobs.into(),
         max_requests: run.max_requests as usize,
         min_confidence: run.min_confidence,
+        classify: crate::provider::classify,
     };
     let mut refresh = tokio::time::interval(std::time::Duration::from_millis(100));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -351,6 +397,7 @@ async fn evaluate(root: &Path, check: &Check) -> Result<u8> {
                         summary,
                         revision: None,
                         pending: Vec::new(),
+                        coverage: plan.coverage.clone(),
                         exit_code: 130,
                     })?;
                     return Ok(130);
@@ -365,13 +412,20 @@ async fn evaluate(root: &Path, check: &Check) -> Result<u8> {
         min_confidence: Some(run.min_confidence),
     };
     let revision = review.commit(&evidence, &request, &checked)?;
-    finish(&emit, checked, revision, started)
+    finish(&emit, checked, revision, plan.coverage.clone(), started)
+}
+
+/// The provider and model whose answers the review caches and reuses.
+fn identity(run: &Run) -> Result<String> {
+    let model = run.provider.model(run.model.as_deref())?;
+    Ok(format!("{}/{model}", run.provider))
 }
 
 fn finish(
     emit: &impl Fn(Event) -> Result<()>,
     checked: Checked,
     revision: Option<u64>,
+    coverage: Option<Coverage>,
     started: Instant,
 ) -> Result<u8> {
     let code = checked.exit_code();
@@ -382,6 +436,7 @@ fn finish(
         summary,
         revision,
         pending,
+        coverage,
         exit_code: code,
     })?;
     Ok(code)

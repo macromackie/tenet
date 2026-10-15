@@ -5,7 +5,7 @@ tenet check
 tenet check --base origin/main
 tenet status [--base REF] [--json]
 tenet show NAME [PATH ...] [--json]
-tenet show --pending
+tenet show --pending [--json]
 tenet record NAME [PATH ...] --conclusion CONCLUSION [--evidence PATH:START-END ...] -m MESSAGE
 tenet log [NAME] [--json]
 tenet export src/ --base origin/main > evidence.json
@@ -17,6 +17,8 @@ tenet contracts outdated | update | diff PATH | remove PATH
 ```
 
 Use `--root DIR` to choose a project; the default is the working directory. Contracts outside that root do not participate.
+Use `--state-dir DIR`, or `TENET_STATE_DIR`, to keep [review state](#review-state) outside a read-only
+checkout; every review command must name the same directory.
 
 ## Full check
 
@@ -64,8 +66,10 @@ relevant changes need evidence of preservation. A diff that changes no file a co
 itself, concludes `unaffected` without a model request.
 The caller owns establishing the baseline and running full checks when contracts change. Tenet does not silently switch modes.
 
-`contracts list --base REF --json` returns the containing contract scopes in evaluation order, plus changed contract paths.
+`contracts list --base REF --json` returns the containing contract scopes in evaluation order, plus changed contract paths
+and the change's [`coverage`](./output.md#coverage): the changed files no contract governs.
 It needs no model credentials. New and old paths participate, including deletions and moves.
+When no contract governs any changed file, `check` says `No contract governs this change: N changed files` and exits 0.
 Diff discovery validates contracts in those scopes. Malformed contracts in unrelated folders do not block the diff;
 `validate` still checks every contract, and selecting a contract by name requires repository-wide discovery.
 
@@ -102,7 +106,8 @@ Each contract is settled or pending; see [Reviews](./reviews.md).
 `record` refuses a contract whose scoped files changed after its latest check: run `check` again first. The conclusion
 must fit the check: `verified` for a full check of the full contract, `preserved` or `unaffected` for a diff, and `clear`
 for selected subjects, plus `failed` and `unresolved` everywhere. `--evidence` cites lines of files the check assessed,
-under the same path rules as `--context`; it is required unless the conclusion is `unresolved`. In a diff, a favorable
+under the same path rules as `--context`, and only the supplied lines of a supporting `--context` excerpt; it is required unless
+the conclusion is `unresolved`. In a diff, a favorable
 conclusion must cite a changed line, a line beside one, or a file the change deleted or emptied; when the diff changed none of the
 contract's files, it needs no evidence but requires a `verified` full check of the same contract text. A favorable
 conclusion over the model's `failed` must cite a file the model flagged. The message is plain text up to 4 KiB without
@@ -113,7 +118,8 @@ When a contract stands in several checks of the review, such as a check of the w
 file, `status` lists it once per check. Pass that check's paths after the name, as in `tenet show errors README.md`.
 
 `show --json` and each `log --json` line carry `version: 2`. `show --json` lists every scoped file, the latest five
-records and earlier assessments, and counts of the older ones.
+records and earlier assessments, and counts of the older ones. `show --pending --json` lists every pending contract in
+that form and each changed file's patch once. See [JSON](./json.md) for every command's format.
 
 `check --no-model` captures inputs and appends a revision without credentials or requests. Contracts settled for the
 same input stay settled; the rest are pending. Each row shows the reused model conclusion, as in
@@ -160,7 +166,7 @@ contracts, so every merge is a reviewable diff.
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `--contract NAME` | all contracts | Select one requirement |
-| `--context PATH` | none | Add a repository file to check inputs; repeat for multiple files |
+| `--context PATH[:START-END]` | none | Add a repository file, or only its lines START through END, to check inputs; repeat for more files or ranges; see [Add context](./reviews.md#add-context) |
 | `--jobs N` | 4 | Maximum simultaneous model requests |
 | `--max-requests N` | 1000 | Request budget, including combined assessments |
 | `--min-confidence N` | 0.8 | Route lower-confidence answers to unresolved; accepts 0 through 1 |
@@ -169,15 +175,17 @@ contracts, so every merge is a reviewable diff.
 | `--reporter KIND` | default | `default`, `verbose`, or `jsonl` |
 | `--json` | off | Shorthand for JSONL |
 | `--no-model` | off | Capture and keep a revision without requests; see [Review state](#review-state) |
-| `--fresh` | off | Ask the model again instead of reusing answers to identical requests |
+| `--fresh` | off | Ask the model again instead of reusing answers to identical requests; with `--dry-run`, predict as if nothing were cached |
 
 `check --dry-run` lists candidate pairs and builds each file input, including the contract and explicit context,
 without credentials or model requests. JSON `selected` records include encoded `input_bytes`, `input_limit_bytes`,
-`omitted` parts, and a `status` and `reason` for files that would be skipped or incomplete. A `combined` record per
-contract gives its repository `context`, including its size and any reductions. The summary predicts `requests`, the
-file and combined requests a check would send before reusing earlier answers, and counts `combined_over_limit`, the
-contracts whose combined input exceeds the limit after reduction. A prediction above `--max-requests` prints a warning
-to stderr. A diff with no changes prints `No changes since BASE; nothing to check.` Only execution errors exit 2.
+`omitted` parts, a renamed file's `previous_path`, and a `status` and `reason` for files that would be skipped or
+incomplete. A `combined` record per contract gives its repository `context`, including its size and any reductions.
+The summary counts `requests`, the file and combined requests a check needs, and `cached`, how many of them earlier
+answers in `.tenet/answers.jsonl` would answer; a check sends the rest. With `--fresh`, it predicts as if nothing were
+cached. It also counts `combined_over_limit`, the contracts whose combined input exceeds the limit after reduction, and
+reports the diff's `coverage`. When the requests to send exceed `--max-requests`, it prints a warning to stderr. A diff with no changes
+prints `No changes since BASE; nothing to check.` Only execution errors exit 2.
 `validate` and `contracts` also work without credentials.
 
 ## Discovery

@@ -9,7 +9,9 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 
 use super::{Assessment, CapturedFile, Entry, Record, Review, Revision, Role, Span, current, now};
-use crate::{ContractState, ContractStatus, Mode, Pending, RequestedScope, Status, plan};
+use crate::{
+    ContractState, ContractStatus, Mode, Pending, RequestedScope, SpanRequest, Status, plan,
+};
 
 /// The longest message a record keeps, in bytes.
 const MAX_MESSAGE_BYTES: usize = 4096;
@@ -23,12 +25,6 @@ pub struct RecordRequest {
     pub conclusion: ContractStatus,
     pub evidence: Vec<SpanRequest>,
     pub message: String,
-}
-
-pub struct SpanRequest {
-    pub path: PathBuf,
-    /// Inclusive, 1-based; absent to cite the whole file.
-    pub lines: Option<(usize, usize)>,
 }
 
 /// A record that now settles its input, and the earlier record for that input it replaced.
@@ -49,8 +45,8 @@ pub fn conclusions(mode: Mode, scope: RequestedScope) -> &'static [ContractStatu
 
 /// Bind a conclusion to the input the latest check assessed. Refuse it when the contract's scoped
 /// files changed since, so a verdict never attaches to code its author did not read.
-pub async fn record(root: &Path, request: &RecordRequest) -> Result<Recorded> {
-    let review = Review::existing(root)?;
+pub async fn record(root: &Path, state: &Path, request: &RecordRequest) -> Result<Recorded> {
+    let review = Review::existing(state)?;
     let current = current(root, &review, None, Some(&request.contract)).await?;
     let entry = current.select(&request.contract, &request.paths)?;
     let Some(assessment) = entry.assessment else {
@@ -82,7 +78,7 @@ pub async fn record(root: &Path, request: &RecordRequest) -> Result<Recorded> {
             "evidence paths must be repository source files: {}",
             span.path.display()
         );
-        let file = scoped(revision, assessment, &request.contract, &path)?;
+        let (_, file) = scoped(revision, assessment, &request.contract, &path)?;
         let full = root.join(&path);
         if !full.exists() && file.after.is_none() {
             ensure!(
@@ -205,12 +201,24 @@ pub(super) fn validate(
         record.conclusion.as_str()
     );
     for span in &record.evidence {
-        scoped(revision, assessment, &record.contract, &span.path)?;
+        let (role, file) = scoped(revision, assessment, &record.contract, &span.path)?;
         if let Some([start, end]) = span.lines {
             let cited = format!("{}:{start}-{end}", span.path.display());
             ensure!(start >= 1, "{cited}: lines are numbered from 1");
             ensure!(start <= end, "{cited}: the range starts after it ends");
         }
+        // The check supplied only these lines of a supporting excerpt, so only they are evidence.
+        // A selected file is the subject itself, whatever lines stood in for its contents.
+        let supplied = |[start, end]: [usize; 2]| {
+            (file.excerpt.iter()).any(|&[first, last]| first <= start && end <= last)
+        };
+        ensure!(
+            role == Role::Selected || file.excerpt.is_empty() || span.lines.is_some_and(supplied),
+            "r{} supplied only lines {} of {}; cite lines within them",
+            assessment.rev,
+            crate::line_ranges(&file.excerpt),
+            span.path.display()
+        );
     }
 
     // A dispute must answer the files the model flagged, not cite something beside them.
@@ -304,15 +312,16 @@ fn verified(review: &Review, contract: &str, contract_hash: &str) -> bool {
         })
 }
 
-/// The scoped file a citation names; evidence must come from what the check assessed.
+/// The scoped file a citation names, and its role; evidence must come from what the check
+/// assessed.
 fn scoped<'a>(
     revision: &'a Revision,
     assessment: &'a Assessment,
     contract: &str,
     path: &Path,
-) -> Result<&'a CapturedFile> {
-    let mut files = revision.files(assessment).map(|(_, file)| file);
-    files.find(|file| file.path == path).with_context(|| {
+) -> Result<(Role, &'a CapturedFile)> {
+    let mut files = revision.files(assessment);
+    files.find(|(_, file)| file.path == path).with_context(|| {
         let files: Vec<_> = revision
             .files(assessment)
             .map(|(_, file)| file.path.display().to_string())

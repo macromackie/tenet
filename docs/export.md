@@ -11,6 +11,8 @@ tenet export src/storage/query.ts --contract database-failures \
 The command accepts the same paths, `--contract`, `--context`, `--base`, `--snapshot`, and `--patch` selection
 as [`tenet check`](./cli.md). Output is always JSON; it has no `--json`, provider, or model option.
 `--context` supplies supporting source without broadening the requested contract scope.
+A `--context PATH:START-END` range is recorded in `excerpts`; the packet still holds the file's complete source, so
+its hashes identify the file.
 
 ## Contents
 
@@ -21,6 +23,7 @@ Its main fields describe different parts of the review:
 | --- | --- |
 | `mode`, `base`, `head`, `assumption` | Full or diff mode, available Git revisions, and the compliant-base assumption for a diff |
 | `selected_paths`, `selected_files`, `support_files` | Requested selectors, selected subjects, and explicit context |
+| `excerpts` | Each support file named with [line ranges](./reviews.md#add-context), mapped to its merged inclusive ranges |
 | `inventory` | Discovered paths that the exported contracts govern |
 | `contract_changes` | Changed contract paths in a diff |
 | `contracts` | Complete documents, identities, scopes, and selection information |

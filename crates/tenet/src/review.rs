@@ -14,7 +14,7 @@ use tenet_engine::{
     Change, ContractState, ContractStatus, MIN_CONFIDENCE, Mode, Pending, Review, Status,
     review::{
         self, Assessment, Current, CurrentContract, Entry, MAX_BLOB_BYTES, Record, RecordRequest,
-        Recorded, Revision, Role, SpanRequest, Unchecked,
+        Recorded, Revision, Role, Unchecked,
     },
 };
 
@@ -30,8 +30,13 @@ const UNREADABLE: usize = 5;
 /// How many changed ranges `show` offers as evidence.
 const CITATIONS: usize = 10;
 
-pub(crate) async fn status(root: &Path, base: Option<&str>, json: bool) -> Result<u8> {
-    let review = Review::existing(root)?;
+pub(crate) async fn status(
+    root: &Path,
+    state: &Path,
+    base: Option<&str>,
+    json: bool,
+) -> Result<u8> {
+    let review = Review::existing(state)?;
     let mut out = io::stdout().lock();
     let current = match review::current(root, &review, base, None).await {
         Ok(current) => current,
@@ -187,8 +192,14 @@ pub(crate) async fn status(root: &Path, base: Option<&str>, json: bool) -> Resul
     Ok(code)
 }
 
-pub(crate) async fn show(root: &Path, name: &str, paths: &[PathBuf], json: bool) -> Result<u8> {
-    let review = Review::existing(root)?;
+pub(crate) async fn show(
+    root: &Path,
+    state: &Path,
+    name: &str,
+    paths: &[PathBuf],
+    json: bool,
+) -> Result<u8> {
+    let review = Review::existing(state)?;
     let current = review::current(root, &review, None, Some(name)).await?;
     let entry = current.select(name, paths)?;
     let mut out = BufWriter::new(io::stdout().lock());
@@ -199,7 +210,6 @@ pub(crate) async fn show(root: &Path, name: &str, paths: &[PathBuf], json: bool)
         return Ok(0);
     }
 
-    let history = History::new(&review, entry)?;
     let files: Vec<_> = entry
         .files
         .iter()
@@ -215,6 +225,16 @@ pub(crate) async fn show(root: &Path, name: &str, paths: &[PathBuf], json: bool)
             Ok(value)
         })
         .collect::<Result<_>>()?;
+    let mut value = contract_json(&review, entry, files)?;
+    value["version"] = json!(2);
+    writeln!(out, "{value}")?;
+    out.flush()?;
+    Ok(0)
+}
+
+/// One contract as `show --json` reports it, with `files` as given.
+fn contract_json(review: &Review, entry: &CurrentContract, files: Vec<Value>) -> Result<Value> {
+    let history = History::new(review, entry)?;
     let shown = |assessment: &Assessment| {
         json!({
             "rev": assessment.rev,
@@ -228,49 +248,73 @@ pub(crate) async fn show(root: &Path, name: &str, paths: &[PathBuf], json: bool)
     };
     let (records, earlier) = (&history.records, &history.earlier);
     let contract = &entry.contract;
-    writeln!(
-        out,
-        "{}",
-        json!({
-            "version": 2,
-            "contract": {
-                "name": contract.name,
-                "message": contract.message,
-                "path": contract.path,
-                "scope": contract.scope,
-                "hash": contract.hash,
-            },
-            "document": contract.document,
-            "state": entry.state,
-            "selection": {"rev": entry.selection.rev, "paths": entry.selection.paths},
-            "mode": entry.mode,
-            "scope": entry.scope,
-            "input": entry.input,
-            "min_confidence": entry.min_confidence,
-            "assessment": entry.assessment.map(shown),
-            "files": files,
-            "records": &records[..records.len().min(HISTORY)],
-            "earlier": earlier.iter().take(HISTORY).map(|a| shown(a)).collect::<Vec<_>>(),
-            "older": {
-                "records": records.len().saturating_sub(HISTORY),
-                "assessments": earlier.len().saturating_sub(HISTORY),
-            },
-            "changes_since_earlier": history.changes_since,
-            "conclusions": review::conclusions(entry.mode, entry.scope),
-        })
-    )?;
-    out.flush()?;
-    Ok(0)
+    Ok(json!({
+        "contract": {
+            "name": contract.name,
+            "message": contract.message,
+            "path": contract.path,
+            "scope": contract.scope,
+            "hash": contract.hash,
+        },
+        "document": contract.document,
+        "state": entry.state,
+        "selection": {"rev": entry.selection.rev, "paths": entry.selection.paths},
+        "mode": entry.mode,
+        "scope": entry.scope,
+        "input": entry.input,
+        "min_confidence": entry.min_confidence,
+        "assessment": entry.assessment.map(shown),
+        "files": files,
+        "records": &records[..records.len().min(HISTORY)],
+        "earlier": earlier.iter().take(HISTORY).map(|a| shown(a)).collect::<Vec<_>>(),
+        "older": {
+            "records": records.len().saturating_sub(HISTORY),
+            "assessments": earlier.len().saturating_sub(HISTORY),
+        },
+        "changes_since_earlier": history.changes_since,
+        "conclusions": review::conclusions(entry.mode, entry.scope),
+    }))
 }
 
-/// Every pending contract's brief, then the change they share, printed once.
-pub(crate) async fn show_pending(root: &Path) -> Result<u8> {
-    let review = Review::existing(root)?;
+/// Every pending contract's brief, then the change they share, printed once. As JSON, each
+/// contract as `show --json` reports it without patches, then each changed file's patch once.
+pub(crate) async fn show_pending(root: &Path, state: &Path, json: bool) -> Result<u8> {
+    let review = Review::existing(state)?;
     let current = review::current(root, &review, None, None).await?;
     let pending: Vec<_> = (current.contracts.iter())
         .filter(|entry| entry.state.is_pending())
         .collect();
+    let mut seen = HashSet::new();
+    let changes: Vec<_> = (pending.iter())
+        .flat_map(|entry| &entry.changes)
+        .filter(|change| seen.insert(&change.path))
+        .cloned()
+        .collect();
     let mut out = BufWriter::new(io::stdout().lock());
+    if json {
+        let contracts = (pending.iter())
+            .map(|entry| {
+                contract_json(
+                    &review,
+                    entry,
+                    (entry.files.iter())
+                        .map(serde_json::to_value)
+                        .collect::<Result<_, _>>()?,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let changes: Vec<_> = (changes.iter())
+            .filter(|change| !change.patch.is_empty())
+            .map(|change| json!({"path": change.path, "patch": change.patch}))
+            .collect();
+        writeln!(
+            out,
+            "{}",
+            json!({"version": 2, "contracts": contracts, "changes": changes})
+        )?;
+        out.flush()?;
+        return Ok(0);
+    }
     if pending.is_empty() {
         writeln!(out, "No contract is pending.")?;
     }
@@ -280,12 +324,6 @@ pub(crate) async fn show_pending(root: &Path) -> Result<u8> {
         }
         brief(&mut out, &review, &current, entry)?;
     }
-    let mut seen = HashSet::new();
-    let changes: Vec<_> = (pending.iter())
-        .flat_map(|entry| &entry.changes)
-        .filter(|change| seen.insert(&change.path))
-        .cloned()
-        .collect();
     change(&mut out, &changes)?;
     out.flush()?;
     Ok(0)
@@ -460,7 +498,11 @@ fn brief(
                 continue;
             }
         }
-        writeln!(out, "  {kind:10} {}", scoped.file.path.display())?;
+        let excerpt = match &scoped.file.excerpt[..] {
+            [] => String::new(),
+            lines => format!(" lines {}", tenet_engine::line_ranges(lines)),
+        };
+        writeln!(out, "  {kind:10} {}{excerpt}", scoped.file.path.display())?;
         if let Some(error) = &scoped.file.error {
             writeln!(out, "             {error}")?;
         }
@@ -606,25 +648,21 @@ fn change(out: &mut impl Write, changes: &[Change]) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn record(root: &Path, args: &crate::cli::Record) -> Result<u8> {
+pub(crate) async fn record(root: &Path, state: &Path, args: &crate::cli::Record) -> Result<u8> {
     let conclusion = ContractStatus::parse(&args.conclusion).with_context(|| {
         format!(
             "unknown conclusion {}; use verified, preserved, unaffected, clear, failed, or unresolved",
             args.conclusion
         )
     })?;
-    let evidence = args
-        .evidence
-        .iter()
-        .map(|text| span(text))
-        .collect::<Result<Vec<_>>>()?;
     let Recorded { record, replaces } = review::record(
         root,
+        state,
         &RecordRequest {
             contract: args.contract.clone(),
             paths: args.paths.clone(),
             conclusion,
-            evidence,
+            evidence: args.evidence.clone(),
             message: args.message.clone(),
         },
     )
@@ -658,8 +696,8 @@ pub(crate) async fn record(root: &Path, args: &crate::cli::Record) -> Result<u8>
     Ok(0)
 }
 
-pub(crate) fn log(root: &Path, contract: Option<&str>, json: bool) -> Result<u8> {
-    let review = Review::existing(root)?;
+pub(crate) fn log(state: &Path, contract: Option<&str>, json: bool) -> Result<u8> {
+    let review = Review::existing(state)?;
     let shown = |name: &str| contract.is_none_or(|contract| contract == name);
     let mut out = BufWriter::new(io::stdout().lock());
     if json {
@@ -904,29 +942,6 @@ fn diff(path: &str, rev: u64, before: &str, after: &str) -> String {
         .to_string()
 }
 
-fn span(text: &str) -> Result<SpanRequest> {
-    if let Some((path, lines)) = text.rsplit_once(':')
-        && !lines.is_empty()
-        && lines.chars().all(|c| c.is_ascii_digit() || c == '-')
-    {
-        let (start, end) = lines.split_once('-').unwrap_or((lines, lines));
-        let start: usize = start
-            .parse()
-            .with_context(|| format!("invalid line range in {text}"))?;
-        let end: usize = end
-            .parse()
-            .with_context(|| format!("invalid line range in {text}"))?;
-        return Ok(SpanRequest {
-            path: PathBuf::from(path),
-            lines: Some((start, end)),
-        });
-    }
-    Ok(SpanRequest {
-        path: PathBuf::from(text),
-        lines: None,
-    })
-}
-
 fn span_text(span: &review::Span) -> String {
     match span.lines {
         Some([start, end]) if start == end => format!("{}:{start}", span.path.display()),
@@ -951,9 +966,9 @@ fn check_command(revision: &Revision, contract: Option<&str>) -> String {
         command.push_str(" --contract ");
         command.push_str(contract);
     }
-    for path in &revision.context {
+    for request in &revision.context {
         command.push_str(" --context ");
-        command.push_str(&path.display().to_string());
+        command.push_str(&request.to_string());
     }
     command
 }

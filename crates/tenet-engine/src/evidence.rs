@@ -55,7 +55,13 @@ impl Plan {
                 &mut retained_bytes,
                 max_capture_bytes,
             )?;
-            changes.insert(change.path.clone(), Ok(change.clone()));
+            // A file that cannot supply its named lines is captured as an error, as an unreadable
+            // selected file is.
+            let captured = match self.excerpts.get(&change.path) {
+                Some(excerpt) => excerpt.contents().map(|_| change.clone()),
+                None => Ok(change.clone()),
+            };
+            changes.insert(change.path.clone(), captured);
         }
         for path in &self.files {
             tokio::task::yield_now().await;
@@ -125,7 +131,8 @@ impl EvidencePacket<'_> {
 
     /// The model input for one file's check; an empty file has none. When the complete input
     /// exceeds the limit, prior and then resulting contents are left out, but only when the patch
-    /// remains to show the change.
+    /// remains to show the change. Lines of the file named with `--context` stand in for its
+    /// resulting contents where they fit.
     pub fn file_input(
         &self,
         contract: &tenet_contracts::Contract,
@@ -140,8 +147,8 @@ impl EvidencePacket<'_> {
             .context
             .iter()
             .filter(|support| support.path != change.path)
-            .map(Change::current_input)
-            .collect();
+            .map(|support| self.plan.context_input(support))
+            .collect::<Result<_>>()?;
         let mut state = serde_json::json!({
             "contract": contract.body,
             "change": change,
@@ -150,6 +157,7 @@ impl EvidencePacket<'_> {
         });
         let mut omitted = Vec::new();
         let patched = !change.patch.is_empty();
+        let excerpt = self.plan.excerpts.get(&change.path);
         for (part, present) in [
             (Omitted::Before, change.before.is_some() && patched),
             (Omitted::Contents, change.after.is_some() && patched),
@@ -157,11 +165,23 @@ impl EvidencePacket<'_> {
             if !present || serde_json::to_vec(&state)?.len() <= crate::MAX_FILE_BYTES {
                 continue;
             }
-            let slot = match part {
-                Omitted::Before => &mut state["change"]["before"],
-                Omitted::Contents => &mut state["files"][0]["contents"],
-            };
-            *slot = crate::change::omitted("too large; judge from the patch");
+            let too_large = crate::change::omitted("too large; judge from the patch");
+            match part {
+                Omitted::Before => state["change"]["before"] = too_large,
+                Omitted::Contents => {
+                    state["files"][0]["contents"] = too_large;
+                    // The named lines stand in for the contents only where they fit.
+                    if let Some(excerpt) = excerpt {
+                        let placeholder = std::mem::replace(
+                            &mut state["files"][0]["contents"],
+                            excerpt.contents()?,
+                        );
+                        if serde_json::to_vec(&state)?.len() > crate::MAX_FILE_BYTES {
+                            state["files"][0]["contents"] = placeholder;
+                        }
+                    }
+                }
+            }
             omitted.push(part);
         }
         crate::change::check_size(
@@ -191,6 +211,9 @@ impl EvidencePacket<'_> {
                             Mode::Diff => change.changed.clone(),
                             Mode::Full => Vec::new(),
                         },
+                        excerpt: (self.plan.excerpts.get(path))
+                            .map(|excerpt| excerpt.lines.clone())
+                            .unwrap_or_default(),
                     },
                     Err(error) => CapturedFile {
                         path: path.clone(),
@@ -199,6 +222,7 @@ impl EvidencePacket<'_> {
                         after: None,
                         error: Some(format!("{error:#}")),
                         changed: Vec::new(),
+                        excerpt: Vec::new(),
                     },
                 },
             })
@@ -206,10 +230,11 @@ impl EvidencePacket<'_> {
     }
 
     /// Identify everything one contract's assessment covers: the contract document, mode, requested
-    /// scope, and every selected and supporting file. A full check also covers the scoped inventory,
-    /// since a file that joins the scope is unverified. A diff check assumes the base complies, so a
-    /// file the base gains outside the change leaves its input unchanged. Model settings are not
-    /// part of it, so a record keeps applying to the code it describes.
+    /// scope, and every selected and supporting file, with the lines of any excerpt. A
+    /// full check also covers the scoped inventory, since a file that joins the scope is
+    /// unverified. A diff check assumes the base complies, so a file the base gains outside the
+    /// change leaves its input unchanged. Model settings are not part of it, so a record keeps
+    /// applying to the code it describes.
     pub fn input_key(&self, contract: &tenet_contracts::Contract) -> String {
         let scope = Scope::new(self.plan, contract);
         let inventory = (self.plan.mode == Mode::Full).then_some(scope.inventory);
@@ -284,7 +309,7 @@ mod tests {
         let root = fixture()?;
         fs::write(root.path().join("file.rs"), "x".repeat(1000))?;
         let mut plan =
-            plan(root.path(), &Selection::default())?.with_context(&["file.rs".into()])?;
+            plan(root.path(), &Selection::default())?.with_context(&["file.rs".parse()?])?;
         let evidence = plan.capture_with_limits(1500, 4096).await?;
         assert_eq!(evidence.changes.len(), 1);
         drop(evidence);

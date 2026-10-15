@@ -1,6 +1,6 @@
 use tenet_engine::{
-    ContextSummary, ContractState, ContractStatus, MAX_FILE_BYTES, Omitted, Outcome, Pending,
-    Status, Summary, review::Answer,
+    ContextSummary, ContractState, ContractStatus, Coverage, MAX_FILE_BYTES, Omitted, Outcome,
+    Pending, RequestFailure, Status, Summary, review::Answer,
 };
 
 pub(super) fn status(state: Status) -> &'static str {
@@ -106,6 +106,46 @@ fn upper(status: ContractStatus) -> &'static str {
         ContractStatus::Failed => "FAILED",
         ContractStatus::Unresolved => "UNRESOLVED",
     }
+}
+
+/// A failed request's kind and whether a rerun may answer it.
+pub(super) fn request_failure(failure: RequestFailure) -> String {
+    let retry = if failure.retryable() {
+        "retryable"
+    } else {
+        "not retryable"
+    };
+    format!("{}, {retry}", failure.kind().as_str())
+}
+
+/// The changed files no contract governs, when there are any.
+pub(super) fn coverage(coverage: &Coverage) -> Option<String> {
+    let files = |count: usize| format!("{count} changed file{}", if count == 1 { "" } else { "s" });
+    if !coverage.governed && coverage.changed_files > 0 {
+        return Some(format!(
+            "No contract governs this change: {}",
+            files(coverage.changed_files)
+        ));
+    }
+    let ungoverned = &coverage.ungoverned_files;
+    if ungoverned.is_empty() {
+        return None;
+    }
+    let shown = ungoverned
+        .iter()
+        .take(5)
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = match ungoverned.len().saturating_sub(5) {
+        0 => String::new(),
+        more => format!(" and {more} more"),
+    };
+    Some(format!(
+        "No contract governs {} of {}: {shown}{more}",
+        ungoverned.len(),
+        files(coverage.changed_files)
+    ))
 }
 
 /// What a file check left out of its model input.

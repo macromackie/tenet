@@ -65,7 +65,7 @@ struct Export<'a> {
 impl Serialize for Export<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let plan = self.evidence.plan;
-        let mut state = serializer.serialize_struct("Evidence", 15)?;
+        let mut state = serializer.serialize_struct("Evidence", 16)?;
         state.serialize_field("version", &2)?;
         state.serialize_field("kind", "tenet_evidence")?;
         state.serialize_field("hash_algorithm", "blake3")?;
@@ -82,6 +82,10 @@ impl Serialize for Export<'_> {
             "support_files",
             &Sequence(plan.context.iter().map(|change| &change.path)),
         )?;
+        let excerpts: std::collections::BTreeMap<_, _> = (plan.excerpts.iter())
+            .map(|(path, excerpt)| (path, &excerpt.lines))
+            .collect();
+        state.serialize_field("excerpts", &excerpts)?;
         state.serialize_field(
             "inventory",
             &Sequence(

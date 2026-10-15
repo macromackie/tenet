@@ -3,6 +3,7 @@ mod cli;
 mod commands;
 mod diagnostics;
 mod progress;
+mod provider;
 mod report_format;
 mod reporter;
 mod review;
@@ -37,15 +38,15 @@ async fn main() -> ExitCode {
             ExitCode::from(2)
         }
         Err(error) => {
+            // JSON output carries the error too, but an agent may read only stderr.
             if json {
                 let _ = writeln!(
                     io::stdout(),
                     "{}",
                     serde_json::json!({"version": 4, "type": "error", "message": format!("{error:#}"), "exit_code": 2})
                 );
-            } else {
-                let _ = diagnostics::error(&cli.root, &error, &mut io::stderr());
             }
+            let _ = diagnostics::error(&cli.root, &error, &mut io::stderr());
             ExitCode::from(2)
         }
     }

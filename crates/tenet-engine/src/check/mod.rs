@@ -1,10 +1,13 @@
 mod assess;
 mod conclusion;
 pub(crate) mod context;
+mod predict;
 mod prompt;
 
+pub use predict::{Prediction, predict};
+
 use crate::{
-    CheckResult, ContractResult, ContractState, Event, EvidencePacket, Summary,
+    CheckResult, ContractResult, ContractState, Event, EvidencePacket, FailureKind, Summary,
     review::{Answer, Checked, Concluded, Conclusion, FileResult, Review},
 };
 use anyhow::{Result, ensure};
@@ -19,6 +22,9 @@ pub struct Options {
     pub jobs: usize,
     pub max_requests: usize,
     pub min_confidence: f64,
+    /// Names the kind of failure an evaluator error reports. The provider's adapter knows its
+    /// errors; the engine decides what each kind means for the review.
+    pub classify: fn(&anyhow::Error) -> FailureKind,
 }
 
 /// Assess every planned contract against captured evidence. Answers to requests identical to
@@ -157,6 +163,7 @@ pub fn carry(
             routing: None,
             evidence_hash: None,
             error: c.error.clone(),
+            failure: None,
             conflicting_files: c.conflicting_files.clone(),
             request: None,
             cached: true,
@@ -226,6 +233,7 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
             requests: self.requests,
             max_requests: self.options.max_requests,
             min_confidence: self.options.min_confidence,
+            classify: self.options.classify,
             local_requests: &local_requests,
             refused: &refused,
         };
@@ -256,6 +264,7 @@ impl<E: Evaluator, F: Fn(Event) -> Result<()>> Pool<'_, E, F> {
             requests: self.requests,
             max_requests: self.options.max_requests,
             min_confidence: self.options.min_confidence,
+            classify: self.options.classify,
             local_requests: &local_requests,
             refused: &refused,
         }

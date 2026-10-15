@@ -33,7 +33,7 @@ pub struct Revision {
     pub base: Option<String>,
     pub paths: Vec<PathBuf>,
     pub contract: Option<String>,
-    pub context: Vec<PathBuf>,
+    pub context: Vec<crate::SpanRequest>,
     pub mode: Mode,
     pub base_oid: Option<String>,
     pub head_oid: Option<String>,
@@ -159,6 +159,11 @@ pub struct CapturedFile {
     /// be held to the change. Input keys leave them out; `before` and `after` determine them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub changed: Vec<[usize; 2]>,
+    /// For a file named with `--context PATH:START-END`, the resulting lines the check supplied,
+    /// so the input key holds them and a record cites a supporting file only within them. Empty
+    /// for a whole file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excerpt: Vec<[usize; 2]>,
 }
 
 impl CapturedFile {

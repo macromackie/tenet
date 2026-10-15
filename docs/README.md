@@ -57,3 +57,4 @@ each pending contract by recording a conclusion with evidence. Editing a scoped 
 Jev through OpenRouter or TypeSafe; selected code and contract rules go to that provider.
 
 Use [`tenet export`](./export.md) to export selected contracts and source offline for a review or a focused question.
+Scripts can read every command's output as versioned [JSON](./json.md).

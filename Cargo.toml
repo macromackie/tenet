@@ -3,7 +3,7 @@ members = ["crates/tenet", "crates/tenet-contracts", "crates/tenet-engine"]
 resolver = "3"
 
 [workspace.package]
-version = "0.9.0"
+version = "0.10.0"
 edition = "2024"
 rust-version = "1.98"
 publish = false
@@ -61,6 +61,11 @@ checksum = "sha256"
 pr-run-mode = "upload"
 plan-jobs = ["./check"]
 global-artifacts-jobs = ["./release-smoke"]
+
+# Intel runners built releases 1.5 to 3 times slower than Apple Silicon runners, so Apple Silicon cross-compiles the
+# Intel binary. Release smoke tests still run it on an Intel runner.
+[workspace.metadata.dist.github-custom-runners]
+x86_64-apple-darwin = "macos-14"
 
 [workspace.metadata.dist.github-action-commits]
 "actions/checkout" = "d23441a48e516b6c34aea4fa41551a30e30af803"

@@ -14,7 +14,9 @@ use tenet_engine::{
     ContractState, ContractStatus, Event, Pending, Stage, Status, Summary, review::Answer,
 };
 
-use crate::report_format::{Model, contract_counts, counts, marker, paint, status};
+use crate::report_format::{
+    Model, contract_counts, counts, marker, paint, request_failure, status,
+};
 use crate::{cli::ReporterKind, diagnostics};
 
 pub(crate) struct Reporter<'a> {
@@ -67,12 +69,41 @@ impl<'a> Reporter<'a> {
     pub(crate) fn emit(&mut self, event: Event) -> Result<()> {
         self.track(&event);
         if self.kind == ReporterKind::Jsonl {
+            let failed = match &event {
+                Event::Result { result } => result.failure.map(|failure| {
+                    (
+                        &result.contract,
+                        result.path.as_str(),
+                        failure,
+                        &result.reason,
+                    )
+                }),
+                Event::ContractFinished {
+                    contract,
+                    conclusion: Some(conclusion),
+                    ..
+                } => conclusion
+                    .failure
+                    .map(|failure| (contract, "combined assessment", failure, &conclusion.error)),
+                _ => None,
+            }
+            .map(|(contract, subject, request, message)| {
+                format!(
+                    "error: {contract} > {subject}: request failed ({}): {}",
+                    request_failure(request),
+                    message.as_deref().unwrap_or_default()
+                )
+            });
             let mut value = serde_json::to_value(event)?;
             value["version"] = 4.into();
             let mut out = io::stdout().lock();
             serde_json::to_writer(&mut out, &value)?;
             writeln!(out)?;
             out.flush()?;
+            // An agent that reads only stderr still learns which requests failed.
+            if let Some(line) = failed {
+                writeln!(io::stderr(), "{line}")?;
+            }
             return Ok(());
         }
         let redraw = matches!(
@@ -235,7 +266,11 @@ impl<'a> Reporter<'a> {
                         ))?;
                     }
                     if let Some(error) = &conclusion.error {
-                        self.term.write_line(&format!("  {error}"))?;
+                        let kind = conclusion
+                            .failure
+                            .map(|request| format!(" ({})", request_failure(request)))
+                            .unwrap_or_default();
+                        self.term.write_line(&format!("  {error}{kind}"))?;
                     } else {
                         self.term.write_line(&format!("  {}", conclusion.reason))?;
                     }
@@ -252,18 +287,26 @@ impl<'a> Reporter<'a> {
                         crate::report_format::context(context)
                     ))?;
                 }
-                if let Some(issue) = progress
+                let mut issues = progress
                     .issues
                     .iter()
-                    .find(|r| matches!(r.status, Status::Error | Status::Incomplete))
-                {
+                    .filter(|r| matches!(r.status, Status::Error | Status::Incomplete));
+                if let Some(issue) = issues.next() {
+                    let more = match issues.count() {
+                        0 => String::new(),
+                        more => format!("; {more} more could not complete"),
+                    };
                     self.term.write_line(&format!(
-                        "  {}: {}",
+                        "  {}: {}{}{more}",
                         issue.path,
                         issue
                             .reason
                             .as_deref()
-                            .unwrap_or("check could not complete")
+                            .unwrap_or("check could not complete"),
+                        issue
+                            .failure
+                            .map(|request| format!(" ({})", request_failure(request)))
+                            .unwrap_or_default()
                     ))?;
                 }
             }
@@ -274,6 +317,7 @@ impl<'a> Reporter<'a> {
                 summary,
                 revision,
                 pending,
+                coverage,
                 ..
             } => {
                 self.running = false;
@@ -290,9 +334,12 @@ impl<'a> Reporter<'a> {
                     "\n Contracts  {}{recorded}",
                     contract_counts(&self.contract_statuses, self.contracts.len())
                 ))?;
-                if self.diff && self.contracts.is_empty() {
-                    self.term
-                        .write_line(" No contract's scope has changes since the base.")?;
+                match coverage.as_ref().and_then(crate::report_format::coverage) {
+                    Some(coverage) => self.term.write_line(&format!(" {coverage}"))?,
+                    None if self.diff && self.contracts.is_empty() => self
+                        .term
+                        .write_line(" No contract's scope has changes since the base.")?,
+                    None => {}
                 }
                 for path in &self.deleted {
                     self.term.write_line(&format!(
@@ -317,8 +364,18 @@ impl<'a> Reporter<'a> {
                 } else {
                     String::new()
                 };
+                // Only a check that keeps a revision keeps answers for a rerun to reuse.
+                let failed = match (summary.request_failures, summary.retryable_failures) {
+                    (0, _) => String::new(),
+                    (failures, retryable) if retryable > 0 && revision.is_some() => format!(
+                        " · {failures} failed ({retryable} retryable); a rerun sends only failed requests"
+                    ),
+                    (failures, retryable) => {
+                        format!(" · {failures} failed ({retryable} retryable)")
+                    }
+                };
                 self.term.write_line(&format!(
-                    " Requests   {}{cached}{over_budget}\n Duration   {:.2}s",
+                    " Requests   {}{cached}{over_budget}{failed}\n Duration   {:.2}s",
                     summary.requests,
                     summary.elapsed_ms as f64 / 1000.0
                 ))?;
