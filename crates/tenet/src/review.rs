@@ -873,7 +873,7 @@ fn interdiff(review: &Review, old: &Assessment, entry: &CurrentContract) -> Resu
     let mut changes = Vec::new();
     let path = entry.contract.path.display().to_string();
     let forgotten = format!(
-        "contents from r{} are not in .tenet/blobs, which keeps files up to {} MiB",
+        "contents from r{} are not in the review state, which keeps files up to {} MiB",
         old.rev,
         MAX_BLOB_BYTES >> 20
     );

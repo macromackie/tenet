@@ -10,11 +10,12 @@ use ev_grep_jev::Jev;
 use tenet_engine::{
     Coverage, Event, Exclusion, Mode, Options, PreparedSnapshot, Review, RunInfo, Selection,
     Status,
+    adoption::{self, AddRequest, Destination, Kind, SkillDestination, SkillRequest},
     review::{CheckRequest, Checked},
 };
 
 use crate::{
-    cli::{Check, Cli, Command, Contracts, Input, ReporterKind, Run},
+    cli::{Check, Cli, Command, Contracts, Input, ReporterKind, Run, Skills},
     provider::Model,
     reporter::Reporter,
 };
@@ -23,18 +24,92 @@ pub(crate) async fn execute(cli: &Cli) -> Result<u8> {
     match &cli.command {
         Command::Validate => {
             let contracts = tenet_engine::discover_contracts(&cli.root)?;
-            ensure!(!contracts.is_empty(), "no contracts found");
-            let installed = tenet_engine::adoption::validate_lock(&cli.root)?;
-            writeln!(io::stdout(), "{} contracts valid", contracts.len())?;
-            if installed > 0 {
-                writeln!(io::stdout(), "{installed} installed contracts recorded")?;
+            let recorded = tenet_engine::adoption::validate_lock(&cli.root)?;
+            // A project may install skills without having contracts of its own.
+            ensure!(
+                !contracts.is_empty() || recorded.skills > 0,
+                "no contracts found"
+            );
+            if !contracts.is_empty() {
+                writeln!(io::stdout(), "{} contracts valid", contracts.len())?;
+            }
+            if recorded.contracts > 0 {
+                writeln!(
+                    io::stdout(),
+                    "{} installed contracts recorded",
+                    recorded.contracts
+                )?;
+            }
+            if recorded.skills > 0 {
+                writeln!(
+                    io::stdout(),
+                    "{} installed skills recorded",
+                    recorded.skills
+                )?;
             }
             Ok(0)
         }
+        Command::Skills { command } => match command {
+            Skills::Add {
+                spec,
+                dir,
+                name,
+                path,
+                sources,
+            } => {
+                let destination = match path {
+                    Some(path) => SkillDestination::Existing(path),
+                    None => SkillDestination::Directory {
+                        directory: dir,
+                        name: name.as_deref(),
+                    },
+                };
+                let added = adoption::add_skill(
+                    &cli.root,
+                    &SkillRequest {
+                        spec,
+                        destination,
+                        sources,
+                    },
+                )?;
+                crate::adoption::added(&added, "tenet validate")
+            }
+            Skills::Locked(command) => crate::adoption::execute(&cli.root, Kind::Skills, command),
+        },
         Command::Contracts { command } => {
             match command {
-                Contracts::Adoption(command) => {
-                    return crate::adoption::execute(&cli.root, command);
+                Contracts::Add {
+                    spec,
+                    scope,
+                    path,
+                    name,
+                    number,
+                    sources,
+                } => {
+                    let destination = match (scope, path) {
+                        (_, Some(path)) => Destination::Existing(path),
+                        (Some(scope), None) => Destination::Scope {
+                            scope,
+                            name: name.as_deref(),
+                            number: *number,
+                        },
+                        (None, None) => anyhow::bail!("add requires --scope or --path"),
+                    };
+                    let added = adoption::add(
+                        &cli.root,
+                        &AddRequest {
+                            spec,
+                            destination,
+                            sources,
+                        },
+                    )?;
+                    return crate::adoption::added(
+                        &added,
+                        &format!("tenet check --contract {}", added.name),
+                    );
+                }
+                Contracts::Locked(command) => {
+                    return crate::adoption::execute(&cli.root, Kind::Contracts, command);
                 }
                 Contracts::List { path, base, json } => {
                     if let Some(path) = path {
@@ -171,7 +246,7 @@ async fn evaluate(root: &Path, state: &Path, check: &Check) -> Result<u8> {
     } else {
         run.reporter
     };
-    let reporter = RefCell::new(Reporter::new(kind, &plan.contracts));
+    let reporter = RefCell::new(Reporter::new(kind, &plan.contracts, state));
     if check.dry_run {
         let evidence = plan.capture().await?;
         // Answers a check would reuse; reading the review writes nothing.

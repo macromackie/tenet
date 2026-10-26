@@ -48,7 +48,8 @@ async function listUsers() {
 
 `name`, `message`, and a nonempty body are required. Names are unique throughout the project.
 Numbers have at least three digits, start at 001, and are unique within a scope. `paths` is optional; see
-[Scope](#scope). Other frontmatter fields are errors.
+[Scope](#scope). `requires-tenet: X.Y.Z` is optional and names the oldest Tenet that reads the contract; an older
+Tenet refuses it. Other frontmatter fields are errors.
 
 Use `Rules` and `Checks` for ordinary contracts. Other headings are welcome; Tenet reads the whole body,
 including rationale, exceptions, and ordinary code examples. Keep these inline where possible.
@@ -114,7 +115,9 @@ tenet contracts show database-failures
 number in the scope and keeps the library name unless the project already uses it; `--name` chooses another.
 `.tenet.lock` records where each copy came from. Put local exceptions under a final `## Local adaptations` heading so
 updates merge cleanly. Lines that begin with `<<<<<<< ` or `>>>>>>> ` are unresolved conflict markers and fail
-validation. See [Guidance](./guidance.md).
+validation. A library contract may also ship tool configuration in `assets/<tool>/`. Such a contract declares
+`requires-tenet: 0.11.0`, and `add` copies its assets into the contract's folder as read-only files. See
+[Guidance](./guidance.md).
 
 ## Examples
 

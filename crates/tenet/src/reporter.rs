@@ -22,6 +22,8 @@ use crate::{cli::ReporterKind, diagnostics};
 pub(crate) struct Reporter<'a> {
     kind: ReporterKind,
     contracts: &'a [Contract],
+    /// The review state directory, named with the revision a check appends.
+    state: &'a std::path::Path,
     term: Term,
     live: bool,
     running: bool,
@@ -41,7 +43,11 @@ pub(crate) struct Reporter<'a> {
 }
 
 impl<'a> Reporter<'a> {
-    pub(crate) fn new(kind: ReporterKind, contracts: &'a [Contract]) -> Self {
+    pub(crate) fn new(
+        kind: ReporterKind,
+        contracts: &'a [Contract],
+        state: &'a std::path::Path,
+    ) -> Self {
         let term = Term::buffered_stderr();
         let live = term.is_term()
             && std::env::var_os("CI").is_none()
@@ -50,6 +56,7 @@ impl<'a> Reporter<'a> {
         Self {
             kind,
             contracts,
+            state,
             term,
             live,
             running: false,
@@ -380,8 +387,10 @@ impl<'a> Reporter<'a> {
                     summary.elapsed_ms as f64 / 1000.0
                 ))?;
                 if let Some(revision) = revision {
-                    self.term
-                        .write_line(&format!(" Revision   r{revision} in .tenet/events.jsonl"))?;
+                    self.term.write_line(&format!(
+                        " Revision   r{revision} in {}",
+                        self.state.join("events.jsonl").display()
+                    ))?;
                 }
                 if summary.cancelled {
                     self.term

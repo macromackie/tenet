@@ -1,7 +1,10 @@
-//! Installing shared contracts and taking their upstream changes through `.tenet.lock`.
+//! Installing shared contracts and skills through `.tenet.lock`, and taking their upstream changes.
 //!
 //! Checking never reads the lock. Only these operations touch the network, and nothing persists outside the project.
 
+mod add;
+mod kind;
+mod unit;
 mod upstream;
 
 use std::{
@@ -12,35 +15,46 @@ use std::{
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
-use tenet_contracts::{Entry, LOCK_FILE, Lock, content_hash, is_kebab, name_of, with_name};
+use tenet_contracts::{LOCK_FILE, Lock, conflict_marker, name_of, validate_skill, with_name};
 
-use crate::{discovery, git};
-use upstream::Upstream;
+use crate::git;
+pub use add::{AddRequest, Destination, SkillDestination, SkillRequest, add, add_skill};
+pub use kind::Kind;
+use kind::Rule;
+use unit::Unit;
+use upstream::{Files, Upstream};
 
-/// Where `add` puts a contract: a new numbered folder in a scope, or an existing copy recorded as is.
-pub enum Destination<'a> {
-    Scope {
-        scope: &'a Path,
-        name: Option<&'a str>,
-        number: Option<u32>,
-    },
-    Existing(&'a Path),
+/// The library entry an installed copy came from, written as its `contract` or `skill` name.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Origin {
+    Contract(String),
+    Skill(String),
 }
 
-pub struct AddRequest<'a> {
-    /// `SOURCE/NAME[@REF]`.
-    pub spec: &'a str,
-    pub destination: Destination<'a>,
-    /// `ALIAS=URL` registrations for non-default sources.
-    pub sources: &'a [String],
+impl Origin {
+    pub fn kind(&self) -> Kind {
+        match self {
+            Origin::Contract(_) => Kind::Contracts,
+            Origin::Skill(_) => Kind::Skills,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Origin::Contract(name) | Origin::Skill(name) => name,
+        }
+    }
 }
 
 #[derive(Serialize)]
 pub struct Added {
+    /// The lock key: a contract's CONTRACT.md or a skill's folder.
     pub path: PathBuf,
     pub name: String,
     pub source: String,
-    pub contract: String,
+    #[serde(flatten)]
+    pub origin: Origin,
     #[serde(rename = "ref")]
     pub reference: String,
     pub commit: String,
@@ -60,6 +74,7 @@ pub enum LocalState {
 pub enum Change {
     Current,
     Changed,
+    Added,
     Removed,
 }
 
@@ -67,31 +82,45 @@ pub enum Change {
 pub struct Newest {
     #[serde(rename = "ref")]
     pub reference: String,
+    /// The CONTRACT.md or SKILL.md, or the whole copy when upstream removed it.
     pub change: Change,
+    /// The other files upstream changed, added, or removed, relative to the copy's folder.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub files: BTreeMap<PathBuf, Change>,
 }
 
 #[derive(Serialize)]
 pub struct Status {
+    /// The lock key: a contract's CONTRACT.md or a skill's folder.
     pub path: PathBuf,
-    /// The local name; `None` when the file is missing.
+    /// The local name; `None` when the CONTRACT.md or SKILL.md is missing.
     pub name: Option<String>,
     pub source: String,
-    pub contract: String,
+    #[serde(flatten)]
+    pub origin: Origin,
     #[serde(rename = "ref")]
     pub reference: String,
+    /// The CONTRACT.md or SKILL.md.
     pub state: LocalState,
+    /// The other locked files that are edited or missing, relative to the copy's folder.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub files: BTreeMap<PathBuf, LocalState>,
     /// `None` when checked offline.
     pub newest: Option<Newest>,
 }
 
 impl Status {
-    /// True when the copy is missing or upstream changed or removed it.
+    /// True when a file is missing, a read-only file is edited, or upstream changed the copy.
     pub fn needs_attention(&self) -> bool {
+        let kind = self.origin.kind();
         self.state == LocalState::Missing
+            || self.files.iter().any(|(path, state)| {
+                *state == LocalState::Missing || kind.rule(path) == Rule::ReadOnly
+            })
             || self
                 .newest
                 .as_ref()
-                .is_some_and(|newest| newest.change != Change::Current)
+                .is_some_and(|newest| newest.change != Change::Current || !newest.files.is_empty())
     }
 }
 
@@ -102,6 +131,7 @@ pub enum Outcome {
     Replaced,
     Merged,
     Conflict { regions: u32 },
+    Added,
     Removed,
 }
 
@@ -110,8 +140,21 @@ pub struct Updated {
     pub path: PathBuf,
     pub from: String,
     pub to: String,
+    /// The CONTRACT.md or SKILL.md, or the whole copy when upstream removed it.
     #[serde(flatten)]
     pub outcome: Outcome,
+    /// The other files that did not stay unchanged, relative to the copy's folder.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub files: BTreeMap<PathBuf, Outcome>,
+}
+
+impl Updated {
+    /// True when the update wrote a conflict or upstream removed the copy or one of its files.
+    pub fn needs_attention(&self) -> bool {
+        std::iter::once(&self.outcome)
+            .chain(self.files.values())
+            .any(|outcome| matches!(outcome, Outcome::Conflict { .. } | Outcome::Removed))
+    }
 }
 
 #[derive(Serialize)]
@@ -122,178 +165,80 @@ pub struct Version {
     pub text: String,
 }
 
-/// The three texts behind an update, each rendered with the local name.
+/// The texts behind an update, the CONTRACT.md or SKILL.md rendered with the local name.
 #[derive(Serialize)]
 pub struct Comparison {
     pub path: PathBuf,
     pub base: Version,
-    /// `None` when upstream removed the contract.
+    /// `None` when upstream removed the copy.
     pub upstream: Option<Version>,
     pub local: String,
+    /// The other files that differ between the three versions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<FileComparison>,
 }
 
-pub fn add(root: &Path, request: &AddRequest<'_>) -> Result<Added> {
-    let (source, contract, reference) = parse_spec(request.spec)?;
-    let mut lock = read_lock(root)?;
-    for registration in request.sources {
-        let (alias, url) = registration
-            .split_once('=')
-            .context("--source expects ALIAS=URL")?;
-        ensure!(is_kebab(alias), "source alias must be lowercase kebab-case");
-        ensure!(
-            !url.is_empty() && !url.starts_with('-'),
-            "invalid URL for source {alias}"
-        );
-        // `tenet` always names the public library, even before a lock exists.
-        if let Some(existing) = lock.sources.get(alias) {
-            ensure!(
-                existing == url,
-                "source {alias} already names {existing}; register {url} under another alias, \
-                 as in --source local={url} with local/{contract}"
-            );
-        }
-        lock.sources.insert(alias.into(), url.into());
-    }
-    let url = lock.sources.get(source).with_context(|| {
-        format!("unknown source {source}; register it with --source {source}=URL")
-    })?;
-    let upstream = Upstream::clone(url)?;
-    let revision = upstream.resolve(reference)?;
-    let text = upstream
-        .contract(&revision.commit, contract)?
-        .with_context(|| {
-            format!(
-                "{source}/{contract} does not exist at {}",
-                revision.reference
-            )
-        })?;
-    let existing = discovery::discover_contracts(root)?;
-
-    let (path, name, document) = match request.destination {
-        Destination::Scope {
-            scope,
-            name,
-            number,
-        } => {
-            let scope = relative(scope)?;
-            ensure!(
-                root.join(&scope).is_dir(),
-                "scope {} is not a directory",
-                scope.display()
-            );
-            let name = name.unwrap_or(contract);
-            ensure!(
-                existing.iter().all(|c| c.name != name),
-                "contract name {name} is already used; choose another with --name {}-{contract}",
-                scope
-                    .file_name()
-                    .map_or("local".into(), |n| n.to_string_lossy())
-            );
-            let in_scope = existing.iter().filter(|c| c.scope == scope);
-            let number = match number {
-                Some(number) => number,
-                None => in_scope.clone().map(|c| c.number).max().unwrap_or(0) + 1,
-            };
-            ensure!(
-                in_scope.clone().all(|c| c.number != number),
-                "contract number {number:03} is already used in {}",
-                scope.display()
-            );
-            let path = scope
-                .join(".contracts")
-                .join(format!("{number:03}-{name}"))
-                .join("CONTRACT.md");
-            ensure!(
-                !root.join(&path).exists(),
-                "{} already exists",
-                path.display()
-            );
-            let document = with_name(&text, name)?;
-            tenet_contracts::parse(&path, &document)?;
-            (path, name.to_owned(), Some(document))
-        }
-        Destination::Existing(path) => {
-            let path = key(path)?;
-            let local = existing
-                .iter()
-                .find(|c| c.path == path)
-                .with_context(|| format!("{} is not a contract in this project", path.display()))?;
-            (path, local.name.clone(), None)
-        }
-    };
-    ensure!(
-        !lock.contracts.contains_key(&path),
-        "{} is already recorded in {LOCK_FILE}",
-        path.display()
-    );
-
-    let written = document.is_some();
-    if let Some(document) = document {
-        let full = root.join(&path);
-        fs::create_dir_all(full.parent().context("contract has no folder")?)?;
-        fs::write(&full, document)?;
-    }
-    lock.contracts.insert(
-        path.clone(),
-        Entry {
-            source: source.into(),
-            contract: contract.into(),
-            reference: revision.reference.clone(),
-            commit: revision.commit.clone(),
-            hash: content_hash(&text)?,
-        },
-    );
-    write_lock(root, &lock)?;
-    Ok(Added {
-        path,
-        name,
-        source: source.into(),
-        contract: contract.into(),
-        reference: revision.reference,
-        commit: revision.commit,
-        written,
-    })
+/// One other file of a copy at the locked release, the newest release, and locally. Bytes that are
+/// not UTF-8 read as replacement characters.
+#[derive(Serialize)]
+pub struct FileComparison {
+    /// Relative to the copy's folder.
+    pub path: PathBuf,
+    /// `None` when the locked release lacks it, so upstream added it.
+    pub base: Option<String>,
+    /// `None` when the newest release lacks it.
+    pub upstream: Option<String>,
+    /// `None` when the local file is missing.
+    pub local: Option<String>,
 }
 
-pub fn outdated(root: &Path, offline: bool) -> Result<Vec<Status>> {
+/// What `validate` found recorded in the lock.
+pub struct Recorded {
+    pub contracts: usize,
+    pub skills: usize,
+}
+
+pub fn outdated(root: &Path, kind: Kind, offline: bool) -> Result<Vec<Status>> {
     let lock = read_lock(root)?;
     let mut libraries = Libraries::new(&lock);
     let mut statuses = Vec::new();
-    for (path, entry) in &lock.contracts {
-        let full = root.join(path);
-        let (state, name) = if full.exists() {
-            let text = fs::read_to_string(&full)?;
-            let state = if content_hash(&text)? == entry.hash {
-                LocalState::Unchanged
-            } else {
-                LocalState::Edited
-            };
-            (state, Some(name_of(&text)?.to_owned()))
-        } else {
-            (LocalState::Missing, None)
+    for unit in Unit::all(&lock, kind)? {
+        let (state, mut files) = unit.split(unit.local_states(root)?)?;
+        files.retain(|_, state| *state != LocalState::Unchanged);
+        let name = match state {
+            LocalState::Missing => None,
+            LocalState::Unchanged | LocalState::Edited => {
+                Some(name_of(&read_text(root, &unit.document())?)?.to_owned())
+            }
         };
         let newest = if offline {
             None
         } else {
-            let upstream = libraries.get(&entry.source)?;
-            let revision = upstream.newest(&entry.reference)?;
-            let change = match upstream.contract(&revision.commit, &entry.contract)? {
-                None => Change::Removed,
-                Some(text) if content_hash(&text)? == entry.hash => Change::Current,
-                Some(_) => Change::Changed,
-            };
+            let upstream = libraries.get(&unit.source)?;
+            let revision = upstream.newest(&unit.reference)?;
+            let (change, files) =
+                match upstream.folder(&revision.commit, kind, unit.origin.name())? {
+                    None => (Change::Removed, BTreeMap::new()),
+                    Some(next) => {
+                        let (change, mut files) = unit.split(unit.changes(&next)?)?;
+                        files.retain(|_, change| *change != Change::Current);
+                        (change, files)
+                    }
+                };
             Some(Newest {
                 reference: revision.reference,
                 change,
+                files,
             })
         };
         statuses.push(Status {
-            path: path.clone(),
+            path: unit.key,
             name,
-            source: entry.source.clone(),
-            contract: entry.contract.clone(),
-            reference: entry.reference.clone(),
+            source: unit.source,
+            origin: unit.origin,
+            reference: unit.reference,
             state,
+            files,
             newest,
         });
     }
@@ -301,200 +246,180 @@ pub fn outdated(root: &Path, offline: bool) -> Result<Vec<Status>> {
 }
 
 /// Apply the update rule to the selected entries, then write their files and the lock together.
-pub fn update(root: &Path, paths: &[PathBuf], reference: Option<&str>) -> Result<Vec<Updated>> {
+pub fn update(
+    root: &Path,
+    kind: Kind,
+    paths: &[PathBuf],
+    reference: Option<&str>,
+) -> Result<Vec<Updated>> {
     let mut lock = read_lock(root)?;
+    ensure!(!lock.is_empty(), "nothing is recorded in {LOCK_FILE}");
+    let units = select(&lock, kind, paths)?;
+    let edits = units
+        .iter()
+        .map(|unit| unit.ensure_updatable(root))
+        .collect::<Result<Vec<_>>>()?;
+    let mut tracked = vec![PathBuf::from(LOCK_FILE)];
+    tracked.extend(units.iter().flat_map(Unit::locked_paths));
     ensure!(
-        !lock.contracts.is_empty(),
-        "no contracts are recorded in {LOCK_FILE}"
-    );
-    let selected = select(&lock, paths)?;
-    for path in &selected {
-        ensure!(
-            root.join(path).is_file(),
-            "{0} is missing; restore it, fix its path in {LOCK_FILE}, or run `tenet contracts remove {0}`",
-            path.display()
-        );
-    }
-    let status = git::output(
-        root,
-        &[
-            &["status", "--porcelain", "--", LOCK_FILE][..],
-            &selected
-                .iter()
-                .map(|p| p.to_str().context("path is not UTF-8"))
-                .collect::<Result<Vec<_>>>()?,
-        ]
-        .concat(),
-    )
-    .context("tenet contracts update requires a Git checkout")?;
-    ensure!(
-        status.is_empty(),
-        "commit or set aside changes to {LOCK_FILE} and the selected contracts first"
+        !uncommitted(root, kind, &tracked)?,
+        "commit or set aside changes to {LOCK_FILE} and the selected {} first",
+        kind.name()
     );
 
     let mut libraries = Libraries::new(&lock);
     let mut writes = Vec::new();
+    let mut recorded = Vec::new();
     let mut results = Vec::new();
-    for path in selected {
-        let entry = lock.contracts[&path].clone();
-        let upstream = libraries.get(&entry.source)?;
+    for (mut unit, edited) in units.into_iter().zip(edits) {
+        let upstream = libraries.get(&unit.source)?;
         let revision = match reference {
             Some(reference) => upstream.resolve(Some(reference))?,
-            None => upstream.newest(&entry.reference)?,
+            None => upstream.newest(&unit.reference)?,
         };
-        let local = fs::read_to_string(root.join(&path))?;
-        let name = tenet_contracts::parse(&path, &local)?.name;
-        let Some(next) = upstream.contract(&revision.commit, &entry.contract)? else {
+        let name = unit.local_name(root)?;
+        let Some(next) = upstream.folder(&revision.commit, kind, unit.origin.name())? else {
             results.push(Updated {
-                path,
-                from: entry.reference.clone(),
+                path: unit.key,
+                from: unit.reference,
                 to: revision.reference,
                 outcome: Outcome::Removed,
+                files: BTreeMap::new(),
             });
             continue;
         };
-        let next_hash = content_hash(&next)?;
-        let next = with_name(&next, &name)?;
-        tenet_contracts::parse(&path, &next)
-            .with_context(|| format!("{} needs a newer Tenet", revision.reference))?;
-
-        let outcome = if next_hash == entry.hash {
-            Outcome::Unchanged
-        } else if content_hash(&local)? == entry.hash {
-            writes.push((path.clone(), next));
-            Outcome::Replaced
-        } else {
-            let base = upstream
-                .contract(&entry.commit, &entry.contract)?
-                .with_context(|| {
-                    format!(
-                        "the locked commit {} has no {}",
-                        entry.commit, entry.contract
-                    )
-                })?;
-            let merge = upstream::merge(
-                &local,
-                &with_name(&base, &name)?,
-                &next,
-                [
-                    "local",
-                    &format!("base {}", entry.reference),
-                    &format!("upstream {}", revision.reference),
-                ],
-            )?;
-            writes.push((path.clone(), merge.text));
-            if merge.conflicts == 0 {
-                Outcome::Merged
-            } else {
-                Outcome::Conflict {
-                    regions: merge.conflicts,
-                }
-            }
-        };
+        let planned = unit.plan_update(root, &name, &edited, upstream, &revision, next)?;
+        let (outcome, mut files) = unit.split(planned.outcomes)?;
+        files.retain(|_, outcome| *outcome != Outcome::Unchanged);
+        writes.extend(planned.writes);
+        recorded.extend(planned.files.keys().map(|path| unit.folder.join(path)));
         results.push(Updated {
-            path: path.clone(),
-            from: entry.reference.clone(),
+            path: unit.key.clone(),
+            from: unit.reference.clone(),
             to: revision.reference.clone(),
             outcome,
+            files,
         });
-        lock.contracts.insert(
-            path,
-            Entry {
-                reference: revision.reference,
-                commit: revision.commit,
-                hash: next_hash,
-                ..entry
-            },
-        );
+        unit.reference = revision.reference;
+        unit.commit = revision.commit;
+        unit.files = planned.files;
+        unit.store(&mut lock)?;
     }
 
-    for (path, text) in writes {
-        fs::write(root.join(path), text)?;
+    refuse_ignored(root, &recorded)?;
+    for (path, file) in &writes {
+        unit::write(root, path, file)?;
     }
     write_lock(root, &lock)?;
     Ok(results)
 }
 
-/// Return base, newest upstream, and local text for one entry. Works while conflict markers remain.
-pub fn diff(root: &Path, path: &Path) -> Result<Comparison> {
+/// Return base, newest upstream, and local texts for one entry. Works while conflict markers remain.
+pub fn diff(root: &Path, kind: Kind, path: &Path) -> Result<Comparison> {
     let lock = read_lock(root)?;
-    let path = key(path)?;
-    let entry = lock
-        .contracts
-        .get(&path)
-        .with_context(|| format!("{} is not recorded in {LOCK_FILE}", path.display()))?;
-    let local = fs::read_to_string(root.join(&path))
-        .with_context(|| format!("cannot read {}", path.display()))?;
+    let unit = Unit::find(&lock, kind, &kind.key(path)?)?;
+    let document = unit.document();
+    let local = read_text(root, &document)?;
     let name = name_of(&local)?;
     let mut libraries = Libraries::new(&lock);
-    let upstream = libraries.get(&entry.source)?;
+    let upstream = libraries.get(&unit.source)?;
     let base = upstream
-        .contract(&entry.commit, &entry.contract)?
-        .with_context(|| {
-            format!(
-                "the locked commit {} has no {}",
-                entry.commit, entry.contract
-            )
-        })?;
-    let revision = upstream.newest(&entry.reference)?;
-    let newest = upstream
-        .contract(&revision.commit, &entry.contract)?
-        .map(|text| with_name(&text, name))
-        .transpose()?;
+        .folder(&unit.commit, kind, unit.origin.name())?
+        .with_context(|| unit.missing_at_lock())?;
+    let revision = upstream.newest(&unit.reference)?;
+    let next = upstream.folder(&revision.commit, kind, unit.origin.name())?;
+    let renamed = |files: &Files| -> Result<String> {
+        let file = files
+            .get(Path::new(kind.document()))
+            .with_context(|| format!("library copy has no {}", kind.document()))?;
+        with_name(unit::text(&file.bytes, &document)?, name)
+    };
     Ok(Comparison {
         base: Version {
-            reference: entry.reference.clone(),
-            commit: entry.commit.clone(),
-            text: with_name(&base, name)?,
+            reference: unit.reference.clone(),
+            commit: unit.commit.clone(),
+            text: renamed(&base)?,
         },
-        upstream: newest.map(|text| Version {
-            reference: revision.reference,
-            commit: revision.commit,
-            text,
-        }),
+        upstream: next
+            .as_ref()
+            .map(|next| {
+                Ok::<_, anyhow::Error>(Version {
+                    reference: revision.reference.clone(),
+                    commit: revision.commit.clone(),
+                    text: renamed(next)?,
+                })
+            })
+            .transpose()?,
         local: local.clone(),
-        path,
+        files: unit.compare(root, &base, next.as_ref())?,
+        path: unit.key,
     })
 }
 
-/// Drop a lock entry. Unless the file is kept as a local contract, delete it and its folder once empty.
-pub fn remove(root: &Path, path: &Path, keep_file: bool) -> Result<PathBuf> {
+/// Drop a lock entry. Unless the files are kept as local files, delete the locked ones and the
+/// folders they leave empty, refusing while Git has uncommitted changes to any of them.
+pub fn remove(root: &Path, kind: Kind, path: &Path, keep_file: bool) -> Result<PathBuf> {
     let mut lock = read_lock(root)?;
-    let path = key(path)?;
-    ensure!(
-        lock.contracts.remove(&path).is_some(),
-        "{} is not recorded in {LOCK_FILE}",
-        path.display()
-    );
+    let key = kind.key(path)?;
+    let unit = Unit::find(&lock, kind, &key)?;
     if !keep_file {
-        let full = root.join(&path);
-        if full.exists() {
-            fs::remove_file(&full)?;
-        }
-        let folder = full.parent().context("contract has no folder")?;
-        if folder.exists() && folder.read_dir()?.next().is_none() {
-            fs::remove_dir(folder)?;
-        }
-    }
-    write_lock(root, &lock)?;
-    Ok(path)
-}
-
-/// Check the lock's format and that every entry's file exists. Returns the number of entries.
-pub fn validate_lock(root: &Path) -> Result<usize> {
-    let path = root.join(LOCK_FILE);
-    if !path.exists() {
-        return Ok(0);
-    }
-    let lock = Lock::parse(&fs::read_to_string(&path)?)?;
-    for entry in lock.contracts.keys() {
         ensure!(
-            root.join(entry).is_file(),
-            "{LOCK_FILE} records {}, which does not exist",
-            entry.display()
+            !uncommitted(root, kind, &unit.locked_paths().collect::<Vec<_>>())?,
+            "commit or set aside changes to {} first, or keep its files with --keep-file",
+            key.display()
         );
     }
-    Ok(lock.contracts.len())
+    match kind {
+        Kind::Contracts => {
+            lock.contracts.remove(&key);
+        }
+        Kind::Skills => {
+            lock.skills.remove(&key);
+        }
+    }
+    if !keep_file {
+        unit.delete(root)?;
+    }
+    write_lock(root, &lock)?;
+    Ok(key)
+}
+
+/// Check the lock's format, that every locked file exists, that read-only files match their
+/// hashes, and that installed skills' Markdown is valid. Works offline.
+pub fn validate_lock(root: &Path) -> Result<Recorded> {
+    let path = root.join(LOCK_FILE);
+    if !path.exists() {
+        return Ok(Recorded {
+            contracts: 0,
+            skills: 0,
+        });
+    }
+    let lock = Lock::parse(&read_text(root, Path::new(LOCK_FILE))?)?;
+    let units = Unit::all(&lock, Kind::Contracts)?
+        .into_iter()
+        .chain(Unit::all(&lock, Kind::Skills)?);
+    for unit in units {
+        let kind = unit.kind();
+        for path in unit.check_files(root)? {
+            let file = unit.folder.join(&path);
+            if kind.rule(&path) == Rule::Merged
+                && let Some(line) = conflict_marker(&read_text(root, &file)?)
+            {
+                bail!(
+                    "{}:{line}: unresolved merge conflict marker",
+                    file.display()
+                );
+            }
+        }
+        if kind == Kind::Skills {
+            let document = unit.document();
+            validate_skill(&document, &read_text(root, &document)?)?;
+        }
+    }
+    Ok(Recorded {
+        contracts: lock.contracts.len(),
+        skills: lock.skills.len(),
+    })
 }
 
 /// Clones each source at most once per command.
@@ -524,22 +449,55 @@ impl Libraries {
 }
 
 fn read_lock(root: &Path) -> Result<Lock> {
-    let path = root.join(LOCK_FILE);
-    if !path.exists() {
+    if !root.join(LOCK_FILE).exists() {
         return Ok(Lock::default());
     }
-    Lock::parse(&fs::read_to_string(&path)?)
+    Lock::parse(&read_text(root, Path::new(LOCK_FILE))?)
 }
 
+/// Write the lock, or delete it once it records nothing.
 fn write_lock(root: &Path, lock: &Lock) -> Result<()> {
     let path = root.join(LOCK_FILE);
-    if lock.contracts.is_empty() {
+    let cannot = || format!("cannot write {LOCK_FILE}");
+    if lock.is_empty() {
         if path.exists() {
-            fs::remove_file(path)?;
+            fs::remove_file(path).with_context(cannot)?;
         }
         return Ok(());
     }
-    fs::write(path, lock.render()?)?;
+    fs::write(path, lock.render()?).with_context(cannot)
+}
+
+/// Read a text file; `path` is relative to the project root.
+fn read_text(root: &Path, path: &Path) -> Result<String> {
+    fs::read_to_string(root.join(path)).with_context(|| format!("cannot read {}", path.display()))
+}
+
+/// Whether Git reports uncommitted changes to any of `paths`, which are relative to the project
+/// root.
+fn uncommitted(root: &Path, kind: Kind, paths: &[PathBuf]) -> Result<bool> {
+    let paths = paths
+        .iter()
+        .map(|path| path.to_str().context("path is not UTF-8"))
+        .collect::<Result<Vec<_>>>()?;
+    let status = git::output(
+        root,
+        &[&["status", "--porcelain", "--"][..], &paths].concat(),
+    )
+    .with_context(|| format!("tenet {} needs a Git checkout", kind.name()))?;
+    Ok(!status.is_empty())
+}
+
+/// Refuse to record paths that Git ignores, since Git would never commit them and every other
+/// clone would fail `tenet validate`. `paths` are relative to the project root.
+fn refuse_ignored(root: &Path, paths: &[PathBuf]) -> Result<()> {
+    if let Some(ignored) = git::ignored(root, paths).context("Tenet needs a Git checkout")? {
+        bail!(
+            "Git ignores {} through {}; change that rule or install the copy elsewhere",
+            ignored.path,
+            ignored.rule
+        );
+    }
     Ok(())
 }
 
@@ -552,40 +510,20 @@ fn parse_spec(spec: &str) -> Result<(&str, &str, Option<&str>)> {
         None => (rest, None),
     };
     ensure!(
-        is_kebab(source) && is_kebab(name),
+        tenet_contracts::is_kebab(source) && tenet_contracts::is_kebab(name),
         "expected SOURCE/NAME[@REF] with kebab-case names"
     );
     Ok((source, name, reference))
 }
 
-fn select(lock: &Lock, paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+fn select(lock: &Lock, kind: Kind, paths: &[PathBuf]) -> Result<Vec<Unit>> {
     if paths.is_empty() {
-        return Ok(lock.contracts.keys().cloned().collect());
+        return Unit::all(lock, kind);
     }
     paths
         .iter()
-        .map(|path| {
-            let path = key(path)?;
-            ensure!(
-                lock.contracts.contains_key(&path),
-                "{} is not recorded in {LOCK_FILE}",
-                path.display()
-            );
-            Ok(path)
-        })
+        .map(|path| Unit::find(lock, kind, &kind.key(path)?))
         .collect()
-}
-
-/// Accept a contract folder or its `CONTRACT.md`, relative to the root.
-fn key(path: &Path) -> Result<PathBuf> {
-    let path = relative(path)?;
-    Ok(
-        if path.file_name().is_some_and(|name| name == "CONTRACT.md") {
-            path
-        } else {
-            path.join("CONTRACT.md")
-        },
-    )
 }
 
 fn relative(path: &Path) -> Result<PathBuf> {

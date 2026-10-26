@@ -13,6 +13,7 @@ warnings go to stderr. Each format numbers its versions independently:
 | `export` | One [evidence packet](./export.md#contents) | 2 |
 | `contracts list --json` | One object | 1 |
 | `contracts outdated --json`, `update --json`, `diff --json` | One object | 1 |
+| `skills outdated --json`, `update --json`, `diff --json` | One object | 1 |
 
 ## Compatibility
 
@@ -108,6 +109,11 @@ range, as in `src/storage/query.ts:40-75`.
 | Command | Fields |
 | --- | --- |
 | `contracts list --json` | `contracts`, each with `name`, `path`, `scope`, and `message`; `contract_changes`, the changed contract paths of a diff; and the diff's [`coverage`](./output.md#coverage), `null` without `--base` |
-| `contracts outdated --json` | `contracts`, each with `path`, local `name`, `source`, `contract`, recorded `ref`, `state` (`unchanged`, `edited`, or `missing`), and `newest` (`ref` and `change`: `current`, `changed`, or `removed`; `null` offline) |
-| `contracts update --json` | `contracts`, each with `path`, `from`, `to`, and `outcome`: `unchanged`, `replaced`, `merged`, `conflict` with `regions`, or `removed` |
-| `contracts diff PATH --json` | `contract`, with `path`, the recorded `base` and the `upstream` release (each `ref`, `commit`, and `text`; `upstream` is `null` when removed), and the `local` text |
+| `contracts outdated --json` | `contracts`, each with `path`, local `name`, `source`, `contract`, recorded `ref`, `state` of its `CONTRACT.md` (`unchanged`, `edited`, or `missing`), `files`, the `state` of each edited or missing asset, and `newest` (`ref`; `change` of the `CONTRACT.md`: `current`, `changed`, or `removed`; and `files`, the `change` of each asset upstream changed, `added`, or `removed`; `null` offline) |
+| `contracts update --json` | `contracts`, each with `path`, `from`, `to`, the `outcome` of its `CONTRACT.md`: `unchanged`, `replaced`, `merged`, `conflict` with `regions`, or `removed`, and `files`, an object with the `outcome` of each asset that did not stay unchanged: `replaced`, `added`, or `removed` |
+| `contracts diff PATH --json` | `contract`, with `path`, the recorded `base` and the `upstream` release (each `ref`, `commit`, and `text`; `upstream` is `null` when removed), the `local` text, and `files`, each asset that differs, with its `path` and its `base`, `upstream`, and `local` text, each `null` when that version lacks it |
+
+`skills outdated --json` and `skills update --json` print the same objects under `skills`, and `skills diff PATH
+--json` under `skill`, with `skill` in place of `contract`. A skill's `path` is its installed folder, and its `files`
+cover every file but `SKILL.md`; an edited Markdown file can also be `merged` or a `conflict`. `files` paths are relative to the copy's
+folder, and `files` is left out when empty. `diff` reads a file that is not UTF-8 with replacement characters.
