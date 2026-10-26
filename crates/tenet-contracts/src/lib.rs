@@ -1,16 +1,23 @@
-//! Numbered Markdown requirements.
+//! Numbered Markdown requirements, installed skill documents, and the adoption lock.
 
 mod lock;
 mod markdown;
 mod parse;
 mod scope;
+mod skill;
 
 use std::{ops::Range, path::PathBuf};
 
 use serde::Serialize;
 
-pub use lock::{DEFAULT_SOURCE, DEFAULT_SOURCE_URL, Entry, LOCK_FILE, Lock, content_hash};
-pub use parse::{DocumentError, is_kebab, name_of, parse, with_name};
+pub use lock::{
+    DEFAULT_SOURCE, DEFAULT_SOURCE_URL, Entry, LOCK_FILE, Lock, SkillEntry, contract_hash,
+    file_hash, is_contract_asset, skill_hash,
+};
+pub use parse::{
+    DocumentError, conflict_marker, is_kebab, name_of, parse, parse_version, with_name,
+};
+pub use skill::{is_skill_name, validate_skill};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Contract {

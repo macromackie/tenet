@@ -25,6 +25,17 @@ struct Metadata {
     name: String,
     message: String,
     paths: Option<Vec<String>>,
+    /// Checked first, through [`Requirement`].
+    #[serde(rename = "requires-tenet")]
+    _requires_tenet: Option<serde::de::IgnoredAny>,
+}
+
+/// The oldest Tenet that reads a contract, like Cargo's `rust-version`. It is read before the
+/// other keys, so a newer contract's keys fail with the version they need.
+#[derive(Deserialize)]
+struct Requirement {
+    #[serde(rename = "requires-tenet")]
+    requires_tenet: Option<String>,
 }
 
 pub fn parse(path: &Path, document: &str) -> Result<Contract> {
@@ -76,28 +87,18 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
         number > 0 && is_kebab(suffix),
         "contract directory must be NNN-kebab-case with a positive number"
     );
-    let mut lines = document.split_inclusive('\n');
-    ensure!(
-        lines.next().is_some_and(|line| line.trim_end() == "---"),
-        "contract requires YAML frontmatter"
-    );
-    let start = document.find('\n').context("missing frontmatter")? + 1;
-    let mut end = start;
-    let mut body = None;
-    for line in lines {
-        if line.trim_end() == "---" {
-            body = Some(end + line.len());
-            break;
-        }
-        end += line.len();
-    }
-    let offset = body.context("unclosed YAML frontmatter")?;
-    let metadata: Metadata =
-        serde_yaml::from_str(&document[start..end]).map_err(|error| DocumentError {
+    let (yaml, offset) = frontmatter(document)?;
+    let requirement: Requirement =
+        serde_yaml::from_str(&document[yaml.clone()]).map_err(|error| yaml_error(path, &error))?;
+    if let Some(required) = requirement.requires_tenet {
+        supported(&required).map_err(|error| DocumentError {
             path: path.to_owned(),
-            line: error.location().map_or(2, |loc| loc.line() + 1),
+            line: key_line(document, &yaml, "requires-tenet:"),
             message: error.to_string(),
         })?;
+    }
+    let metadata: Metadata =
+        serde_yaml::from_str(&document[yaml.clone()]).map_err(|error| yaml_error(path, &error))?;
     ensure!(
         is_kebab(&metadata.name),
         "name must be lowercase kebab-case"
@@ -113,10 +114,7 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
         .transpose()
         .map_err(|error| DocumentError {
             path: path.to_owned(),
-            line: document[..end]
-                .lines()
-                .position(|line| line.starts_with("paths:"))
-                .map_or(1, |index| index + 1),
+            line: key_line(document, &yaml, "paths:"),
             message: error.to_string(),
         })?;
     let markdown = markdown::parse(&document[offset..], offset, document)?;
@@ -150,6 +148,73 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract> {
     })
 }
 
+/// Split a document into the byte range of its YAML frontmatter and the offset where its body starts.
+pub(crate) fn frontmatter(document: &str) -> Result<(Range<usize>, usize)> {
+    let mut lines = document.split_inclusive('\n');
+    ensure!(
+        lines.next().is_some_and(|line| line.trim_end() == "---"),
+        "missing YAML frontmatter"
+    );
+    let start = document.find('\n').context("missing YAML frontmatter")? + 1;
+    let mut end = start;
+    for line in lines {
+        if line.trim_end() == "---" {
+            return Ok((start..end, end + line.len()));
+        }
+        end += line.len();
+    }
+    bail!("unclosed YAML frontmatter")
+}
+
+/// The 1-based line of the frontmatter line that starts with `key`, or 1 when none does.
+pub(crate) fn key_line(document: &str, yaml: &Range<usize>, key: &str) -> usize {
+    document[..yaml.end]
+        .lines()
+        .position(|line| line.starts_with(key))
+        .map_or(1, |index| index + 1)
+}
+
+/// A frontmatter parse error, located in the document; the YAML starts on the document's line 2.
+pub(crate) fn yaml_error(path: &Path, error: &serde_yaml::Error) -> DocumentError {
+    DocumentError {
+        path: path.to_owned(),
+        line: error.location().map_or(2, |location| location.line() + 1),
+        message: error.to_string(),
+    }
+}
+
+/// Refuse a `requires-tenet` version newer than this Tenet.
+fn supported(required: &str) -> Result<()> {
+    let version = parse_version(required).with_context(|| {
+        format!("requires-tenet must be a version such as 0.11.0, not {required}")
+    })?;
+    let current = (
+        env!("CARGO_PKG_VERSION_MAJOR").parse()?,
+        env!("CARGO_PKG_VERSION_MINOR").parse()?,
+        env!("CARGO_PKG_VERSION_PATCH").parse()?,
+    );
+    ensure!(
+        version <= current,
+        "requires Tenet {required}; this is Tenet {}",
+        env!("CARGO_PKG_VERSION")
+    );
+    Ok(())
+}
+
+/// Parse a release version `X.Y.Z` written in decimal digits.
+pub fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = text.split('.');
+    let mut number = || {
+        parts
+            .next()
+            .filter(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))?
+            .parse()
+            .ok()
+    };
+    let version = (number()?, number()?, number()?);
+    parts.next().is_none().then_some(version)
+}
+
 /// Replace the frontmatter `name` value, leaving every other byte unchanged.
 pub fn with_name(document: &str, name: &str) -> Result<String> {
     let value = name_value(document)?;
@@ -168,10 +233,7 @@ pub fn name_of(document: &str) -> Result<&str> {
 fn name_value(document: &str) -> Result<Range<usize>> {
     let mut lines = document.split_inclusive('\n');
     let first = lines.next().unwrap_or_default();
-    ensure!(
-        first.trim_end() == "---",
-        "contract requires YAML frontmatter"
-    );
+    ensure!(first.trim_end() == "---", "missing YAML frontmatter");
     let mut offset = first.len();
     for line in lines {
         if line.trim_end() == "---" {
@@ -183,11 +245,11 @@ fn name_value(document: &str) -> Result<Range<usize>> {
         }
         offset += line.len();
     }
-    bail!("contract frontmatter has no name")
+    bail!("frontmatter has no name")
 }
 
 /// Return the 1-based line of the first Git conflict marker, if any.
-pub(crate) fn conflict_marker(text: &str) -> Option<usize> {
+pub fn conflict_marker(text: &str) -> Option<usize> {
     text.lines()
         .position(|line| {
             ["<<<<<<<", ">>>>>>>"]

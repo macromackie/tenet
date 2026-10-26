@@ -14,6 +14,8 @@ tenet contracts list [--for FILE] [--base REF] [--json]
 tenet contracts show NAME
 tenet contracts add SOURCE/NAME[@REF] (--scope DIR | --path FILE)
 tenet contracts outdated | update | diff PATH | remove PATH
+tenet skills add SOURCE/NAME[@REF] [--dir DIR | --path DIR]
+tenet skills outdated | update | diff PATH | remove PATH
 ```
 
 Use `--root DIR` to choose a project; the default is the working directory. Contracts outside that root do not participate.
@@ -67,7 +69,8 @@ itself, concludes `unaffected` without a model request.
 The caller owns establishing the baseline and running full checks when contracts change. Tenet does not silently switch modes.
 
 `contracts list --base REF --json` returns the containing contract scopes in evaluation order, plus changed contract paths
-and the change's [`coverage`](./output.md#coverage): the changed files no contract governs.
+and the change's [`coverage`](./output.md#coverage): the changed files no contract governs. A change to any file in a
+contract's folder, such as an installed asset, counts as a change to that contract.
 It needs no model credentials. New and old paths participate, including deletions and moves.
 When no contract governs any changed file, `check` says `No contract governs this change: N changed files` and exits 0.
 Diff discovery validates contracts in those scopes. Malformed contracts in unrelated folders do not block the diff;
@@ -133,33 +136,49 @@ forget the review.
 input selection as `check` and writes one JSON object. See [Export](./export.md) for source identities, scope,
 size limits, and examples of preparing a focused question.
 
-## Shared contracts
+## Shared contracts and skills
 
-These commands install contracts from a library and record them in `.tenet.lock` at the project root. They are the only
-commands that read the lock or reach the network, and they need `git`. `check`, `export`, and `contracts list` and
-`show` never read the lock; `validate` checks its format and that each recorded file exists. See
-[Guidance](./guidance.md) for the workflow.
+`tenet contracts` and `tenet skills` install contracts and agent skills from a library and record them in `.tenet.lock`
+at the project root. They are the only commands that read the lock or reach the network. They need `git`, and `add`,
+`update`, and `remove` need the project to be a Git checkout. `check`, `export`, and `contracts list` and `show` never
+read the lock. `validate` checks offline that the lock is well formed, that each recorded file exists, and that each
+read-only file matches its hash. See [Guidance](./guidance.md) for the workflow.
 
 | Command | Effect |
 | --- | --- |
-| `add SOURCE/NAME[@REF] --scope DIR` | Copy a library contract into the next numbered folder under `DIR/.contracts` |
-| `add SOURCE/NAME[@REF] --path FILE` | Record an existing copy; its differences count as local edits |
-| `outdated [--offline] [--json]` | Show each copy's release, newest release, and local state |
-| `update [PATH ...] [--ref REF] [--json]` | Replace unedited copies, merge edited ones, and move the lock |
-| `diff PATH [--json]` | Show upstream changes since the recorded release, then local edits |
-| `remove PATH [--keep-file]` | Delete a copy and its lock entry, or keep the file as a local contract |
+| `contracts add SOURCE/NAME[@REF] --scope DIR` | Copy a library contract and its assets into the next numbered folder under `DIR/.contracts` |
+| `contracts add SOURCE/NAME[@REF] --path FILE` | Record an existing copy; its differences count as local edits |
+| `skills add SOURCE/NAME[@REF] [--dir DIR]` | Copy a library skill's folder into `DIR/NAME`; `DIR` defaults to `.agents/skills` |
+| `skills add SOURCE/NAME[@REF] --path DIR` | Record an existing copy; its Markdown differences count as local edits |
+| `outdated [--offline] [--json]` | Show each copy's release, newest release, and local state, and each file that changed |
+| `update [PATH ...] [--ref REF] [--json]` | Replace unedited files, merge edited Markdown, and move the lock |
+| `diff PATH [--json]` | Show upstream changes since the recorded release, then local edits, for each file that differs |
+| `remove PATH [--keep-file]` | Delete a copy's locked files and its lock entry, or keep them as local files |
 
 `SOURCE` is `tenet` for https://github.com/macromackie/tenet-contracts. Register another Git library, or a local
 clone of that one, under another alias with `--source ALIAS=URL` on `add`; Git uses your existing credentials.
-Without `@REF`, `add` takes the highest `vX.Y.Z` tag.
-`add` also accepts `--name LOCAL` and `--number N`. `update` refuses uncommitted changes to the lock or selected
-contracts, so every merge is a reviewable diff.
+Without `@REF`, `add` takes the highest `vX.Y.Z` tag, and `update` moves to it. Both `add` commands accept
+`--name LOCAL`, which also rewrites the copy's `name`; `contracts add` accepts `--number N`. `skills add` refuses a
+destination that exists. `add` and `update` refuse, before writing anything, a file that Git ignores, a library
+contract file other than `CONTRACT.md` and `assets/<tool>/` files, and a release that needs a newer Tenet. A skill's
+`PATH` is its folder; a contract's is its `CONTRACT.md` or folder.
+
+`CONTRACT.md`, `SKILL.md`, and a skill's other Markdown files merge three ways. Every other locked file, such as a
+contract's assets or a skill's scripts, is read-only. `update` replaces it while unedited and refuses, before writing
+anything, while one in a selected copy is edited or missing. It also refuses uncommitted changes to the lock or the
+selected copies, so every merge is a reviewable diff, and a local file in the way of one upstream adds. A file removed
+upstream stays in place and leaves the lock. `remove` refuses uncommitted changes to the files it would delete. Tenet
+never touches files the lock does not list. Hashes ignore the `name` value of `CONTRACT.md` and `SKILL.md`. Hashes of
+assets and skill files read CRLF line endings as LF; a contract's own hash covers its exact bytes, as in version 1.
 
 | Exit | `add`, `diff`, `remove` | `outdated` | `update` |
 | --- | --- | --- | --- |
-| 0 | Done | Every copy is current and present | Every copy is unchanged, replaced, or merged |
-| 1 | Not used | A copy changed or was removed upstream, or is missing | A conflict was written or a contract was removed upstream |
-| 2 | Invalid input or execution error | Same | Same |
+| 0 | Done | Every copy is current and present | Every file is unchanged, replaced, added, or merged |
+| 1 | Not used | A file changed, was added, or was removed upstream, a file is missing, or a read-only file is edited | A conflict was written, or a copy or file was removed upstream |
+| 2 | Invalid input or execution error | Same | Same, including a refused update |
+
+The lock is written as version 2 when it records skills or contract assets, and as version 1 otherwise. A Tenet older
+than 0.11.0 cannot read a version 2 lock.
 
 ## Check options
 
@@ -186,7 +205,7 @@ answers in `.tenet/answers.jsonl` would answer; a check sends the rest. With `--
 cached. It also counts `combined_over_limit`, the contracts whose combined input exceeds the limit after reduction, and
 reports the diff's `coverage`. When the requests to send exceed `--max-requests`, it prints a warning to stderr. A diff with no changes
 prints `No changes since BASE; nothing to check.` Only execution errors exit 2.
-`validate` and `contracts` also work without credentials.
+`validate`, `contracts`, and `skills` also work without credentials.
 
 ## Discovery
 

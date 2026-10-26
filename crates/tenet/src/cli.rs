@@ -60,10 +60,15 @@ pub(crate) enum Command {
     Export(Export),
     /// Validate contract documents without calling a model.
     Validate,
-    /// Browse contract requirements and scope.
+    /// Browse contract requirements and scope, and install shared contracts.
     Contracts {
         #[command(subcommand)]
         command: Contracts,
+    },
+    /// Install and update shared agent skills through .tenet.lock.
+    Skills {
+        #[command(subcommand)]
+        command: Skills,
     },
 }
 
@@ -82,13 +87,6 @@ pub(crate) enum Contracts {
     Show {
         name: String,
     },
-    #[command(flatten)]
-    Adoption(Adoption),
-}
-
-/// Install and update shared contracts through .tenet.lock.
-#[derive(Subcommand)]
-pub(crate) enum Adoption {
     /// Install a shared contract and record it in .tenet.lock.
     Add {
         #[arg(
@@ -111,7 +109,40 @@ pub(crate) enum Adoption {
         #[arg(long = "source")]
         sources: Vec<String>,
     },
-    /// Compare installed contracts with their sources.
+    #[command(flatten)]
+    Locked(Locked),
+}
+
+#[derive(Subcommand)]
+pub(crate) enum Skills {
+    /// Install a shared skill folder and record it in .tenet.lock.
+    Add {
+        #[arg(
+            value_name = "SOURCE/NAME[@REF]",
+            help = "Library skill; without a ref, the highest vX.Y.Z tag"
+        )]
+        spec: String,
+        /// Directory that receives the skill folder.
+        #[arg(long, default_value = ".agents/skills", conflicts_with = "path")]
+        dir: PathBuf,
+        /// Local folder and skill name when the upstream name is already used.
+        #[arg(long, conflicts_with = "path")]
+        name: Option<String>,
+        /// Record an existing skill folder instead of writing a new copy.
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Register a source as ALIAS=URL; repeat as needed.
+        #[arg(long = "source")]
+        sources: Vec<String>,
+    },
+    #[command(flatten)]
+    Locked(Locked),
+}
+
+/// Commands for copies recorded in .tenet.lock, the same for contracts and skills.
+#[derive(Subcommand)]
+pub(crate) enum Locked {
+    /// Compare installed copies with their sources.
     Outdated {
         /// Report only local edits, without fetching sources.
         #[arg(long)]
@@ -119,9 +150,9 @@ pub(crate) enum Adoption {
         #[arg(long)]
         json: bool,
     },
-    /// Take upstream changes, merging local edits three ways.
+    /// Take upstream changes, merging local Markdown edits three ways.
     Update {
-        /// Installed contracts to update; all when omitted.
+        /// Installed copies to update; all when omitted.
         paths: Vec<PathBuf>,
         /// Move to this tag, branch, or commit instead of the newest.
         #[arg(long = "ref")]
@@ -136,10 +167,10 @@ pub(crate) enum Adoption {
         #[arg(long)]
         json: bool,
     },
-    /// Remove an installed contract and its lock entry.
+    /// Remove an installed copy and its lock entry.
     Remove {
         path: PathBuf,
-        /// Keep the file as an ordinary local contract.
+        /// Keep the files as ordinary local files.
         #[arg(long)]
         keep_file: bool,
     },

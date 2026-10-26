@@ -1,6 +1,7 @@
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use std::{
     collections::BTreeMap,
+    io::{Seek, Write},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -20,6 +21,62 @@ pub(crate) fn output(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
         String::from_utf8_lossy(&result.stderr).trim()
     );
     Ok(result.stdout)
+}
+
+/// A path Git ignores and the rule that ignores it, as `SOURCE:LINE:PATTERN`.
+pub(crate) struct Ignored {
+    pub path: String,
+    pub rule: String,
+}
+
+/// The first of `paths` that the project's ignore rules exclude; tracked files are never ignored.
+pub(crate) fn ignored(root: &Path, paths: &[PathBuf]) -> Result<Option<Ignored>> {
+    // Without `--verbose`, Git lists only excluded paths; with it, Git also lists paths that a
+    // negated `!PATTERN` keeps. So find the first excluded path, then ask for the rule that decided it.
+    let excluded = check_ignore(root, false, paths)?;
+    let Some(path) = excluded.first() else {
+        return Ok(None);
+    };
+    let fields = check_ignore(root, true, &[PathBuf::from(path)])?;
+    let [source, line, pattern, path] = fields.as_slice() else {
+        bail!("malformed Git check-ignore output");
+    };
+    Ok(Some(Ignored {
+        path: path.clone(),
+        rule: format!("{source}:{line}:{pattern}"),
+    }))
+}
+
+/// Run `git check-ignore` on `paths` and return its NUL-separated output fields; none when Git
+/// excludes none of them.
+fn check_ignore(root: &Path, verbose: bool, paths: &[PathBuf]) -> Result<Vec<String>> {
+    // Paths go through a file on standard input, since `-z` needs `--stdin`.
+    let mut input = tempfile::tempfile()?;
+    for path in paths {
+        input.write_all(path.to_str().context("path is not UTF-8")?.as_bytes())?;
+        input.write_all(b"\0")?;
+    }
+    input.rewind()?;
+    let result = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["check-ignore", "--stdin", "-z"])
+        .args(verbose.then_some("--verbose"))
+        .stdin(input)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .context("cannot run Git")?;
+    match result.status.code() {
+        Some(0) => Ok(String::from_utf8(result.stdout)?
+            .split_terminator('\0')
+            .map(str::to_owned)
+            .collect()),
+        Some(1) => Ok(Vec::new()),
+        _ => bail!(
+            "Git check-ignore failed: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        ),
+    }
 }
 
 pub(crate) fn head(root: &Path) -> Option<String> {

@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.11.0
+
+- With `--state-dir`, the `check` summary names the revision's log in that directory, and errors about records or kept
+  contents name the review state directory instead of `.tenet`.
+- A library contract can ship tool configuration under `assets/<tool>/`, such as an oxlint rules file. `contracts add`
+  copies each asset byte for byte into the installed contract's folder and records its hash in the lock entry's new
+  `files` map. Installed assets are read-only. `validate` fails offline and names an asset that is missing or edited,
+  and `update` refuses before writing anything while a selected contract has one. `update` replaces unedited assets
+  and writes new ones; it refuses a local file in the way of a new one, and an asset removed upstream stays in place,
+  leaves the lock, and makes `update` exit 1. `remove` deletes the locked assets with the contract, and `--keep-file`
+  keeps them. `add --path` copies in missing assets and refuses one that differs from the release. Files the lock does
+  not list stay yours, and Tenet never touches them. `add` and `update` refuse a library contract file other than
+  `CONTRACT.md` and `assets/<tool>/` files instead of leaving it out.
+- A contract that ships assets declares `requires-tenet: 0.11.0` in its frontmatter. Every command that reads
+  contracts, including `add` with `--scope` or `--path` and `update`, refuses one that needs a newer Tenet and names
+  the version it needs. Tenet 0.10.0 refuses an update to such a contract before writing anything, with
+  ``unknown field `requires-tenet` ``.
+- `contracts add`, `skills add`, and `update` refuse, before writing anything, a file that Git ignores, and name the
+  ignore rule, because Git would never commit it and every other clone would fail `validate`. `remove` refuses
+  uncommitted changes to the files it would delete; `--keep-file` still drops only the lock entry. `add`, `update`,
+  and `remove` therefore need the project to be a Git checkout.
+- `tenet skills add`, `outdated`, `update`, `diff`, and `remove` install agent skills from a library and work like
+  `tenet contracts`. `skills add tenet/NAME` copies the skill's folder to `.agents/skills/NAME`; `--dir DIR` and
+  `--name LOCAL` choose another place, and `--path DIR` records an existing copy. It refuses a destination that exists
+  or that Git ignores, and names the ignore rule. `--name` takes lowercase letters, digits, and single hyphens, at most
+  64 characters. A skill's Markdown files merge like a contract; its other files are read-only. `validate` checks that
+  each installed `SKILL.md` has a valid `name` equal to its folder and a `description`, and keeps every other
+  frontmatter key. A project whose only recorded copies are skills passes `validate` without contracts of its own.
+- `.tenet.lock` is written as version 2 only when a contract records `files` or the lock records `skills`. Other locks
+  keep their version 1 bytes. A lock with a newer version fails with a message that names the Tenet it needs. A lock
+  that records only skills survives `contracts remove`, and `contracts update` then exits 0 instead of failing with
+  `no contracts are recorded`.
+- Hashes in a lock entry's `files` read CRLF line endings as LF, so a checkout with `core.autocrlf` never fails
+  `validate` for an installed asset or skill file. A contract's `hash` keeps its version 1 meaning, the exact bytes of
+  its `CONTRACT.md` without the `name` value, so every hash a lock already stores keeps its meaning and a version 1
+  lock stays byte-identical.
+- `outdated` exits 1 when an installed file changed, was added, or was removed upstream, or a read-only file is edited
+  or missing. It lists each changed or edited file under its copy. `outdated --json`, `update --json`, and
+  `diff --json` add a `files` field with the same information; their format stays version 1.
+- `contracts list --base REF` counts a change to any file in a `.contracts/NNN-name/` folder as a change to that
+  folder's contract, so the full-check job in the guidance re-checks a contract whose update changed only an asset.
+
 ## v0.10.0
 
 - `--state-dir DIR`, or `TENET_STATE_DIR`, keeps review state in `DIR` instead of `.tenet/` in the project root, so a

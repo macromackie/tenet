@@ -38,6 +38,8 @@ pub struct Plan {
     pub context: Vec<crate::Change>,
     /// `context` files supplied as line ranges instead of whole; the rest are supplied whole.
     pub excerpts: BTreeMap<PathBuf, crate::Excerpt>,
+    /// The contract documents a diff changes, directly or through another file in their folder,
+    /// such as an installed asset.
     pub contract_changes: Vec<PathBuf>,
     /// How much of a diff's selected change the contracts govern; `None` for a full check.
     pub coverage: Option<Coverage>,
@@ -51,7 +53,7 @@ pub struct Coverage {
     /// Changed files no contract governs at their current or previous path. Files in a
     /// `.contracts` folder are contract changes, not ungoverned files.
     pub ungoverned_files: Vec<PathBuf>,
-    /// Whether a contract governs any changed file or the change edits a contract document. It
+    /// Whether a contract governs any changed file or the change edits a contract's folder. It
     /// is false when no contract applies, including when nothing changed.
     pub governed: bool,
 }
@@ -239,10 +241,7 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
                 .paths
                 .iter()
                 .flat_map(|(path, old)| std::iter::once(path).chain(old.as_ref()))
-                .filter(|path| {
-                    is_contract(path) && path.file_name().is_some_and(|name| name == "CONTRACT.md")
-                })
-                .cloned()
+                .filter_map(|path| contract_document(path, &discovered))
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect()
@@ -261,7 +260,7 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan> {
     // Coverage counts every discovered contract, not only those this check runs.
     let coverage = changes.as_ref().map(|_| {
         let governed = |path: &PathBuf| {
-            contract_changes.contains(path)
+            contract_document(path, &discovered).is_some()
                 || contracts
                     .iter()
                     .any(|contract| governs(contract, &previous_paths, path))
@@ -364,6 +363,27 @@ pub(crate) fn governs(
         || previous_paths
             .get(path)
             .is_some_and(|old| contract.governs(old))
+}
+
+/// The contract document that `path` belongs to: itself for a `CONTRACT.md`, or the discovered
+/// `CONTRACT.md` of the numbered folder that holds another file, such as an installed asset.
+fn contract_document(path: &Path, discovered: &[PathBuf]) -> Option<PathBuf> {
+    if is_contract(path) && path.file_name().is_some_and(|name| name == "CONTRACT.md") {
+        return Some(path.to_owned());
+    }
+    let mut parts = path.components();
+    let mut folder: PathBuf = parts
+        .by_ref()
+        .take_while(|part| part.as_os_str() != ".contracts")
+        .collect();
+    folder.push(".contracts");
+    folder.push(parts.next()?);
+    parts.next()?;
+    let document = folder.join("CONTRACT.md");
+    discovered
+        .binary_search(&document)
+        .is_ok()
+        .then_some(document)
 }
 
 pub(crate) fn is_contract(path: &Path) -> bool {

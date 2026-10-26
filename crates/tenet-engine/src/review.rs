@@ -213,8 +213,8 @@ impl Review {
                     .map_err(|error| {
                         anyhow!(
                             "record {} for {} is invalid: {error:#}. Tenet trusts no record that \
-                             `tenet record` would refuse, and never edits the log. Move .tenet \
-                             aside, run tenet check, and record the review again",
+                             `tenet record` would refuse, and never edits the log. Move the review \
+                             state directory aside, run tenet check, and record the review again",
                             record.id,
                             record.contract
                         )

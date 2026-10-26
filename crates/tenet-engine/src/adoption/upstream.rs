@@ -1,8 +1,15 @@
-use std::{fs, path::PathBuf, process::Command};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use anyhow::{Context, Result, bail, ensure};
 use tempfile::TempDir;
+use tenet_contracts::is_contract_asset;
 
+use super::Kind;
 use crate::git;
 
 /// A temporary bare clone of a contract library. Nothing persists after the command.
@@ -17,6 +24,16 @@ pub(super) struct Revision {
     pub reference: String,
     pub commit: String,
 }
+
+/// One file of a library folder, as Git stores it.
+#[derive(Clone)]
+pub(super) struct File {
+    pub bytes: Vec<u8>,
+    pub executable: bool,
+}
+
+/// A library folder's files, keyed by path relative to the folder.
+pub(super) type Files = BTreeMap<PathBuf, File>;
 
 impl Upstream {
     pub(super) fn clone(url: &str) -> Result<Self> {
@@ -64,25 +81,44 @@ impl Upstream {
         }
     }
 
-    /// Read `contracts/NAME/CONTRACT.md` at a commit; `None` when the library has no such contract.
-    pub(super) fn contract(&self, commit: &str, name: &str) -> Result<Option<String>> {
-        let path = format!("contracts/{name}/CONTRACT.md");
-        let listing = git::output(&self.repository, &["ls-tree", commit, "--", &path])?;
-        if listing.is_empty() {
-            return Ok(None);
-        }
-        ensure!(
-            listing.starts_with(b"100644 ") || listing.starts_with(b"100755 "),
-            "{path} must be a regular file in {}",
-            self.url
-        );
-        let bytes = git::output(
+    /// Read every file of `contracts/NAME/` or `skills/NAME/` at a commit. `None` when the folder
+    /// has no CONTRACT.md or SKILL.md. Refuses a contract file other than CONTRACT.md and
+    /// `assets/<tool>/` files, which this Tenet cannot install whole.
+    pub(super) fn folder(&self, commit: &str, kind: Kind, name: &str) -> Result<Option<Files>> {
+        let prefix = format!("{}/{name}/", kind.name());
+        let listing = git::output(
             &self.repository,
-            &["cat-file", "blob", &format!("{commit}:{path}")],
+            &["ls-tree", "-r", "-z", commit, "--", &prefix],
         )?;
-        Ok(Some(String::from_utf8(bytes).with_context(|| {
-            format!("{path} is not UTF-8 in {}", self.url)
-        })?))
+        let mut files = Files::new();
+        for entry in listing.split(|b| *b == 0).filter(|entry| !entry.is_empty()) {
+            let entry = std::str::from_utf8(entry).context("library path is not UTF-8")?;
+            let (meta, path) = entry.split_once('\t').context("malformed Git listing")?;
+            let Some(relative) = path.strip_prefix(&prefix).map(PathBuf::from) else {
+                continue;
+            };
+            ensure!(
+                kind == Kind::Skills
+                    || relative == Path::new(kind.document())
+                    || is_contract_asset(&relative),
+                "{path} in {} is neither CONTRACT.md nor a file under assets/<tool>/, so Tenet {} \
+                 cannot install it; the contract may need a newer Tenet",
+                self.url,
+                env!("CARGO_PKG_VERSION")
+            );
+            let mut fields = meta.split(' ');
+            let executable = match fields.next() {
+                Some("100644") => false,
+                Some("100755") => true,
+                _ => bail!("{path} must be a regular file in {}", self.url),
+            };
+            let object = fields.nth(1).context("malformed Git listing")?;
+            let bytes = git::output(&self.repository, &["cat-file", "blob", object])?;
+            files.insert(relative, File { bytes, executable });
+        }
+        Ok(files
+            .contains_key(Path::new(kind.document()))
+            .then_some(files))
     }
 
     fn latest_tag(&self) -> Result<String> {
@@ -104,18 +140,8 @@ impl Upstream {
 }
 
 fn version(tag: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = tag.strip_prefix('v')?.split('.');
-    let number = |part: Option<&str>| {
-        part.filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))?
-            .parse()
-            .ok()
-    };
-    let version = (
-        number(parts.next())?,
-        number(parts.next())?,
-        number(parts.next())?,
-    );
-    parts.next().is_none().then_some(version)
+    tag.strip_prefix('v')
+        .and_then(tenet_contracts::parse_version)
 }
 
 /// The result of merging local edits with an upstream change.
@@ -145,7 +171,7 @@ pub(super) fn merge(local: &str, base: &str, upstream: &str, labels: [&str; 3]) 
         ),
     };
     Ok(Merge {
-        text: String::from_utf8(output.stdout).context("merged contract is not UTF-8")?,
+        text: String::from_utf8(output.stdout).context("merged document is not UTF-8")?,
         conflicts,
     })
 }
