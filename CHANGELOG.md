@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.12.1
+
+- The release smoke provider binds directly to loopback without resolving a hostname, waits until its port is ready,
+  and reports a provider process that exits during startup. The previous five-second startup window stopped the Intel
+  macOS smoke test before it called Tenet. Version 0.12.0 built all four binaries but published no release assets;
+  this release includes its changes.
+
 ## v0.12.0
 
 - Trace schema version 2 uses snake_case provider failure kinds and records `request.rate_limited` when the

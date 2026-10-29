@@ -44,7 +44,7 @@
           set -euo pipefail
           binary="${PWD}/unpacked/tenet-${TARGET}/tenet"
           cat > provider.py <<'PY'
-          import http.server, json, sys
+          import http.server, json, socketserver, sys
 
           VIOLATION = {"type": "choice", "choice": "match", "confidence": 0.95,
                        "probabilities": {"match": 0.95, "no_match": 0.03, "uncertain": 0.02}}
@@ -63,16 +63,20 @@
                   self.end_headers()
                   self.wfile.write(body)
 
-          server = http.server.HTTPServer(("127.0.0.1", 0), Provider)
+          server = socketserver.TCPServer(("127.0.0.1", 0), Provider)
           with open(sys.argv[1], "w") as port:
-              port.write(str(server.server_port))
+              port.write(str(server.server_address[1]))
           server.serve_forever()
           PY
           python3 provider.py port.txt &
           provider=${!}
-          trap 'kill "$provider"' EXIT
-          for _ in {1..50}; do
-            test -s port.txt && break
+          trap 'kill "${provider}"' EXIT
+          until test -s port.txt; do
+            if ! kill -0 "${provider}" 2>/dev/null; then
+              wait "${provider}"
+              printf '%s\n' 'fake provider stopped before writing "port.txt"' >&2
+              exit 1
+            fi
             sleep 0.1
           done
           TENET_ENDPOINT="http://127.0.0.1:$(cat port.txt)/decisions"

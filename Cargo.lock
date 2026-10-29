@@ -1398,7 +1398,7 @@ dependencies = [
 
 [[package]]
 name = "tenet"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "annotate-snippets",
  "anyhow",
@@ -1419,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "tenet-contracts"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "blake3",
  "globset",
@@ -1432,7 +1432,7 @@ dependencies = [
 
 [[package]]
 name = "tenet-engine"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "blake3",
