@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.12.0
+
+- Trace schema version 2 uses snake_case provider failure kinds and records `request.rate_limited` when the
+  provider's shared rate limit prevents a request from completing.
+- Error messages quote each value they name, as in `requires Tenet "0.12.0"; this is Tenet "0.11.0"` and
+  `".tenet.lock": "packages/api" has an invalid hash`, and print a cause after a colon in full. A suggested command
+  keeps its subcommand unquoted, as in `tenet contracts diff "PATH"`. A script that matched the old unquoted text must
+  match the quoted form.
+- A cached answer is reused only when the provider reported the requested model revision for it, as well as for the
+  same Tenet version, provider, questions, and input. `.tenet/answers.jsonl` lines are now format 2 and carry the Tenet
+  version and provider beside the key. A check skips the format 1 lines that Tenet 0.11.0 and earlier wrote, since no
+  later Tenet could reuse them, and asks again.
+- `tenet status --prune-cache` removes the cached answers this Tenet cannot reuse: lines in another format or from
+  another Tenet version, and answers a later `--fresh` check replaced. It reports how many it removed on stderr, and
+  the review log and status output stay unchanged.
+- The root `.tenet.lock` can list separate projects: `"projects": ["tests/fixtures/*/project"]` holds glob patterns,
+  relative to the project root, of directories that discovery skips as it skips a nested `.git`. Their contracts no
+  longer block `contracts add` with a name already used, and no root contract governs their files, in a full check or
+  a diff. Run `tenet --root DIR` to validate or check one of them. `check`, `export`, and `contracts list` and `show`
+  now read this list from the lock, and `add`, `update`, and `remove` keep it. A lock that lists `projects` is version
+  3; Tenet 0.11.0 refuses it and names the Tenet it needs.
+- An HTTP 403 from the provider stops the check with exit 2, as 401 and 402 do, instead of failing each request and
+  leaving its contract pending. All three say `credential rejected or key limit reached`.
+- Tenet runs on ev-grep 0.8.1 and reads each failed request's kind from its typed error instead of its message.
+  A 403 that names moderation now fails only its own request, with the new kind `moderation`, and the check goes on.
+  An answer that fails validation on every attempt is now `invalid_response`, retryable, instead of `unknown`.
+  `retryable` comes from ev-grep's retry table, so a 499 `interrupted` and a TLS `connection` failure are no longer
+  retryable. A rate limit that outlasts the 15-second request budget fails the request at once as `rate_limited`.
+  The [output docs](https://tenet-contracts.com/docs/output) list every kind.
+- `contracts update` and `skills update` stop at the next major release: from `v9.2.0` they move to the highest `v10`
+  tag, even when `v12.0.0` exists, so each major arrives as its own reviewed update. `--ref` still names any release,
+  later or earlier, and a rollback merges local edits onto the older text. `outdated` names the majors a copy crosses
+  and where `update` stops, as in `v9.2.0 -> v12.0.0 (crosses 3 majors; update stops at v10.1.0)`, and its JSON
+  `newest` lists them in `majors`. The scheduled update workflow in the Guidance docs opens one pull request per major.
+- `add`, `update`, and `remove` write `.tenet.lock` to a temporary file and rename it into place, so an interrupted
+  write leaves the previous lock whole.
+- `--trace PATH`, or `TENET_TRACE`, writes a JSON Lines trace of the run, or writes it to stderr with `-`. Its first
+  record names the trace schema, the Tenet version, the source revision, and the environment (`local`, `ci`, or
+  `release`, from `--trace-environment` or `TENET_TRACE_ENVIRONMENT`; the default is `ci` when `CI` is set). A
+  `tenet.check` span records the exit code and, from a valid W3C `TRACEPARENT`, the caller's trace and span ids. Inside
+  it are ev-grep's `provider.request`, `provider.attempt`, and `provider.wait` spans, Tenet's `request.failed` or `request.rate_limited` event for
+  each failed request, and `check.stopped` for a failure that stops the check. Records hold kinds, statuses, counts,
+  and durations, never contract text, file contents, prompts, keys, or provider messages. A trace changes no output.
+- A check's trace nests a `tenet.contract` span for each contract and a `tenet.pair` span for each contract and file
+  inside `tenet.check`. A `tenet.wait` span times each wait for a parallel slot. A `cache.hit` event marks each answer
+  read from the cache, and `budget.exhausted` each request the `--max-requests` budget refuses. Both name the request
+  as `file` or `combined`, and the spans name the contract and file.
+
 ## v0.11.0
 
 - With `--state-dir`, the `check` summary names the revision's log in that directory, and errors about records or kept
@@ -81,7 +129,7 @@
   counts `request_failures` and `retryable_failures`. With `--json`, each failed request and any fatal error also print
   a line to stderr. The default reporter counts a contract's other files that could not complete.
 - Diff checks report changed files that no contract governs. `check` and `check --dry-run` summaries and `contracts list
-  --base REF --json` include `coverage` with `changed_files`, `ungoverned_files`, and `governed`, which is false when no
+--base REF --json` include `coverage` with `changed_files`, `ungoverned_files`, and `governed`, which is false when no
   contract applies to the change. The default reporter prints `No contract governs this change: N changed files` or
   names the ungoverned files. Such a check still exits 0, and needs no credential. Files in a `.contracts` folder count
   as contract changes.
@@ -315,7 +363,6 @@
 
 - Avoid duplicating complete added files as patches in model inputs.
 
-
 ## v0.4.0
 
 - Read whole contract documents, including exceptions and project check instructions.
@@ -323,7 +370,6 @@
 - List scoped contracts as JSON and add related files with `check --context`.
 - Combine source across files before deciding a contract failed.
 - Evaluate repository fixtures with optional related-file context.
-
 
 ## v0.3.1
 

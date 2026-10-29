@@ -1,24 +1,30 @@
+use alloc::collections::BTreeMap;
+use core::{error, fmt};
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
+/// A stage of a check run, as progress events name it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Stage {
     Applicability,
-    Verification,
     Completeness,
+    Verification,
 }
 
+/// The outcome of checking one file against one contract.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
-    Pass,
-    Fail,
-    NotApplicable,
-    Uncertain,
     Error,
+    Fail,
     Incomplete,
+    NotApplicable,
+    Pass,
     /// No text to judge: an empty, binary, non-UTF-8, or symbolic-link file.
     Skipped,
+    Uncertain,
 }
 
 /// Part of a file's change left out of its model input to fit the input limit.
@@ -32,6 +38,11 @@ pub enum Omitted {
     Contents,
 }
 
+/// One file's result for one contract, as a report lists it.
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
 #[derive(Clone, Debug, Serialize)]
 pub struct CheckResult {
     pub mode: crate::Mode,
@@ -61,7 +72,12 @@ pub struct CheckResult {
     pub elapsed_ms: u128,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+/// Counts of a run's results by status, and its elapsed time.
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
+#[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct Summary {
     pub passed: usize,
     pub failed: usize,
@@ -97,7 +113,32 @@ pub struct Summary {
 }
 
 impl Summary {
-    pub(crate) fn merge(&mut self, other: &Self) {
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "Counts of results, contracts and requests are bounded by the repository's files \
+                  and the request budget, far below the integer's limit."
+    )]
+    pub(crate) fn add(&mut self, result: &CheckResult) {
+        self.record_request(result.request.as_ref());
+        self.record_failure(result.failure);
+        self.cached += usize::from(result.cached);
+        match result.status {
+            Status::Pass => self.passed += 1,
+            Status::Fail => self.failed += 1,
+            Status::Uncertain => self.uncertain += 1,
+            Status::NotApplicable => self.not_applicable += 1,
+            Status::Error => self.errors += 1,
+            Status::Incomplete => self.incomplete += 1,
+            Status::Skipped => self.skipped += 1,
+        }
+    }
+
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "Counts of results, contracts and requests are bounded by the repository's files \
+                  and the request budget, far below the integer's limit."
+    )]
+    pub(crate) const fn merge(&mut self, other: &Self) {
         self.passed += other.passed;
         self.failed += other.failed;
         self.uncertain += other.uncertain;
@@ -122,39 +163,39 @@ impl Summary {
         self.contracts_unresolved += other.contracts_unresolved;
     }
 
-    fn record_request(&mut self, request: Option<&ev_grep_core::RequestInfo>) {
-        if let Some(request) = request {
-            self.attempts += request.attempts;
-            self.hedges += request.hedges;
-            self.input_tokens += request.input_tokens;
-            self.output_tokens += request.output_tokens;
-        }
-    }
-
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "Counts of results, contracts and requests are bounded by the repository's files \
+                  and the request budget, far below the integer's limit."
+    )]
     fn record_failure(&mut self, failure: Option<crate::RequestFailure>) {
-        if let Some(failure) = failure {
+        if let Some(failed) = failure {
             self.request_failures += 1;
-            self.retryable_failures += usize::from(failure.retryable());
+            self.retryable_failures += usize::from(failed.retryable());
         }
     }
 
-    pub(crate) fn add(&mut self, result: &CheckResult) {
-        self.record_request(result.request.as_ref());
-        self.record_failure(result.failure);
-        self.cached += usize::from(result.cached);
-        match result.status {
-            Status::Pass => self.passed += 1,
-            Status::Fail => self.failed += 1,
-            Status::Uncertain => self.uncertain += 1,
-            Status::NotApplicable => self.not_applicable += 1,
-            Status::Error => self.errors += 1,
-            Status::Incomplete => self.incomplete += 1,
-            Status::Skipped => self.skipped += 1,
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "The request, attempt and token counts are bounded by the run's request and \
+                  token budgets."
+    )]
+    const fn record_request(&mut self, request: Option<&ev_grep_core::RequestInfo>) {
+        if let Some(info) = request {
+            self.attempts += info.attempts;
+            self.hedges += info.hedges;
+            self.input_tokens += info.input_tokens;
+            self.output_tokens += info.output_tokens;
         }
     }
 }
 
-#[derive(Serialize)]
+/// The settings and inputs of a check run, which its first event reports.
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
+#[derive(Debug, Serialize)]
 pub struct RunInfo {
     pub version: String,
     pub root: String,
@@ -171,37 +212,22 @@ pub struct RunInfo {
     pub max_requests: usize,
     pub min_confidence: f64,
     /// Contract documents the diff deletes; their requirements no longer apply.
-    pub deleted_contracts: Vec<std::path::PathBuf>,
+    pub deleted_contracts: Vec<PathBuf>,
 }
 
-#[derive(Serialize)]
+/// The schema version of `check`'s JSON Lines events, which each event line carries as `version`.
+pub const EVENTS_VERSION: u64 = 4;
+
+/// A progress event that a check emits as it runs.
+#[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     Begin {
         run: RunInfo,
     },
-    ContractStarted {
-        contract: String,
-        path: String,
-        total: usize,
-    },
     CheckStarted {
         contract: String,
         path: String,
-    },
-    StageStarted {
-        contract: String,
-        path: String,
-        stage: Stage,
-    },
-    StageCompleted {
-        contract: String,
-        path: String,
-        stage: Stage,
-        outcome: ev_grep_core::Outcome,
-    },
-    Result {
-        result: Box<CheckResult>,
     },
     ContractFinished {
         contract: String,
@@ -209,9 +235,31 @@ pub enum Event {
         conclusion: Option<Box<ContractResult>>,
         state: ContractState,
     },
+    ContractStarted {
+        contract: String,
+        path: String,
+        total: usize,
+    },
+    Error {
+        message: String,
+    },
+    Result {
+        result: Box<CheckResult>,
+    },
     Skipped {
         path: String,
         reason: String,
+    },
+    StageCompleted {
+        contract: String,
+        path: String,
+        stage: Stage,
+        outcome: ev_grep_core::Outcome,
+    },
+    StageStarted {
+        contract: String,
+        path: String,
+        stage: Stage,
     },
     Summary {
         summary: Summary,
@@ -221,26 +269,28 @@ pub enum Event {
         pending: Vec<String>,
         /// How much of a diff's change the contracts govern; absent for a full check.
         coverage: Option<crate::Coverage>,
+        /// The process exit status the program maps the check's overall status to.
         exit_code: u8,
-    },
-    Error {
-        message: String,
     },
 }
 
+/// The conclusion a contract reaches for one review.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContractStatus {
-    Verified,
-    Preserved,
     Clear,
-    Unaffected,
     Failed,
+    Preserved,
+    Unaffected,
     Unresolved,
+    Verified,
 }
 
 impl ContractStatus {
-    pub fn as_str(self) -> &'static str {
+    /// Return the conclusion's name as reports and records spell it.
+    #[must_use]
+    #[inline]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Verified => "verified",
             Self::Preserved => "preserved",
@@ -251,6 +301,9 @@ impl ContractStatus {
         }
     }
 
+    /// Read a conclusion from its name, or return `None` for an unknown name.
+    #[must_use]
+    #[inline]
     pub fn parse(value: &str) -> Option<Self> {
         [
             Self::Verified,
@@ -266,7 +319,9 @@ impl ContractStatus {
 }
 
 /// The probability an answer assigns to a violation, whatever its routed outcome.
-pub fn violation(assessment: &ev_grep_core::Assessment) -> f64 {
+#[must_use]
+#[inline]
+pub fn estimate_violation(assessment: &ev_grep_core::Assessment) -> f64 {
     assessment
         .probabilities
         .get(&ev_grep_core::Outcome::Match)
@@ -274,6 +329,7 @@ pub fn violation(assessment: &ev_grep_core::Assessment) -> f64 {
         .unwrap_or(0.0)
 }
 
+/// Whether a check read a contract's whole scope or only a diff of it.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestedScope {
@@ -283,7 +339,9 @@ pub enum RequestedScope {
 
 impl RequestedScope {
     /// What a conclusion about this scope covers, in prose.
-    pub fn description(self) -> &'static str {
+    #[must_use]
+    #[inline]
+    pub const fn describe(self) -> &'static str {
         match self {
             Self::FullContract => "the full contract",
             Self::SelectedSubjects => "selected subjects",
@@ -291,6 +349,11 @@ impl RequestedScope {
     }
 }
 
+/// A contract's conclusion and the results that support it.
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
 #[derive(Clone, Debug, Serialize)]
 pub struct ContractResult {
     #[serde(rename = "assessment")]
@@ -323,35 +386,41 @@ pub struct ContractResult {
     pub cached: bool,
 }
 
+/// Why a contract reached its conclusion, as a stable code.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConclusionReason {
-    FileChecksIncomplete,
-    NoRelevantChanges,
-    RequestBudget,
+    AssessmentFailed,
+    Compliance,
+    ConflictingAssessments,
     ContextTooLarge,
     ContextUnavailable,
-    AssessmentFailed,
-    Violation,
+    FileChecksIncomplete,
     /// File checks found a violation the combined assessment did not confirm or could not run.
     FileViolation,
-    Compliance,
-    SelectedSubjectsClear,
     ModelUncertain,
-    ConflictingAssessments,
+    NoRelevantChanges,
+    RequestBudget,
+    SelectedSubjectsClear,
+    Violation,
 }
 
+/// The combined context a contract's check read, by size and paths.
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
 #[derive(Clone, Debug, Serialize)]
 pub struct ContextSummary {
     pub input_bytes: usize,
     pub limit_bytes: usize,
     pub included_files: usize,
-    pub selected_files: Vec<std::path::PathBuf>,
-    pub support_files: Vec<std::path::PathBuf>,
+    pub selected_files: Vec<PathBuf>,
+    pub support_files: Vec<PathBuf>,
     /// Support files supplied as excerpts, and selected files whose excerpt stood in for contents
     /// left out to fit the limit, with the inclusive line ranges supplied.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub excerpts: std::collections::BTreeMap<std::path::PathBuf, Vec<[usize; 2]>>,
+    pub excerpts: BTreeMap<PathBuf, Vec<[usize; 2]>>,
     /// Scoped inventory files whose contents were not supplied.
     pub omitted_files: usize,
     /// Prior contents left out of every change to fit the limit; patches remain.
@@ -363,18 +432,22 @@ pub struct ContextSummary {
     /// Changed files whose resulting contents were left out to fit the limit; patches and any
     /// excerpts remain.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub contents_omitted: Vec<std::path::PathBuf>,
+    pub contents_omitted: Vec<PathBuf>,
 }
 
 impl ContextSummary {
     /// Whether the combined input fits its limit, so the combined assessment can run.
-    pub fn fits(&self) -> bool {
+    #[must_use]
+    #[inline]
+    pub const fn is_fitting(&self) -> bool {
         self.input_bytes <= self.limit_bytes
     }
 
     /// Whether anything was left out of a combined input that fit the limit.
-    pub fn is_reduced(&self) -> bool {
-        self.fits()
+    #[must_use]
+    #[inline]
+    pub const fn is_reduced(&self) -> bool {
+        self.is_fitting()
             && (self.before_omitted || self.inventory_counted || !self.contents_omitted.is_empty())
     }
 }
@@ -383,42 +456,55 @@ impl ContextSummary {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ContractState {
+    /// The result is not final until a check or a record settles it.
+    Pending { reason: Pending },
     /// A favorable model conclusion, or a record bound to the current input.
     Settled {
         conclusion: ContractStatus,
         /// The record that settled the contract; absent when the model's conclusion did.
         record: Option<String>,
     },
-    /// The result is not final until a check or a record settles it.
-    Pending { reason: Pending },
 }
 
 impl ContractState {
-    pub fn is_pending(&self) -> bool {
+    /// Return whether the contract still waits for a decision.
+    #[must_use]
+    #[inline]
+    pub const fn is_pending(&self) -> bool {
         matches!(self, Self::Pending { .. })
     }
 }
 
+/// Why a contract is still pending.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Pending {
+    /// The diff adds or edits the contract itself, so a diff check's favorable conclusion, which
+    /// assumes the base complied, does not settle it; a full check informs the record that does.
+    ContractChanged,
+    /// Scoped files or the contract changed after the last check.
+    InputsChanged,
     /// The model reports a violation; an agent confirms or disputes it with a record.
     ModelFailed,
     /// The model could not decide, or the assessment could not complete.
     ModelUnresolved,
     /// Captured without a model, and no earlier assessment had the same input.
     NotAssessed,
-    /// Scoped files or the contract changed after the last check.
-    InputsChanged,
     /// The contract entered the review's scope and has not been checked.
     NotChecked,
-    /// The diff adds or edits the contract itself, so a diff check's favorable conclusion, which
-    /// assumes the base complied, does not settle it; a full check informs the record that does.
-    ContractChanged,
 }
 
+#[expect(
+    clippy::multiple_inherent_impl,
+    reason = "This impl sits beside the report section it serves."
+)]
 impl Summary {
-    pub(crate) fn conclude(&mut self, conclusion: &ContractResult) {
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "Counts of results, contracts and requests are bounded by the repository's files \
+                  and the request budget, far below the integer's limit."
+    )]
+    pub(crate) fn record_conclusion(&mut self, conclusion: &ContractResult) {
         self.record_request(conclusion.request.as_ref());
         self.record_failure(conclusion.failure);
         self.cached += usize::from(conclusion.cached);
@@ -433,5 +519,23 @@ impl Summary {
         if conclusion.error.is_some() {
             self.errors += 1;
         }
+    }
+}
+
+/// An error followed by each of its causes, joined by ": ", as results, the review log and the
+/// command line's error report show it.
+#[derive(Debug)]
+pub struct Causes<'error>(pub &'error (dyn error::Error + 'static));
+
+impl fmt::Display for Causes<'_> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)?;
+        let mut cause = self.0.source();
+        while let Some(error) = cause {
+            write!(f, ": {error}")?;
+            cause = error.source();
+        }
+        Ok(())
     }
 }

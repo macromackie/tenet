@@ -1,7 +1,17 @@
-use super::Reporter;
 use tenet_engine::{CheckResult, Event, Stage, Status};
 
+use super::Reporter;
+
 #[derive(Default)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Fields follow the order a contract's progress fills them."
+)]
+#[expect(
+    clippy::field_scoped_visibility_modifiers,
+    reason = "The sibling modules fill these fields, and the type stays private to its parent \
+              module."
+)]
 pub(super) struct ContractProgress {
     pub(super) total: usize,
     pub(super) done: usize,
@@ -10,6 +20,10 @@ pub(super) struct ContractProgress {
 }
 
 impl Reporter<'_> {
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "Counters are bounded by the requests and contracts of one run."
+    )]
     pub(super) fn track(&mut self, event: &Event) {
         if matches!(
             event,

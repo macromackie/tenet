@@ -12,14 +12,14 @@ tenet check --base origin/main --reporter jsonl > report.jsonl
 
 ## Contract conclusions
 
-| Conclusion | Meaning |
-| --- | --- |
-| verified | Full-check evidence supports compliance |
-| preserved | Relevant changes preserve compliance, assuming a valid base |
+| Conclusion | Meaning                                                                               |
+| ---------- | ------------------------------------------------------------------------------------- |
+| verified   | Full-check evidence supports compliance                                               |
+| preserved  | Relevant changes preserve compliance, assuming a valid base                           |
 | unaffected | No relevant changes found across all selected contract changes, assuming a valid base |
-| clear | No violation found in the selected subjects; the full contract scope was not verified |
-| failed | Evidence supports a violation |
-| unresolved | The model cannot decide, or required evidence or execution is incomplete |
+| clear      | No violation found in the selected subjects; the full contract scope was not verified |
+| failed     | Evidence supports a violation                                                         |
+| unresolved | The model cannot decide, or required evidence or execution is incomplete              |
 
 A full check cannot conclude unaffected or preserved. A diff check cannot newly verify the baseline.
 These are model judgments, not formal proofs. No findings alone is insufficient for verification.
@@ -32,14 +32,14 @@ it pending. A diff check's does not, because it assumes the base complies: rebas
 unrelated files keeps its conclusions. A record from `tenet record` settles its input. Otherwise a model's `verified`,
 `preserved`, `unaffected`, or `clear` settles it. Every other contract is pending:
 
-| Reason | Meaning |
-| --- | --- |
-| `model_failed` | The model found a violation; confirm or dispute it with a record |
+| Reason             | Meaning                                                                                                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model_failed`     | The model found a violation; confirm or dispute it with a record                                                                                                                                              |
 | `model_unresolved` | The model could not decide, or its evidence or execution was incomplete, such as a [failed request](#failed-requests); `status` and `show` print its lean, as in `leans no violation · confidence 0.56 < 0.8` |
-| `not_assessed` | `check --no-model` captured the input without asking the model |
-| `inputs_changed` | A scoped file or the contract changed after the latest check (`status` only) |
-| `not_checked` | No check assessed the contract: it joined the review later, or a diff check named another contract (`status` only) |
-| `contract_changed` | The diff adds or edits the contract, so a favorable diff answer cannot settle it |
+| `not_assessed`     | `check --no-model` captured the input without asking the model                                                                                                                                                |
+| `inputs_changed`   | A scoped file or the contract changed after the latest check (`status` only)                                                                                                                                  |
+| `not_checked`      | No check assessed the contract: it joined the review later, or a diff check named another contract (`status` only)                                                                                            |
+| `contract_changed` | The diff adds or edits the contract, so a favorable diff answer cannot settle it                                                                                                                              |
 
 A record or conclusion never carries to a different input. `tenet show` lists outdated ones with the changes since.
 
@@ -90,19 +90,19 @@ uncertain or could not run, a file `fail` fails the contract with `file_violatio
 
 `reason_code` supports routing without parsing prose:
 
-| Code | Next step |
-| --- | --- |
-| `file_checks_incomplete` | Inspect file errors or incomplete results |
-| `selected_subjects_clear` | Review the remaining scope before claiming full verification |
-| `no_relevant_changes` | Retain the compliant-base assumption |
-| `request_budget` | Account for unassessed work before increasing the budget |
-| `context_too_large` | Read the file checks, then narrow paths or review the remaining scope manually |
-| `context_unavailable` | Inspect the source-read error |
-| `assessment_failed` | Inspect the provider error |
-| `model_uncertain` | Investigate missing evidence and the raw assessment |
-| `conflicting_assessments` | Trace the flagged files against the combined evidence |
-| `file_violation` | Confirm the flagged file's violation |
-| `violation` / `compliance` | Review the model's conclusion and evidence |
+| Code                       | Next step                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------ |
+| `file_checks_incomplete`   | Inspect file errors or incomplete results                                      |
+| `selected_subjects_clear`  | Review the remaining scope before claiming full verification                   |
+| `no_relevant_changes`      | Retain the compliant-base assumption                                           |
+| `request_budget`           | Account for unassessed work before increasing the budget                       |
+| `context_too_large`        | Read the file checks, then narrow paths or review the remaining scope manually |
+| `context_unavailable`      | Inspect the source-read error                                                  |
+| `assessment_failed`        | Inspect the provider error                                                     |
+| `model_uncertain`          | Investigate missing evidence and the raw assessment                            |
+| `conflicting_assessments`  | Trace the flagged files against the combined evidence                          |
+| `file_violation`           | Confirm the flagged file's violation                                           |
+| `violation` / `compliance` | Review the model's conclusion and evidence                                     |
 
 When combined context was assembled, `context` reports `input_bytes`, `limit_bytes`, `included_files`,
 `selected_files`, `support_files`, and `omitted_files`, the number of scoped inventory files whose contents were not
@@ -137,23 +137,26 @@ assessment, adds a `failure` object:
 
 `retryable` says whether rerunning the same check may answer the request:
 
-| Kind | Cause | Retryable |
-| --- | --- | --- |
-| `timeout` | The request used its 15-second budget, or the provider answered HTTP 408 | yes |
-| `connection` | No attempt received an HTTP response | yes |
-| `rate_limited` | HTTP 429 | yes |
-| `interrupted` | HTTP 499 | yes |
-| `server_error` | HTTP 5xx | yes |
-| `authentication` | HTTP 401 or 402: the provider rejected the credential or its account | no |
-| `configuration` | HTTP 404, 405, or a redirect: the endpoint or model does not exist | no |
-| `input_too_large` | HTTP 413, or the encoded request exceeds 96 KiB | no |
-| `invalid_request` | Any other HTTP status | no |
-| `unknown` | A failure Tenet does not recognize, such as an answer that failed validation three times | no |
+| Kind               | Cause                                                                                                 | Retryable |
+| ------------------ | ----------------------------------------------------------------------------------------------------- | --------- |
+| `timeout`          | The request used its 15-second budget, or the provider answered HTTP 408                              | yes       |
+| `connection`       | No connection was made, the TLS handshake failed (not retryable), or the exchange broke off           | yes       |
+| `rate_limited`     | HTTP 429, or a rate limit that outlasts the request's 15-second budget                                | yes       |
+| `server_error`     | HTTP 500, 502, 503, 504, 520, 522, or 524                                                             | yes       |
+| `invalid_response` | The answer failed validation on every attempt, or exceeded 64 KiB (not retryable)                     | yes       |
+| `moderation`       | HTTP 403 whose body names moderation reasons; only that request is refused                            | no        |
+| `interrupted`      | HTTP 499                                                                                              | no        |
+| `authentication`   | HTTP 401, 402, or a 403 that names no moderation reason: the credential was rejected or hit its limit | no        |
+| `configuration`    | HTTP 404, 405, a redirect, or an answer from another model: the endpoint or model is wrong            | no        |
+| `input_too_large`  | HTTP 413, or the encoded request exceeds 96 KiB                                                       | no        |
+| `invalid_request`  | Any other HTTP status                                                                                 | no        |
+| `unknown`          | A failure raised before any request was sent                                                          | no        |
 
+The provider adapter's retry table decides `retryable`.
 An `authentication` or `configuration` failure stops the check at once, because every other request would fail too.
 It exits 2 like other fatal errors and appends no revision. JSONL also writes one line to stderr for each failed request, naming the
 contract, the file or combined assessment, the kind, and whether it is retryable. A fatal error appears both as the
-`error` event and on stderr.
+`error` event and on stderr. A `moderation` failure fails only its own request, and the check goes on.
 
 Answers are cached when they arrive, and a failed request caches nothing. Rerunning the check therefore sends only the
 failed requests, plus any whose input changed; `check --dry-run` predicts them. A `--snapshot` check keeps no answers,
@@ -178,14 +181,14 @@ contracts govern the rest. A check that no contract governs still exits 0 and ne
 
 `check` and `status` share these codes:
 
-| Code | Meaning |
-| --- | --- |
-| 0 | Every contract is settled without a violation |
-| 1 | A settled violation: a recorded failure |
-| 2 | Invalid arguments or configuration, credentials or an endpoint the provider rejected, unreadable review state, a capture failure, or another execution error |
-| 3 | A recorded `unresolved` conclusion |
-| 4 | A contract is pending, including model failures, unresolved answers, failed requests, and exhausted budgets |
-| 130 | Cancelled |
+| Code | Meaning                                                                                                                                                      |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0    | Every contract is settled without a violation                                                                                                                |
+| 1    | A settled violation: a recorded failure                                                                                                                      |
+| 2    | Invalid arguments or configuration, credentials or an endpoint the provider rejected, unreadable review state, a capture failure, or another execution error |
+| 3    | A recorded `unresolved` conclusion                                                                                                                           |
+| 4    | A contract is pending, including model failures, unresolved answers, failed requests, and exhausted budgets                                                  |
+| 130  | Cancelled                                                                                                                                                    |
 
 Cancellation takes precedence, then execution errors, pending contracts, violations, and recorded unresolved
 conclusions. A model's `failed` exits 4 until a record confirms it. A [failed request](#failed-requests) leaves its
@@ -193,3 +196,12 @@ contract pending, so the check exits 4, unless a record settles the contract or 
 subjects, so it does not imply full contract verification. Findings remain available whatever decides the exit code.
 
 File diagnostics highlight the contract requirement; Tenet does not invent an exact source span for a file-level judgment. The reviewing agent locates actionable code.
+
+## Traces
+
+Use `--trace PATH` or `TENET_TRACE` to write one JSON object per line. The first `trace.started` record names trace
+schema version 2, the binary version, source revision, and environment. Provider and engine failure kinds use
+snake_case. A shared rate limit records `request.rate_limited`; a fatal failure records `check.stopped`.
+
+Traces record statuses, counts, identifiers, and durations. They omit prompts, contract text, source contents,
+credentials, headers, and provider messages. Tracing preserves command output and exit codes.

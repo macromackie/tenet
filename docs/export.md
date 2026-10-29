@@ -19,16 +19,16 @@ its hashes identify the file.
 The packet has `version: 2`, `kind: "tenet_evidence"`, and `hash_algorithm: "blake3"`.
 Its main fields describe different parts of the review:
 
-| Fields | Meaning |
-| --- | --- |
-| `mode`, `base`, `head`, `assumption` | Full or diff mode, available Git revisions, and the compliant-base assumption for a diff |
-| `selected_paths`, `selected_files`, `support_files` | Requested selectors, selected subjects, and explicit context |
-| `excerpts` | Each support file named with [line ranges](./reviews.md#add-context), mapped to its merged inclusive ranges |
-| `inventory` | Discovered paths that the exported contracts govern |
-| `contract_changes` | Changed contract paths in a diff |
-| `contracts` | Complete documents, identities, scopes, and selection information |
-| `sources` | Captured before/after source, keyed by repository-relative path |
-| `limits` | `source_bytes`, `capture_bytes`, and `packet_bytes` bounds |
+| Fields                                              | Meaning                                                                                                     |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `mode`, `base`, `head`, `assumption`                | Full or diff mode, available Git revisions, and the compliant-base assumption for a diff                    |
+| `selected_paths`, `selected_files`, `support_files` | Requested selectors, selected subjects, and explicit context                                                |
+| `excerpts`                                          | Each support file named with [line ranges](./reviews.md#add-context), mapped to its merged inclusive ranges |
+| `inventory`                                         | Discovered paths that the exported contracts govern                                                         |
+| `contract_changes`                                  | Changed contract paths in a diff                                                                            |
+| `contracts`                                         | Complete documents, identities, scopes, and selection information                                           |
+| `sources`                                           | Captured before/after source, keyed by repository-relative path                                             |
+| `limits`                                            | `source_bytes`, `capture_bytes`, and `packet_bytes` bounds                                                  |
 
 Each contract contains its `name`, `path`, `scope`, complete `document`, and document `hash`. The document preserves
 the original Markdown, including any legacy `tenet:` evaluation fences. Unlike model input prepared by `tenet check`,

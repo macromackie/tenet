@@ -1,65 +1,152 @@
 //! Commands that read and extend the review kept in `.tenet/`: status, show, record, and log.
 
+use alloc::collections::BTreeMap;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    io::{self, BufWriter, Write},
+    collections::{HashMap, HashSet},
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
+use anyhow::Context as _;
 use serde_json::{Value, json};
 use similar::{ChangeTag, TextDiff};
 use tenet_engine::{
-    Change, ContractState, ContractStatus, MIN_CONFIDENCE, Mode, Pending, Review, Status,
+    Change,
+    ContractState,
+    ContractStatus,
+    MIN_CONFIDENCE,
+    Mode,
+    Pending,
+    Review,
+    Status,
     review::{
-        self, Assessment, Current, CurrentContract, Entry, MAX_BLOB_BYTES, Record, RecordRequest,
-        Recorded, Revision, Role, Unchecked,
+        self,
+        Assessment,
+        Current,
+        CurrentContract,
+        Entry,
+        MAX_BLOB_BYTES,
+        Record,
+        RecordRequest,
+        Recorded,
+        ReviewError,
+        Revision,
+        Role,
     },
 };
 
-use crate::report_format::{Model, marker, paint, violation};
+use crate::{
+    cli::{self, ExitStatus},
+    error::CommandError,
+    output,
+    report_format,
+    report_format::{Model, format_marker, format_painted, format_violation},
+};
+
+/// The schema version of the object that `status --json` prints.
+const STATUS_VERSION: u64 = 1;
+/// The schema version of the objects that `show NAME --json` and `show --pending --json` print.
+const SHOW_VERSION: u64 = 2;
+/// The schema version of each review log entry that `log --json` prints.
+const LOG_VERSION: u64 = 2;
 
 /// How many records and earlier assessments `show` lists; `log NAME` lists every one.
 const HISTORY: usize = 5;
 /// `show` lists every file and file result of a scope this size or smaller, and otherwise only
 /// those that need attention.
 const LISTED: usize = 20;
+/// The results that need no attention.
+const SETTLED_STATUSES: [Status; 2] = [Status::Pass, Status::NotApplicable];
+/// The change kinds a long list leaves out.
+const ROUTINE_KINDS: [&str; 2] = ["selected", "modified"];
 /// How many unreadable files `show` names; it counts the rest.
 const UNREADABLE: usize = 5;
 /// How many changed ranges `show` offers as evidence.
 const CITATIONS: usize = 10;
 
-pub(crate) async fn status(
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    reason = "Counts are bounded by the stored review's contracts, and `value` is a JSON object \
+              the function builds."
+)]
+#[expect(
+    clippy::else_if_without_else,
+    reason = "`needless_else` rejects the empty `else` this lint asks for."
+)]
+#[expect(
+    clippy::format_push_string,
+    reason = "The text is built in memory, where `write!` would add a Result that cannot fail."
+)]
+#[expect(
+    clippy::future_not_send,
+    reason = "The command drives this future on one current-thread runtime and never moves it \
+              across threads."
+)]
+#[expect(
+    clippy::shadow_reuse,
+    reason = "Each step rebinds the value it converts under the same name."
+)]
+#[expect(
+    clippy::shadow_unrelated,
+    reason = "Each block binds its own result under the name the following lines read."
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The steps run in one order and share local state; splitting them would add \
+              forwarding functions."
+)]
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "The remaining variants take no action here, and listing each would repeat the enum."
+)]
+pub(crate) async fn report_status(
     root: &Path,
     state: &Path,
     base: Option<&str>,
     json: bool,
-) -> Result<u8> {
-    let review = Review::existing(state)?;
-    let mut out = io::stdout().lock();
-    let current = match review::current(root, &review, base, None).await {
+    prune_cache: bool,
+) -> Result<ExitStatus, CommandError> {
+    let review = Review::open_existing(state)?;
+    if prune_cache {
+        let pruned = review.prune_answers()?;
+        writeln!(
+            output::open_stderr(),
+            "Removed {} of {} cached answers that this Tenet cannot reuse.",
+            pruned.removed,
+            pruned.removed + pruned.kept
+        )?;
+    }
+    let mut out = output::open_stdout().lock();
+    let current = match review::resolve_current(root, &review, base, None).await {
         Ok(current) => current,
-        Err(error) => {
-            let Some(unchecked) = error.downcast_ref::<Unchecked>() else {
-                return Err(error);
-            };
+        Err(ReviewError::Unchecked(unchecked)) => {
             // The review against this commit has not begun, so nothing in it is settled.
             if json {
                 let message = unchecked.to_string();
                 let base = &unchecked.base;
-                writeln!(
-                    out,
-                    "{}",
-                    json!({"version": 1, "base": base, "revision": null, "contracts": [], "exit_code": 4, "message": message})
+                output::write_document(
+                    &mut out,
+                    STATUS_VERSION,
+                    json!({
+                        "base": base,
+                        "revision": null,
+                        "contracts": [],
+                        "exit_code": u8::from(ExitStatus::Pending),
+                        "message": message,
+                    }),
                 )?;
             } else {
                 writeln!(out, "{unchecked}")?;
             }
-            return Ok(4);
-        }
+            return Ok(ExitStatus::Pending);
+        },
+        Err(error) => return Err(error.into()),
     };
-    let code = review::exit_code(current.contracts.iter().map(|c| &c.state));
+    let status = ExitStatus::from(review::summarize_overall(
+        current.contracts.iter().map(|contract| &contract.state),
+    ));
     if json {
         let contracts = current
             .contracts
@@ -71,37 +158,37 @@ pub(crate) async fn status(
                 value["selection"] =
                     json!({"rev": entry.selection.rev, "paths": entry.selection.paths});
                 value["input"] = json!(entry.input);
-                value["assessed_in"] = json!(entry.assessment.map(|a| a.rev));
-                value["model"] = json!(model(entry).map(|m| m.status));
-                value["model_violation"] = json!(model(entry).and_then(|m| m.violation));
-                value["model_answer"] = json!(model(entry).and_then(|m| m.answer));
+                value["assessed_in"] = json!(entry.assessment.map(|assessment| assessment.rev));
+                value["model"] = json!(find_model(entry).map(|verdict| verdict.status));
+                value["model_violation"] =
+                    json!(find_model(entry).and_then(|verdict| verdict.violation));
+                value["model_answer"] = json!(find_model(entry).and_then(|verdict| verdict.answer));
                 value["min_confidence"] = json!(entry.min_confidence);
                 Ok(value)
             })
-            .collect::<Result<Vec<_>>>()?;
-        writeln!(
-            out,
-            "{}",
+            .collect::<Result<Vec<_>, CommandError>>()?;
+        output::write_document(
+            &mut out,
+            STATUS_VERSION,
             json!({
-                "version": 1,
                 "review": current.latest.review,
                 "base": current.latest.base_oid,
                 "revision": current.latest.rev,
                 "unchanged": current.unchanged,
                 "contracts": contracts,
                 "deleted_contracts": current.deleted,
-                "exit_code": code,
-            })
+                "exit_code": u8::from(status),
+            }),
         )?;
-        return Ok(code);
+        return Ok(status);
     }
     writeln!(
         out,
         "Review {}{} · latest check r{} {}\n",
         current.latest.review,
-        paths_note(current.latest),
+        format_paths_note(current.latest),
         current.latest.rev,
-        ago(current.latest.at)
+        format_ago(current.latest.at)
     )?;
     if current.unchanged {
         writeln!(
@@ -112,45 +199,45 @@ pub(crate) async fn status(
     let width = current
         .contracts
         .iter()
-        .map(|c| c.contract.name.len())
+        .map(|entry| entry.contract.name.len())
         .max()
         .unwrap_or(0);
     for entry in &current.contracts {
-        let (label, mut note) = state_text(entry);
-        if !entry.selection.selects(&current.latest.paths) {
+        let (label, mut note) = format_state_text(entry);
+        if !entry.selection.is_selecting(&current.latest.paths) {
             note.push_str(&format!(
                 " · from r{} {}",
                 entry.selection.rev,
-                selection_text(entry.selection)
+                format_selection_text(entry.selection)
             ));
         }
         writeln!(
             out,
             " {} {:width$}  {:10}  {note}",
-            marker(label),
+            format_marker(label),
             entry.contract.name,
-            paint(&label.to_lowercase()),
+            format_painted(&label.to_lowercase()),
         )?;
     }
     for path in &current.deleted {
         writeln!(
             out,
             " {} {}  deleted by this change; its requirement no longer applies",
-            marker("DELETED"),
+            format_marker("DELETED"),
             path.display()
         )?;
     }
     let pending: Vec<_> = current
         .contracts
         .iter()
-        .filter(|c| c.state.is_pending())
+        .filter(|contract| contract.state.is_pending())
         .collect();
     let recorded = current
         .contracts
         .iter()
-        .filter(|c| {
+        .filter(|contract| {
             matches!(
-                c.state,
+                contract.state,
                 ContractState::Settled {
                     record: Some(_),
                     ..
@@ -165,49 +252,70 @@ pub(crate) async fn status(
         String::new()
     };
     writeln!(out, "\n {settled} settled{by} · {} pending", pending.len())?;
-    let stale = pending.iter().find(|c| {
+    let outdated = pending.iter().find(|contract| {
         matches!(
-            c.state,
+            contract.state,
             ContractState::Pending {
                 reason: Pending::InputsChanged | Pending::NotChecked | Pending::NotAssessed
             }
         )
     });
-    let violation = |c: &CurrentContract| model(c).and_then(|m| m.violation).unwrap_or(-1.0);
-    if let Some(stale) = stale {
+    let violation = |contract: &CurrentContract<'_>| {
+        find_model(contract)
+            .and_then(|verdict| verdict.violation)
+            .unwrap_or(-1.0_f64)
+    };
+    if let Some(outdated) = outdated {
         // A contract no check assessed needs a check of every contract, not of the one named.
-        let contract = match stale.state {
+        let contract = match outdated.state {
             ContractState::Pending {
                 reason: Pending::NotChecked,
             } => None,
-            _ => stale.selection.contract.as_deref(),
+            _ => outdated.selection.contract.as_deref(),
         };
-        writeln!(out, " Next  {}", check_command(stale.selection, contract))?;
+        writeln!(
+            out,
+            " Next  {}",
+            check_command(outdated.selection, contract)
+        )?;
     } else if let Some(first) = pending
         .iter()
-        .max_by(|a, b| violation(a).total_cmp(&violation(b)))
+        .max_by(|left, right| violation(left).total_cmp(&violation(right)))
     {
-        writeln!(out, " Next  tenet show {}", row_name(&current, first))?;
+        writeln!(
+            out,
+            " Next  tenet show {}",
+            format_row_name(&current, first)
+        )?;
     }
-    Ok(code)
+    Ok(status)
 }
 
+#[expect(
+    clippy::indexing_slicing,
+    reason = "`value` is a JSON object the function builds, so the key assignment inserts a field."
+)]
+#[expect(
+    clippy::future_not_send,
+    reason = "The command drives this future on one current-thread runtime and never moves it \
+              across threads."
+)]
 pub(crate) async fn show(
     root: &Path,
     state: &Path,
     name: &str,
     paths: &[PathBuf],
     json: bool,
-) -> Result<u8> {
-    let review = Review::existing(state)?;
-    let current = review::current(root, &review, None, Some(name)).await?;
+) -> Result<ExitStatus, CommandError> {
+    let review = Review::open_existing(state)?;
+    let current = review::resolve_current(root, &review, None, Some(name)).await?;
     let entry = current.select(name, paths)?;
-    let mut out = BufWriter::new(io::stdout().lock());
+    let mut out = BufWriter::new(output::open_stdout().lock());
     if !json {
-        brief(&mut out, &review, &current, entry)?;
+        write_brief(&mut out, &review, &current, entry)?;
         change(&mut out, &entry.changes)?;
         out.flush()?;
-        return Ok(0);
+        return Ok(ExitStatus::Passed);
     }
 
     let files: Vec<_> = entry
@@ -224,16 +332,26 @@ pub(crate) async fn show(
             value["patch"] = json!(patch);
             Ok(value)
         })
-        .collect::<Result<_>>()?;
-    let mut value = contract_json(&review, entry, files)?;
-    value["version"] = json!(2);
-    writeln!(out, "{value}")?;
+        .collect::<Result<_, CommandError>>()?;
+    output::write_document(
+        &mut out,
+        SHOW_VERSION,
+        render_contract_json(&review, entry, &files)?,
+    )?;
     out.flush()?;
-    Ok(0)
+    Ok(ExitStatus::Passed)
 }
 
 /// One contract as `show --json` reports it, with `files` as given.
-fn contract_json(review: &Review, entry: &CurrentContract, files: Vec<Value>) -> Result<Value> {
+#[expect(
+    clippy::indexing_slicing,
+    reason = "The slice end is at most the records' length."
+)]
+fn render_contract_json(
+    review: &Review,
+    entry: &CurrentContract<'_>,
+    files: &[Value],
+) -> Result<Value, CommandError> {
     let history = History::new(review, entry)?;
     let shown = |assessment: &Assessment| {
         json!({
@@ -266,90 +384,109 @@ fn contract_json(review: &Review, entry: &CurrentContract, files: Vec<Value>) ->
         "assessment": entry.assessment.map(shown),
         "files": files,
         "records": &records[..records.len().min(HISTORY)],
-        "earlier": earlier.iter().take(HISTORY).map(|a| shown(a)).collect::<Vec<_>>(),
+        "earlier": earlier.iter().take(HISTORY).map(|prior| shown(prior)).collect::<Vec<_>>(),
         "older": {
             "records": records.len().saturating_sub(HISTORY),
             "assessments": earlier.len().saturating_sub(HISTORY),
         },
         "changes_since_earlier": history.changes_since,
-        "conclusions": review::conclusions(entry.mode, entry.scope),
+        "conclusions": review::list_conclusions(entry.mode, entry.scope),
     }))
 }
 
 /// Every pending contract's brief, then the change they share, printed once. As JSON, each
 /// contract as `show --json` reports it without patches, then each changed file's patch once.
-pub(crate) async fn show_pending(root: &Path, state: &Path, json: bool) -> Result<u8> {
-    let review = Review::existing(state)?;
-    let current = review::current(root, &review, None, None).await?;
+#[expect(
+    clippy::future_not_send,
+    reason = "The command drives this future on one current-thread runtime and never moves it \
+              across threads."
+)]
+#[expect(
+    clippy::shadow_reuse,
+    reason = "Each step rebinds the value it converts under the same name."
+)]
+pub(crate) async fn show_pending(
+    root: &Path,
+    state: &Path,
+    json: bool,
+) -> Result<ExitStatus, CommandError> {
+    let review = Review::open_existing(state)?;
+    let current = review::resolve_current(root, &review, None, None).await?;
     let pending: Vec<_> = (current.contracts.iter())
         .filter(|entry| entry.state.is_pending())
         .collect();
-    let mut seen = HashSet::new();
+    let mut seen_paths = HashSet::new();
     let changes: Vec<_> = (pending.iter())
         .flat_map(|entry| &entry.changes)
-        .filter(|change| seen.insert(&change.path))
+        .filter(|change| seen_paths.insert(&change.path))
         .cloned()
         .collect();
-    let mut out = BufWriter::new(io::stdout().lock());
+    let mut out = BufWriter::new(output::open_stdout().lock());
     if json {
         let contracts = (pending.iter())
             .map(|entry| {
-                contract_json(
+                render_contract_json(
                     &review,
                     entry,
-                    (entry.files.iter())
+                    &(entry.files.iter())
                         .map(serde_json::to_value)
-                        .collect::<Result<_, _>>()?,
+                        .collect::<Result<Vec<_>, _>>()?,
                 )
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>, CommandError>>()?;
         let changes: Vec<_> = (changes.iter())
             .filter(|change| !change.patch.is_empty())
             .map(|change| json!({"path": change.path, "patch": change.patch}))
             .collect();
-        writeln!(
-            out,
-            "{}",
-            json!({"version": 2, "contracts": contracts, "changes": changes})
+        output::write_document(
+            &mut out,
+            SHOW_VERSION,
+            json!({"contracts": contracts, "changes": changes}),
         )?;
         out.flush()?;
-        return Ok(0);
+        return Ok(ExitStatus::Passed);
     }
     if pending.is_empty() {
         writeln!(out, "No contract is pending.")?;
     }
     for (index, entry) in pending.iter().enumerate() {
         if index > 0 {
-            writeln!(out, "\n{}\n", "─".repeat(72))?;
+            writeln!(out, "\n{}\n", "\u{2500}".repeat(72))?;
         }
-        brief(&mut out, &review, &current, entry)?;
+        write_brief(&mut out, &review, &current, entry)?;
     }
     change(&mut out, &changes)?;
     out.flush()?;
-    Ok(0)
+    Ok(ExitStatus::Passed)
 }
 
 /// A contract's records and earlier assessments, newest first, and what changed in its inputs
 /// since the latest earlier assessment.
-struct History<'a> {
-    records: Vec<&'a Record>,
-    earlier: Vec<&'a Assessment>,
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Fields follow the order the history shows them."
+)]
+struct History<'review> {
+    records: Vec<&'review Record>,
+    earlier: Vec<&'review Assessment>,
     changes_since: Vec<Value>,
 }
 
-impl<'a> History<'a> {
-    fn new(review: &'a Review, entry: &CurrentContract) -> Result<Self> {
+impl<'review> History<'review> {
+    fn new(review: &'review Review, entry: &CurrentContract<'_>) -> Result<Self, CommandError> {
         let name = &entry.contract.name;
-        let records = (review.records().rev())
-            .filter(|r| &r.contract == name)
+        let records = (review.list_records().rev())
+            .filter(|record| &record.contract == name)
             .collect();
         let mut inputs = HashSet::from([entry.input.as_str()]);
-        let earlier: Vec<_> = (review.assessments().rev())
-            .filter(|a| &a.contract == name && inputs.insert(a.input.as_str()))
+        let earlier: Vec<_> = (review.list_assessments().rev())
+            .filter(|assessment| {
+                &assessment.contract == name && inputs.insert(assessment.input.as_str())
+            })
             .collect();
         let changes_since = earlier
             .first()
-            .map(|old| interdiff(review, old, entry))
+            .map(|old| compute_interdiff(review, old, entry))
             .transpose()?
             .unwrap_or_default();
         Ok(Self {
@@ -362,26 +499,60 @@ impl<'a> History<'a> {
 
 /// What a reviewer needs to settle one contract, everything but the change itself: its state,
 /// the model's answer, the scoped files, history, the record command, and the contract.
-fn brief(
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    reason = "The slice end is at most the citations' length, and the subtraction runs only when \
+              the count exceeds the limit."
+)]
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "The steps run in one order and share local state; splitting them would add \
+              forwarding functions."
+)]
+#[expect(
+    clippy::else_if_without_else,
+    reason = "`needless_else` rejects the empty `else` this lint asks for."
+)]
+#[expect(
+    clippy::excessive_nesting,
+    reason = "Each level is a loop, match or closure over one parsed structure, and flattening it \
+              would split one decision."
+)]
+#[expect(
+    clippy::shadow_unrelated,
+    reason = "Each block binds its own result under the name the following lines read."
+)]
+#[expect(
+    clippy::string_slice,
+    reason = "Each slice bound is a character boundary: an ASCII hex hash prefix, a str::find \
+              offset, or a span the parser returns."
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The steps run in one order and share local state; splitting them would add \
+              forwarding functions."
+)]
+fn write_brief(
     out: &mut impl Write,
     review: &Review,
-    current: &Current,
-    entry: &CurrentContract,
-) -> Result<()> {
+    current: &Current<'_>,
+    entry: &CurrentContract<'_>,
+) -> Result<(), CommandError> {
     let name = &entry.contract.name;
     let History {
         records,
         earlier,
         changes_since,
     } = History::new(review, entry)?;
-    let (label, note) = state_text(entry);
+    let (label, note) = format_state_text(entry);
     writeln!(out, "{name}  {}  {note}", label.to_lowercase())?;
     writeln!(out, "  {}", entry.contract.path.display())?;
     writeln!(
         out,
         "  Review {}{} · selection checked in r{}",
         entry.selection.review,
-        paths_note(entry.selection),
+        format_paths_note(entry.selection),
         entry.selection.rev
     )?;
     if let Some(assessment) = entry.assessment {
@@ -390,9 +561,9 @@ fn brief(
             "  Assessed in r{} · {} check of {} · input {}{}",
             assessment.rev,
             entry.mode.as_str(),
-            entry.scope.description(),
+            entry.scope.describe(),
             &entry.input[..12],
-            threshold_note(entry.min_confidence)
+            format_threshold_note(entry.min_confidence)
         )?;
     }
     if matches!(
@@ -403,10 +574,10 @@ fn brief(
     ) {
         writeln!(
             out,
-            "\n  This change adds or edits the contract, so the diff check's assumption that the base\n  \
-             complied with it does not hold. Assess the whole contract in a separate full review\n  \
-             with `tenet check --contract {name}`, then return with `{}`\n  \
-             and record a conclusion here.",
+            "\n  This change adds or edits the contract, so the diff check's assumption that the \
+             base\n  complied with it does not hold. Assess the whole contract in a separate full \
+             review\n  with `tenet check --contract {name}`, then return with `{}`\n  and record \
+             a conclusion here.",
             check_command(entry.selection, entry.selection.contract.as_deref())
         )?;
     }
@@ -419,7 +590,7 @@ fn brief(
                     out,
                     "  {}{}: {}",
                     conclusion.status.as_str(),
-                    violation(conclusion.violation),
+                    format_violation(conclusion.violation),
                     conclusion.reason
                 )?;
                 if let Some(error) = &conclusion.error {
@@ -432,28 +603,28 @@ fn brief(
                         conclusion.conflicting_files.join(", ")
                     )?;
                 }
-            }
+            },
             None => writeln!(out, "  not assessed")?,
         }
         let results = &assessment.results;
         if results.len() > LISTED {
             let statuses = results
                 .iter()
-                .map(|result| crate::report_format::status(result.status));
-            writeln!(out, "  File checks: {}", tally(statuses))?;
+                .map(|result| report_format::label_status(result.status));
+            writeln!(out, "  File checks: {}", format_tally(statuses))?;
         }
-        let attention = |status: Status| !matches!(status, Status::Pass | Status::NotApplicable);
+        let attention = |status: Status| !SETTLED_STATUSES.contains(&status);
         for result in results
             .iter()
             .filter(|result| results.len() <= LISTED || attention(result.status))
         {
-            let omitted = crate::report_format::omitted(&result.omitted);
+            let omitted = report_format::format_omitted(&result.omitted);
             writeln!(
                 out,
                 "  {}  {}{}{}",
                 result.path,
-                crate::report_format::status(result.status).to_lowercase(),
-                violation(result.violation),
+                report_format::label_status(result.status).to_lowercase(),
+                format_violation(result.violation),
                 if omitted.is_empty() {
                     omitted
                 } else {
@@ -485,11 +656,11 @@ fn brief(
     writeln!(
         out,
         "\nFiles  {}",
-        tally(kinds.iter().map(|(kind, _)| *kind))
+        format_tally(kinds.iter().map(|(kind, _)| *kind))
     )?;
     let listed = kinds
         .iter()
-        .filter(|(kind, _)| kinds.len() <= LISTED || !matches!(*kind, "selected" | "modified"));
+        .filter(|(kind, _)| kinds.len() <= LISTED || !ROUTINE_KINDS.contains(kind));
     let mut unreadable = 0;
     for (kind, scoped) in listed {
         if *kind == "unreadable" {
@@ -498,9 +669,9 @@ fn brief(
                 continue;
             }
         }
-        let excerpt = match &scoped.file.excerpt[..] {
+        let excerpt = match &*scoped.file.excerpt {
             [] => String::new(),
-            lines => format!(" lines {}", tenet_engine::line_ranges(lines)),
+            lines => format!(" lines {}", tenet_engine::format_line_ranges(lines)),
         };
         writeln!(out, "  {kind:10} {}{excerpt}", scoped.file.path.display())?;
         if let Some(error) = &scoped.file.error {
@@ -514,7 +685,7 @@ fn brief(
         writeln!(
             out,
             "  tenet show {} --json lists every file",
-            row_name(current, entry)
+            format_row_name(current, entry)
         )?;
     }
 
@@ -531,11 +702,11 @@ fn brief(
                 "  record {}  {}  {}  {currency}\n    {}",
                 record.id,
                 record.conclusion.as_str(),
-                ago(record.at),
+                format_ago(record.at),
                 record.message.replace('\n', "\n    "),
             )?;
             if !record.evidence.is_empty() {
-                let spans: Vec<_> = record.evidence.iter().map(span_text).collect();
+                let spans: Vec<_> = record.evidence.iter().map(format_span_text).collect();
                 writeln!(out, "    {}", spans.join(", "))?;
             }
         }
@@ -547,7 +718,7 @@ fn brief(
                 assessment
                     .conclusion
                     .as_ref()
-                    .map_or("not assessed", |c| c.status.as_str())
+                    .map_or("not assessed", |conclusion| conclusion.status.as_str())
             )?;
         }
         let older = (
@@ -573,8 +744,8 @@ fn brief(
                             out,
                             "  {path}: {} added, {} removed since r{}; see Change",
                             change["added"], change["removed"], old.rev
-                        )?
-                    }
+                        )?;
+                    },
                     (Value::String(diff), _) => writeln!(out, "{}", diff.trim_end())?,
                     (_, note) => writeln!(out, "  {path}: {}", note.as_str().unwrap_or(""))?,
                 }
@@ -583,18 +754,22 @@ fn brief(
     }
 
     writeln!(out, "\nRecord")?;
-    let conclusions = review::conclusions(entry.mode, entry.scope);
-    let choices: Vec<_> = conclusions.iter().map(|c| c.as_str()).collect();
+    let conclusions = review::list_conclusions(entry.mode, entry.scope);
+    let choices: Vec<_> = conclusions
+        .iter()
+        .map(|conclusion| conclusion.as_str())
+        .collect();
     writeln!(
         out,
-        "  tenet record {} --conclusion {} --evidence PATH:START-END -m \"what the evidence shows\"",
-        row_name(current, entry),
+        "  tenet record {} --conclusion {} --evidence PATH:START-END -m \"what the evidence \
+         shows\"",
+        format_row_name(current, entry),
         choices.join("|")
     )?;
     let flagged: Vec<_> = entry
         .assessment
         .iter()
-        .flat_map(|a| &a.results)
+        .flat_map(|assessment| &assessment.results)
         .filter(|result| result.status == Status::Fail)
         .map(|result| result.path.as_str())
         .collect();
@@ -610,7 +785,8 @@ fn brief(
     if entry.mode == Mode::Diff && selected().next().is_none() {
         writeln!(
             out,
-            "  A favorable conclusion needs `tenet check --contract {name}` settled as verified first"
+            "  A favorable conclusion needs `tenet check --contract {name}` settled as verified \
+             first"
         )?;
     } else if entry.mode == Mode::Diff && selected().any(|scoped| scoped.file.is_changed()) {
         let citations: Vec<_> = (entry.files.iter())
@@ -632,8 +808,11 @@ fn brief(
 }
 
 /// Each file's patch, under a Change heading when there is any.
-fn change(out: &mut impl Write, changes: &[Change]) -> Result<()> {
-    let patches: Vec<_> = changes.iter().filter(|c| !c.patch.is_empty()).collect();
+fn change(out: &mut impl Write, changes: &[Change]) -> Result<(), CommandError> {
+    let patches: Vec<_> = changes
+        .iter()
+        .filter(|change| !change.patch.is_empty())
+        .collect();
     if !patches.is_empty() {
         writeln!(out, "\nChange")?;
     }
@@ -648,10 +827,20 @@ fn change(out: &mut impl Write, changes: &[Change]) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn record(root: &Path, state: &Path, args: &crate::cli::Record) -> Result<u8> {
+#[expect(
+    clippy::future_not_send,
+    reason = "The command drives this future on one current-thread runtime and never moves it \
+              across threads."
+)]
+pub(crate) async fn record(
+    root: &Path,
+    state: &Path,
+    args: &cli::Record,
+) -> Result<ExitStatus, CommandError> {
     let conclusion = ContractStatus::parse(&args.conclusion).with_context(|| {
         format!(
-            "unknown conclusion {}; use verified, preserved, unaffected, clear, failed, or unresolved",
+            "unknown conclusion {:?}; use verified, preserved, unaffected, clear, failed, or \
+             unresolved",
             args.conclusion
         )
     })?;
@@ -667,7 +856,7 @@ pub(crate) async fn record(root: &Path, state: &Path, args: &crate::cli::Record)
         },
     )
     .await?;
-    let mut out = io::stdout().lock();
+    let mut out = output::open_stdout().lock();
     writeln!(
         out,
         "Recorded {}: {} {} for r{}",
@@ -689,49 +878,68 @@ pub(crate) async fn record(root: &Path, state: &Path, args: &crate::cli::Record)
     {
         writeln!(
             out,
-            "The model concluded {}; this record decides the contract while its input is unchanged.",
+            "The model concluded {}; this record decides the contract while its input is \
+             unchanged.",
             model.as_str()
         )?;
     }
-    Ok(0)
+    Ok(ExitStatus::Passed)
 }
 
-pub(crate) fn log(state: &Path, contract: Option<&str>, json: bool) -> Result<u8> {
-    let review = Review::existing(state)?;
+#[expect(
+    clippy::shadow_reuse,
+    reason = "Each step rebinds the value it converts under the same name."
+)]
+#[expect(
+    clippy::string_slice,
+    reason = "Each slice bound is a character boundary: an ASCII hex hash prefix, a str::find \
+              offset, or a span the parser returns."
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The steps run in one order and share local state; splitting them would add \
+              forwarding functions."
+)]
+pub(crate) fn log(
+    state: &Path,
+    contract: Option<&str>,
+    json: bool,
+) -> Result<ExitStatus, CommandError> {
+    let review = Review::open_existing(state)?;
     let shown = |name: &str| contract.is_none_or(|contract| contract == name);
-    let mut out = BufWriter::new(io::stdout().lock());
+    let mut out = BufWriter::new(output::open_stdout().lock());
     if json {
         for entry in review.entries() {
             let listed = match entry {
-                Entry::Revision(revision) => review
-                    .assessments_in(revision.rev)
-                    .any(|a| shown(&a.contract)),
+                Entry::Revision(revision) => {
+                    review
+                        .list_assessments_in(revision.rev)
+                        .any(|assessment| shown(&assessment.contract))
+                },
                 Entry::Assessment(assessment) => shown(&assessment.contract),
                 Entry::Record(record) => shown(&record.contract),
             };
             if listed {
-                let mut value = serde_json::to_value(entry)?;
-                value["version"] = json!(2);
-                writeln!(out, "{value}")?;
+                output::write_document(&mut out, LOG_VERSION, serde_json::to_value(entry)?)?;
             }
         }
         out.flush()?;
-        return Ok(0);
+        return Ok(ExitStatus::Passed);
     }
 
     // A record names the one assessment its revision made of its contract.
     let mut records: HashMap<(u64, &str), Vec<&Record>> = HashMap::new();
-    for record in review.records() {
+    for record in review.list_records() {
         records
             .entry((record.rev, &record.contract))
             .or_default()
             .push(record);
     }
     let mut listed = false;
-    for revision in review.revisions().rev() {
+    for revision in review.list_revisions().rev() {
         let mut assessments = review
-            .assessments_in(revision.rev)
-            .filter(|a| shown(&a.contract))
+            .list_assessments_in(revision.rev)
+            .filter(|assessment| shown(&assessment.contract))
             .peekable();
         if assessments.peek().is_none() {
             continue;
@@ -741,11 +949,11 @@ pub(crate) fn log(state: &Path, contract: Option<&str>, json: bool) -> Result<u8
             out,
             "r{}  {}  {}{}  {}{}",
             revision.rev,
-            ago(revision.at),
+            format_ago(revision.at),
             revision.review,
-            paths_note(revision),
+            format_paths_note(revision),
             revision.model.as_deref().unwrap_or("no model"),
-            threshold_note(revision.min_confidence)
+            format_threshold_note(revision.min_confidence)
         )?;
         for assessment in assessments {
             let reused = assessment
@@ -759,7 +967,7 @@ pub(crate) fn log(state: &Path, contract: Option<&str>, json: bool) -> Result<u8
                 assessment
                     .conclusion
                     .as_ref()
-                    .map_or("not assessed", |c| c.status.as_str()),
+                    .map_or("not assessed", |conclusion| conclusion.status.as_str()),
                 &assessment.input[..12]
             )?;
             let made = records.get(&(revision.rev, assessment.contract.as_str()));
@@ -769,7 +977,7 @@ pub(crate) fn log(state: &Path, contract: Option<&str>, json: bool) -> Result<u8
                     "    record {}  {}  {}  {}",
                     record.id,
                     record.conclusion.as_str(),
-                    ago(record.at),
+                    format_ago(record.at),
                     record.message.replace('\n', "\n      ")
                 )?;
             }
@@ -779,11 +987,11 @@ pub(crate) fn log(state: &Path, contract: Option<&str>, json: bool) -> Result<u8
         writeln!(out, "No checks recorded.")?;
     }
     out.flush()?;
-    Ok(0)
+    Ok(ExitStatus::Passed)
 }
 
 /// The model's conclusion for the row's exact input.
-fn model(entry: &CurrentContract) -> Option<Model> {
+fn find_model(entry: &CurrentContract<'_>) -> Option<Model> {
     let conclusion = entry.assessment?.conclusion.as_ref()?;
     Some(Model {
         status: conclusion.status,
@@ -794,12 +1002,18 @@ fn model(entry: &CurrentContract) -> Option<Model> {
 }
 
 /// The row's state as `check` reports it, and which check the changed inputs were captured in.
-fn state_text(entry: &CurrentContract) -> (&'static str, String) {
-    let threshold = threshold_note(entry.min_confidence);
-    let (label, mut note) = crate::report_format::state(&entry.state, model(entry), &threshold);
-    if let ContractState::Pending {
-        reason: Pending::InputsChanged,
-    } = entry.state
+#[expect(
+    clippy::format_push_string,
+    reason = "The text is built in memory, where `write!` would add a Result that cannot fail."
+)]
+fn format_state_text(entry: &CurrentContract<'_>) -> (&'static str, String) {
+    let threshold = format_threshold_note(entry.min_confidence);
+    let (label, mut note) =
+        report_format::format_state(&entry.state, find_model(entry), &threshold);
+    if entry.state
+        == (ContractState::Pending {
+            reason: Pending::InputsChanged,
+        })
     {
         note.push_str(&format!(" after r{}", entry.selection.rev));
     }
@@ -807,26 +1021,34 @@ fn state_text(entry: &CurrentContract) -> (&'static str, String) {
 }
 
 /// How many of each label, in label order: "2 fail · 30 pass".
-fn tally<'a>(labels: impl Iterator<Item = &'a str>) -> String {
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "Counts are bounded by the contracts of one review."
+)]
+#[expect(
+    clippy::shadow_reuse,
+    reason = "Each step rebinds the value it converts under the same name."
+)]
+fn format_tally<'label>(labels: impl Iterator<Item = &'label str>) -> String {
     let mut counts = BTreeMap::new();
     for label in labels {
-        *counts.entry(label.to_lowercase()).or_insert(0) += 1;
+        *counts.entry(label.to_lowercase()).or_insert(0_i32) += 1_i32;
     }
     let counts: Vec<_> = counts
         .iter()
         .map(|(label, count)| format!("{count} {label}"))
         .collect();
-    counts.join(" · ")
+    counts.join(" \u{b7} ")
 }
 
 /// The name that selects this row in `show` and `record`: the contract, plus the selection's
 /// paths when the contract stands in more than one check.
-fn row_name(current: &Current, entry: &CurrentContract) -> String {
+fn format_row_name(current: &Current<'_>, entry: &CurrentContract<'_>) -> String {
     let mut name = entry.contract.name.clone();
     let rows = current
         .contracts
         .iter()
-        .filter(|c| c.contract.name == name)
+        .filter(|contract| contract.contract.name == name)
         .count();
     if rows > 1 {
         for path in &entry.selection.paths {
@@ -838,15 +1060,15 @@ fn row_name(current: &Current, entry: &CurrentContract) -> String {
 }
 
 /// A revision's selected paths, as a note after the review's name.
-fn paths_note(revision: &Revision) -> String {
+fn format_paths_note(revision: &Revision) -> String {
     if revision.paths.is_empty() {
         String::new()
     } else {
-        format!(" · {}", selection_text(revision))
+        format!(" · {}", format_selection_text(revision))
     }
 }
 
-fn selection_text(revision: &Revision) -> String {
+fn format_selection_text(revision: &Revision) -> String {
     if revision.paths.is_empty() {
         return "(every path)".into();
     }
@@ -859,50 +1081,77 @@ fn selection_text(revision: &Revision) -> String {
 }
 
 /// A confidence threshold that differs from the default, which changes how answers are routed.
-fn threshold_note(min_confidence: Option<f64>) -> String {
+#[expect(
+    clippy::float_cmp_const,
+    reason = "The parser stores the default threshold unchanged, so an exact comparison finds it."
+)]
+fn format_threshold_note(min_confidence: Option<f64>) -> String {
     match min_confidence {
         Some(threshold) if threshold != MIN_CONFIDENCE => {
             format!(" · min confidence {threshold}")
-        }
+        },
         _ => String::new(),
     }
 }
 
 /// What changed in the contract's inputs between an earlier assessment and now.
-fn interdiff(review: &Review, old: &Assessment, entry: &CurrentContract) -> Result<Vec<Value>> {
+#[expect(
+    clippy::else_if_without_else,
+    reason = "`needless_else` rejects the empty `else` this lint asks for."
+)]
+#[expect(
+    clippy::excessive_nesting,
+    reason = "Each level is a loop, match or closure over one parsed structure, and flattening it \
+              would split one decision."
+)]
+#[expect(
+    clippy::shadow_unrelated,
+    reason = "Each block binds its own result under the name the following lines read."
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The steps run in one order and share local state; splitting them would add \
+              forwarding functions."
+)]
+fn compute_interdiff(
+    review: &Review,
+    old: &Assessment,
+    entry: &CurrentContract<'_>,
+) -> Result<Vec<Value>, CommandError> {
     let mut changes = Vec::new();
     let path = entry.contract.path.display().to_string();
     let forgotten = format!(
         "contents from r{} are not in the review state, which keeps files up to {} MiB",
         old.rev,
-        MAX_BLOB_BYTES >> 20
+        MAX_BLOB_BYTES >> 20_i32
     );
     if old.contract_hash != entry.contract.hash {
-        match review.blob(&old.contract_hash)? {
-            Some(before) => {
-                let text = diff(&path, old.rev, &before, &entry.contract.document);
+        match review.read_blob(&old.contract_hash)? {
+            Some(read_before) => {
+                let text = diff(&path, old.rev, &read_before, &entry.contract.document);
                 changes.push(json!({"path": path, "diff": text}));
-            }
+            },
             None => changes.push(json!({"path": path, "note": forgotten})),
         }
     }
-    let revision = review.revision(old.rev)?;
-    let previous: HashMap<_, _> = revision
-        .files(old)
+    let revision = review.find_revision(old.rev)?;
+    let previous_files: HashMap<_, _> = revision
+        .list_files(old)
         .map(|(_, file)| (&file.path, file))
         .collect();
     for scoped in &entry.files {
         let file = &scoped.file;
         let path = file.path.display().to_string();
-        let Some(previous) = previous.get(&file.path) else {
+        let Some(previous) = previous_files.get(&file.path) else {
             changes.push(json!({"path": path, "note": "entered the contract's inputs"}));
             continue;
         };
         if previous.after != file.after {
             let before = match previous.after.as_deref() {
-                Some(hash) => match review.blob(hash)? {
-                    Some(text) => text,
-                    None => {
+                Some(hash) => {
+                    if let Some(text) = review.read_blob(hash)? {
+                        text
+                    } else {
                         changes.push(json!({"path": path, "note": forgotten}));
                         continue;
                     }
@@ -912,11 +1161,16 @@ fn interdiff(review: &Review, old: &Assessment, entry: &CurrentContract) -> Resu
             let after = entry
                 .changes
                 .iter()
-                .find(|c| c.path == file.path)
-                .and_then(|c| c.after.clone())
+                .find(|change| change.path == file.path)
+                .and_then(|change| change.after.clone())
                 .unwrap_or_default();
             let lines = TextDiff::from_lines(&before, &after);
-            let count = |tag| lines.iter_all_changes().filter(|c| c.tag() == tag).count();
+            let count = |tag| {
+                lines
+                    .iter_all_changes()
+                    .filter(|change| change.tag() == tag)
+                    .count()
+            };
             let (added, removed) = (count(ChangeTag::Insert), count(ChangeTag::Delete));
             let text = diff(&path, old.rev, &before, &after);
             changes.push(json!({"path": path, "diff": text, "added": added, "removed": removed}));
@@ -924,9 +1178,9 @@ fn interdiff(review: &Review, old: &Assessment, entry: &CurrentContract) -> Resu
             changes.push(json!({"path": path, "note": "base contents changed"}));
         }
     }
-    let current: HashSet<_> = entry.files.iter().map(|scoped| &scoped.file.path).collect();
-    for (_, file) in revision.files(old) {
-        if !current.contains(&file.path) {
+    let current_paths: HashSet<_> = entry.files.iter().map(|scoped| &scoped.file.path).collect();
+    for (_, file) in revision.list_files(old) {
+        if !current_paths.contains(&file.path) {
             let path = file.path.display().to_string();
             changes.push(json!({"path": path, "note": "left the contract's inputs"}));
         }
@@ -942,7 +1196,7 @@ fn diff(path: &str, rev: u64, before: &str, after: &str) -> String {
         .to_string()
 }
 
-fn span_text(span: &review::Span) -> String {
+fn format_span_text(span: &review::Span) -> String {
     match span.lines {
         Some([start, end]) if start == end => format!("{}:{start}", span.path.display()),
         Some([start, end]) => format!("{}:{start}-{end}", span.path.display()),
@@ -952,6 +1206,10 @@ fn span_text(span: &review::Span) -> String {
 
 /// The check that captures this selection again against the review's base commit, naming
 /// `contract` if given.
+#[expect(
+    clippy::shadow_reuse,
+    reason = "Each step rebinds the value it converts under the same name."
+)]
 fn check_command(revision: &Revision, contract: Option<&str>) -> String {
     let mut command = String::from("tenet check");
     for path in &revision.paths {
@@ -973,10 +1231,20 @@ fn check_command(revision: &Revision, contract: Option<&str>) -> String {
     command
 }
 
-fn ago(at: u64) -> String {
+#[expect(
+    clippy::integer_division,
+    reason = "The division rounds down by design: whole spinner frames and whole minutes, hours \
+              and days."
+)]
+#[expect(
+    clippy::integer_division_remainder_used,
+    reason = "The quotient and remainder pick a spinner frame or a whole time unit, and \
+              tokio::select! expands to a remainder for its branch order."
+)]
+fn format_ago(at: u64) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(at, |d| d.as_secs());
+        .map_or(at, |duration| duration.as_secs());
     match now.saturating_sub(at) {
         0..60 => "just now".into(),
         seconds @ 60..3600 => format!("{}m ago", seconds / 60),

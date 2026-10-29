@@ -1,31 +1,55 @@
-use std::cell::Cell;
+use core::cell::Cell;
 
-use anyhow::{Result, bail};
-use ev_grep_core::{Assessment, Candidate, DecisionBatch, Evaluator, Question};
+use ev_grep_core::{Assessment, Candidate, DecisionBatch, ErrorKind, Evaluator, Failure, Question};
 
-use crate::{Event, EvidencePacket, FailureKind, MIN_CONFIDENCE, Review, Stage};
+use super::CheckError;
+use crate::{
+    ClassifyRequest,
+    Event,
+    EvidencePacket,
+    FailureKind,
+    MIN_CONFIDENCE,
+    RequestFailure,
+    Review,
+    Stage,
+};
 
 /// The model requests a check would send, and those the review's answers would answer instead.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Prediction {
-    pub file_requests: usize,
-    pub combined_requests: usize,
     pub cached: usize,
+    pub combined_requests: usize,
+    pub file_requests: usize,
 }
 
-/// Follow `run` without sending anything. An evaluator that answers no request stands in for the
-/// provider, so cached answers, inputs that send nothing, and unaffected contracts count exactly
-/// as a check counts them. The budget is unlimited; the caller compares the total with its own.
-pub async fn predict(
+/// Follow `run` without sending anything.
+///
+/// An evaluator that answers no request stands in for the provider, so cached answers, inputs that
+/// send nothing, and unaffected contracts count exactly as a check counts them. The budget is
+/// unlimited; the caller compares the total with its own.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "Counts of results, contracts and requests are bounded by the repository's files and \
+              the request budget, far below the integer's limit."
+)]
+#[inline]
+#[expect(
+    clippy::future_not_send,
+    reason = "The checker drives this future on one task and never moves it across threads."
+)]
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "The remaining variants take no action here, and listing each would repeat the enum."
+)]
+pub async fn estimate(
     evidence: &EvidencePacket<'_>,
     review: &Review,
     jobs: usize,
-) -> Result<Prediction> {
+) -> Result<Prediction, CheckError> {
     let options = super::Options {
         jobs,
         max_requests: usize::MAX,
         min_confidence: MIN_CONFIDENCE,
-        classify: |_| FailureKind::Unknown,
     };
     let (file_requests, combined_requests) = (Cell::new(0), Cell::new(0));
     let checked = super::run(evidence, options, &Unsent, review, &|event| {
@@ -38,30 +62,64 @@ pub async fn predict(
                 stage: Stage::Applicability,
                 ..
             } => file_requests.set(file_requests.get() + 1),
-            _ => {}
+            _ => {},
         }
-        Ok(())
+        Ok::<_, CheckError>(())
     })
     .await?;
     Ok(Prediction {
-        file_requests: file_requests.get(),
-        combined_requests: combined_requests.get(),
         cached: checked.summary.cached,
+        combined_requests: combined_requests.get(),
+        file_requests: file_requests.get(),
     })
 }
 
 struct Unsent;
 
+/// Why a dry run's evaluator answered nothing.
+#[derive(Debug, thiserror::Error)]
+enum DryRunError {
+    #[error(transparent)]
+    Core(#[from] ev_grep_core::InputError),
+    #[error("a dry run sends no request")]
+    Unsent,
+}
+
+impl Failure for DryRunError {
+    fn classify(&self) -> ErrorKind {
+        match self {
+            Self::Core(error) => error.classify(),
+            Self::Unsent => ErrorKind::Configuration,
+        }
+    }
+}
+
+impl ClassifyRequest for DryRunError {
+    fn classify_request(&self) -> RequestFailure {
+        RequestFailure::new(FailureKind::Unknown, false)
+    }
+}
+
 impl Evaluator for Unsent {
-    async fn assess(&self, _: &str, _: &Candidate) -> Result<Assessment> {
-        bail!("a dry run sends no request")
+    type Error = DryRunError;
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "The trait is async for evaluators that wait on a model."
+    )]
+    async fn assess(&self, _: &str, _: &Candidate) -> Result<Assessment, DryRunError> {
+        Err(DryRunError::Unsent)
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "The trait is async for evaluators that wait on a model."
+    )]
     async fn assess_questions(
         &self,
         _: &[Question<'_>],
         _: &serde_json::Value,
-    ) -> Result<DecisionBatch> {
-        bail!("a dry run sends no request")
+    ) -> Result<DecisionBatch, DryRunError> {
+        Err(DryRunError::Unsent)
     }
 }

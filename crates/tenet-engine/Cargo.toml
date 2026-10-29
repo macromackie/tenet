@@ -1,12 +1,12 @@
 [package]
-name = "tenet-engine"
-version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
-publish.workspace = true
-license.workspace = true
 homepage.workspace = true
+license.workspace = true
+name = "tenet-engine"
+publish.workspace = true
 repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
@@ -16,11 +16,13 @@ futures-util.workspace = true
 ignore.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tenet-contracts.workspace = true
-tempfile.workspace = true
 similar.workspace = true
+tempfile.workspace = true
+tenet-contracts.workspace = true
+thiserror.workspace = true
 
 tokio.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

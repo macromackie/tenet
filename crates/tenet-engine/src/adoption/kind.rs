@@ -3,10 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
-use tenet_contracts::{contract_hash, file_hash, skill_hash};
+use tenet_contracts::{DocumentError, hash_contract, hash_file, hash_skill};
 
-use super::relative;
+use super::{AdoptionError, HashError, make_relative};
 
 /// Which lock table a command manages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,35 +17,38 @@ pub enum Kind {
 /// How an installed file takes upstream changes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Rule {
-    /// The copy's CONTRACT.md or SKILL.md: compared without its `name` value and merged three ways.
-    Named,
     /// Other Markdown in a skill: merged three ways.
     Merged,
+    /// The copy's CONTRACT.md or SKILL.md: compared without its `name` value and merged three ways.
+    Named,
     /// Every other file, such as a contract's assets: replaced while unedited and never merged.
     ReadOnly,
 }
 
 impl Kind {
-    /// The library folder, lock table, and command for this kind.
-    pub fn name(self) -> &'static str {
-        match self {
-            Kind::Contracts => "contracts",
-            Kind::Skills => "skills",
-        }
+    /// The lock key for a command's path: a contract's CONTRACT.md, given it or its folder, or a
+    /// skill's folder, given it or its SKILL.md.
+    pub(super) fn derive_key(self, path: &Path) -> Result<PathBuf, AdoptionError> {
+        let relative_path = make_relative(path)?;
+        let named = relative_path
+            .file_name()
+            .is_some_and(|name| name == self.name_document());
+        Ok(match (self, named) {
+            (Self::Contracts, true) | (Self::Skills, false) => relative_path,
+            (Self::Contracts, false) => relative_path.join(self.name_document()),
+            (Self::Skills, true) => {
+                relative_path
+                    .parent()
+                    .ok_or(AdoptionError::NoSkillFolder)?
+                    .to_owned()
+            },
+        })
     }
 
-    /// The document that names an installed copy.
-    pub(super) fn document(self) -> &'static str {
-        match self {
-            Kind::Contracts => "CONTRACT.md",
-            Kind::Skills => "SKILL.md",
-        }
-    }
-
-    pub(super) fn rule(self, path: &Path) -> Rule {
-        if path == Path::new(self.document()) {
+    pub(super) fn derive_rule(self, path: &Path) -> Rule {
+        if path == Path::new(self.name_document()) {
             Rule::Named
-        } else if self == Kind::Skills
+        } else if self == Self::Skills
             && path.extension().is_some_and(|extension| extension == "md")
         {
             Rule::Merged
@@ -55,32 +57,38 @@ impl Kind {
         }
     }
 
-    /// The lock key for a command's path: a contract's CONTRACT.md, given it or its folder, or a
-    /// skill's folder, given it or its SKILL.md.
-    pub(super) fn key(self, path: &Path) -> Result<PathBuf> {
-        let path = relative(path)?;
-        let named = path.file_name().is_some_and(|name| name == self.document());
-        Ok(match (self, named) {
-            (Kind::Contracts, true) | (Kind::Skills, false) => path,
-            (Kind::Contracts, false) => path.join(self.document()),
-            (Kind::Skills, true) => path.parent().context("skill has no folder")?.to_owned(),
-        })
+    /// Hash a file of a copy, `path` relative to its folder, as the lock records it.
+    pub(super) fn hash(self, path: &Path, bytes: &[u8]) -> Result<String, HashError> {
+        match (self, self.derive_rule(path)) {
+            (Self::Contracts, Rule::Named) => Ok(hash_contract(str::from_utf8(bytes)?)?),
+            (Self::Skills, Rule::Named) => Ok(hash_skill(str::from_utf8(bytes)?)?),
+            (_, Rule::Merged | Rule::ReadOnly) => Ok(hash_file(bytes)),
+        }
     }
 
-    /// Hash a file of a copy, `path` relative to its folder, as the lock records it.
-    pub(super) fn hash(self, path: &Path, bytes: &[u8]) -> Result<String> {
-        match (self, self.rule(path)) {
-            (Kind::Contracts, Rule::Named) => contract_hash(str::from_utf8(bytes)?),
-            (Kind::Skills, Rule::Named) => skill_hash(str::from_utf8(bytes)?),
-            (_, Rule::Merged | Rule::ReadOnly) => Ok(file_hash(bytes)),
+    /// The library folder, lock table, and command for this kind.
+    #[must_use]
+    #[inline]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Contracts => "contracts",
+            Self::Skills => "skills",
+        }
+    }
+
+    /// The document that names an installed copy.
+    pub(super) const fn name_document(self) -> &'static str {
+        match self {
+            Self::Contracts => "CONTRACT.md",
+            Self::Skills => "SKILL.md",
         }
     }
 
     /// Validate a copy's CONTRACT.md or SKILL.md; `path` is relative to the project root.
-    pub(super) fn validate(self, path: &Path, document: &str) -> Result<()> {
+    pub(super) fn validate(self, path: &Path, document: &str) -> Result<(), DocumentError> {
         match self {
-            Kind::Contracts => tenet_contracts::parse(path, document).map(drop),
-            Kind::Skills => tenet_contracts::validate_skill(path, document),
+            Self::Contracts => tenet_contracts::parse(path, document).map(drop),
+            Self::Skills => tenet_contracts::validate_skill(path, document),
         }
     }
 }

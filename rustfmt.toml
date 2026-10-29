@@ -1,0 +1,35 @@
+# The strictest rustfmt settings that code-lint-strictness requires.
+# Every option takes the value under which rustfmt rewrites the most code, or the form a contract requires.
+# Most of these options are unstable, so run this file with one pinned dated nightly rustfmt,
+# such as `cargo +nightly-2026-10-27 fmt --all --check`, while every other tool keeps the stable toolchain.
+#
+# rustfmt has no setting that extends another file, so copy this file as the workspace's rustfmt.toml,
+# and comment any local change beside the key it changes.
+# Keys stay in alphabetical order.
+# A new rustfmt version changes its output, so this file is tested against the rustfmt of nightly-2026-10-27;
+# raise it in a reviewed upgrade.
+
+comment_width = 100
+condense_wildcard_suffixes = true
+error_on_line_overflow = true
+error_on_unformatted = true
+float_literal_trailing_zero = "Always"
+force_multiline_blocks = true
+format_code_in_doc_comments = true
+format_macro_matchers = true
+format_strings = true
+group_imports = "StdExternalCrate"
+# Lowercase hexadecimal digits, the case the other shipped formatters write.
+hex_literal_case = "Lower"
+imports_granularity = "Crate"
+imports_layout = "HorizontalVertical"
+match_block_trailing_comma = true
+max_width = 100
+newline_style = "Unix"
+normalize_comments = true
+normalize_doc_attributes = true
+reorder_impl_items = true
+style_edition = "2024"
+use_field_init_shorthand = true
+use_try_shorthand = true
+wrap_comments = true

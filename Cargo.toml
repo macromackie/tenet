@@ -3,43 +3,191 @@ members = ["crates/tenet", "crates/tenet-contracts", "crates/tenet-engine"]
 resolver = "3"
 
 [workspace.package]
-version = "0.11.0"
 edition = "2024"
-rust-version = "1.98"
-publish = false
-license = "MIT"
 homepage = "https://tenet-contracts.com"
+license = "MIT"
+publish = false
 repository = "https://github.com/macromackie/tenet"
+rust-version = "1.98"
+version = "0.12.0"
 
 [workspace.dependencies]
+annotate-snippets = "0.12"
 anyhow = "1"
 blake3 = "1"
-clap = { version = "4", features = ["derive", "env"] }
+clap = { features = ["derive", "env"], version = "4" }
+console = "0.16"
+# deny.toml refuses a git or path dependency without a version, so each names its source's own version. A release
+# raises the tenet ones with `workspace.package.version`.
+ev-grep-core = { git = "https://github.com/macromackie/ev-grep", rev = "236a26c55d51309b735ba718a30692a4b64fd869", version = "0.8.1" }
+ev-grep-jev = { git = "https://github.com/macromackie/ev-grep", rev = "236a26c55d51309b735ba718a30692a4b64fd869", version = "0.8.1" }
 futures-util = "0.3"
 globset = "0.4"
 ignore = "0.4"
 pulldown-cmark = "0.13"
-serde = { version = "1", features = ["derive"] }
+serde = { features = ["derive"], version = "1" }
 serde_json = "1"
-similar = "2"
 serde_yaml = "0.9"
-tokio = { version = "1", features = ["macros", "rt", "signal", "sync", "time"] }
+similar = "2"
 tempfile = "3"
-annotate-snippets = "0.12"
-console = "0.16"
-ev-grep-core = { git = "https://github.com/macromackie/ev-grep", rev = "4dd0c5e86ef66568ff8fc342dce1fbfd916b27a9" }
-ev-grep-jev = { git = "https://github.com/macromackie/ev-grep", rev = "4dd0c5e86ef66568ff8fc342dce1fbfd916b27a9" }
-tenet-contracts = { path = "crates/tenet-contracts" }
-tenet-engine = { path = "crates/tenet-engine" }
+tenet-contracts = { path = "crates/tenet-contracts", version = "0.12.0" }
+tenet-engine = { path = "crates/tenet-engine", version = "0.12.0" }
+thiserror = "2"
+tokio = { features = ["macros", "rt", "signal", "sync", "time"], version = "1" }
+# Only the tenet binary installs a subscriber; the libraries and Jev only emit spans and events.
+tracing = { default-features = false, features = ["std"], version = "0.1.44" }
+tracing-subscriber = { default-features = false, features = ["fmt", "json"], version = "0.3.23" }
 
-[workspace.lints.rust]
-unsafe_code = "forbid"
-unreachable_pub = "warn"
+# The strictest Rust compiler, Clippy, and rustdoc lint levels that code-lint-strictness requires.
+# Every lint and lint group runs at deny, including Clippy's nursery and restriction groups,
+# and each lint left off names its reason in a comment directly above it.
+# Reasons: C contradicts a contract, R contradicts another enabled rule, F conflicts with the formatter,
+# and Q reports code the contracts require.
+#
+# Cargo has no setting that includes another file, so copy these three tables into the workspace's root Cargo.toml,
+# set `lints.workspace = true` in every member crate but one that needs unsafe code,
+# and comment any local change beside the entry it changes.
+# Turn one more lint off there with `name = "allow"`, beside a comment that starts with its reason letter.
+# Groups take `priority = -1`, so each named lint overrides the group that contains it.
+# Keys stay in alphabetical order; Cargo applies them by priority, not by position.
+#
+# code-lint-strictness leaves out a compiler lint that only a nightly compiler accepts until a stable release accepts it.
+# Eight rustc lints need a nightly feature and fail as unknown lints on a stable toolchain, so they stay unlisted:
+# deprecated_llvm_intrinsic, implicit_provenance_casts, multiple_supertrait_upcastable, must_not_suspend,
+# non_exhaustive_omitted_patterns, resolving_to_items_shadowing_supertrait_items, shadowing_supertrait_items,
+# and unqualified_local_imports. Add each one when a stable release accepts it.
+# A new toolchain adds lints, so this file is tested against Rust and Clippy 1.98.0; raise it in a reviewed upgrade.
 
 [workspace.lints.clippy]
-dbg_macro = "deny"
-unwrap_used = "deny"
-expect_used = "deny"
+all = { level = "deny", priority = -1 }
+# C: code-lint-strictness enables the restriction group, which this lint reports.
+blanket_clippy_restriction_lints = "allow"
+cargo = { level = "deny", priority = -1 }
+# C: `#[non_exhaustive]` forces a wildcard arm in other crates, which code-exhaustive-branches bans.
+exhaustive_enums = "allow"
+# C: code-rust-type-ownership gives a plain record public fields,
+# and `#[non_exhaustive]` stops other crates from building one with a struct literal (E0639).
+exhaustive_structs = "allow"
+# R: contradicts `needless_return`, which stays on.
+implicit_return = "allow"
+# R: contradicts `inline_asm_x86_att_syntax`, which stays on, so Intel syntax, rustc's default, passes.
+inline_asm_x86_intel_syntax = "allow"
+# R: with `big_endian_bytes` and `host_endian_bytes` on, no byte conversion would pass, so little-endian bytes pass.
+little_endian_bytes = "allow"
+# C: code-rust-doc-comment-coverage documents exported items only; code-comment-content bans restating a name.
+missing_docs_in_private_items = "allow"
+# C: code-comment-form writes doc comments as prose, with no `# Errors` section.
+missing_errors_doc = "allow"
+# C: code-comment-form writes doc comments as prose, with no `# Panics` section.
+missing_panics_doc = "allow"
+# Q: reports `impl std::error::Error`, which cannot override `type_id` or `provide` on a stable toolchain.
+missing_trait_methods = "allow"
+nursery = { level = "deny", priority = -1 }
+# Q: rewrites the braced `if let` and `match` that code-conditional-expressions allows into `map_or_else` closures.
+option_if_let_else = "allow"
+# R: contradicts `ref_patterns`, `match_ref_pats`, and `needless_borrowed_reference`, which stay on.
+pattern_type_mismatch = "allow"
+pedantic = { level = "deny", priority = -1 }
+# Q: reports the `pub use` re-export of a private child item that code-rust-module-boundaries requires.
+pub_use = "allow"
+# C, R: code-rust-visibility writes `pub(crate)`, and it contradicts `pub_without_shorthand`, which stays on.
+pub_with_shorthand = "allow"
+# C: code-rust-source-structure propagates errors with `?`.
+question_mark_used = "allow"
+# C: code-rust-visibility leaves this lint off.
+redundant_pub_crate = "allow"
+# Q: reports the spelled-out parameter, such as `bytes` for `buf`, that code-spelled-out-names requires.
+renamed_function_params = "allow"
+restriction = { level = "deny", priority = -1 }
+# C: code-rust-module-files bans `mod.rs`; `mod_module_files` stays on.
+self_named_module_files = "allow"
+# R: contradicts `semicolon_inside_block` and `semicolon_if_nothing_returned`, which stay on.
+semicolon_outside_block = "allow"
+# R: contradicts `unseparated_literal_suffix`, which stays on and matches `unreadable_literal`'s `1_000_000_u64`.
+separated_literal_suffix = "allow"
+# Q: reports a function with one caller, which code-function-size names for each case.
+single_call_fn = "allow"
+# Q: reports `struct Limits { capture_bytes, source_bytes }`, whose unit suffixes code-measured-value-names requires.
+struct_field_names = "allow"
+# Q: reports each `#[test]` in an integration-test crate under `tests/`.
+tests_outside_test_module = "allow"
+# Q: reports the `{value:?}` quoting that code-diagnostic-messages requires.
+use_debug = "allow"
+
+[workspace.lints.rust]
+ambiguous_negative_literals = "deny"
+closure_returning_async_block = "deny"
+# Q: a library's unit-test build compiles it as a binary, so it reports each export the crate's own contract requires.
+dead_code_pub_in_binary = "allow"
+deprecated_in_future = "deny"
+deprecated_safe = { level = "deny", priority = -1 }
+deprecated_safe_2024 = "deny"
+deref_into_dyn_supertrait = "deny"
+edition_2024_expr_fragment_specifier = "deny"
+elided_lifetimes_in_paths = "deny"
+explicit_outlives_requirements = "deny"
+ffi_unwind_calls = "deny"
+future_incompatible = { level = "deny", priority = -1 }
+if_let_rescope = "deny"
+impl_trait_overcaptures = "deny"
+impl_trait_redundant_captures = "deny"
+keyword_idents = { level = "deny", priority = -1 }
+keyword_idents_2018 = "deny"
+keyword_idents_2024 = "deny"
+let_underscore = { level = "deny", priority = -1 }
+let_underscore_drop = "deny"
+linker_info = "deny"
+macro_use_extern_crate = "deny"
+meta_variable_misuse = "deny"
+missing_copy_implementations = "deny"
+missing_debug_implementations = "deny"
+# C: code-rust-doc-comment-coverage gives an exported type's fields and variants no doc comment of their own.
+missing_docs = "allow"
+missing_unsafe_on_extern = "deny"
+non_ascii_idents = "deny"
+nonstandard_style = { level = "deny", priority = -1 }
+redundant_imports = "deny"
+redundant_lifetimes = "deny"
+refining_impl_trait = { level = "deny", priority = -1 }
+rust_2018_compatibility = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2021_compatibility = { level = "deny", priority = -1 }
+rust_2021_incompatible_closure_captures = "deny"
+rust_2021_incompatible_or_patterns = "deny"
+rust_2021_prefixes_incompatible_syntax = "deny"
+rust_2021_prelude_collisions = "deny"
+rust_2024_compatibility = { level = "deny", priority = -1 }
+rust_2024_guarded_string_incompatible_syntax = "deny"
+rust_2024_incompatible_pat = "deny"
+rust_2024_prelude_collisions = "deny"
+single_use_lifetimes = "deny"
+tail_expr_drop_order = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+unit_bindings = "deny"
+unknown_or_malformed_diagnostic_attributes = { level = "deny", priority = -1 }
+unnameable_types = "deny"
+unreachable_pub = "deny"
+unsafe_attr_outside_unsafe = "deny"
+# A crate that needs unsafe code, as code-rust-workspace-checks allows, copies these tables into its own [lints] table
+# with unsafe_code = "deny", sets no lints.workspace, and suppresses each use at its site.
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
+unstable_features = "deny"
+unused = { level = "deny", priority = -1 }
+# Q: Cargo gives every target one dependency list, so each test and binary target reports the library's.
+unused_crate_dependencies = "allow"
+unused_extern_crates = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+unused_qualifications = "deny"
+unused_results = "deny"
+variant_size_differences = "deny"
+warnings = { level = "deny", priority = -1 }
+
+[workspace.lints.rustdoc]
+all = { level = "deny", priority = -1 }
 
 [profile.release]
 lto = "thin"
@@ -49,26 +197,37 @@ strip = "debuginfo"
 inherits = "release"
 lto = "thin"
 
+# code-lint-strictness's cargo-machete table. Add a crate to `ignored` only beside a comment that starts with its
+# reason letters.
+[workspace.metadata.cargo-machete]
+ignored = []
+
 [workspace.metadata.dist]
 cargo-dist-version = "0.33.0"
+checksum = "sha256"
 ci = "github"
 dispatch-releases = true
-installers = ["shell"]
-targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
+global-artifacts-jobs = ["./release-smoke"]
 install-path = "~/.local/bin"
 install-updater = false
-checksum = "sha256"
-pr-run-mode = "upload"
+installers = ["shell"]
 plan-jobs = ["./check"]
-global-artifacts-jobs = ["./release-smoke"]
+pr-run-mode = "upload"
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+]
 
 # Intel runners built releases 1.5 to 3 times slower than Apple Silicon runners, so Apple Silicon cross-compiles the
 # Intel binary. Release smoke tests still run it on an Intel runner.
 [workspace.metadata.dist.github-custom-runners]
 x86_64-apple-darwin = "macos-14"
 
+# Version comments belong in the generated YAML, so the action references include them.
 [workspace.metadata.dist.github-action-commits]
-"actions/checkout" = "d23441a48e516b6c34aea4fa41551a30e30af803"
-"actions/upload-artifact" = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-"actions/download-artifact" = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
-"swatinem/rust-cache" = "49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c"
+"actions/checkout" = "d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0"
+"actions/download-artifact" = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1"
+"actions/upload-artifact" = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1"
+"swatinem/rust-cache" = "d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3"

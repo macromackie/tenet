@@ -1,0 +1,119 @@
+# The strictest Clippy options that code-lint-strictness requires, beside the lint levels in cargo/workspace-lints.toml.
+# Each option takes the form a contract requires, or else the value under which its lint reports the most code.
+# Each threshold is the value a contract declares, or else Clippy's default kept as a declared maximum.
+# Reasons: C contradicts a contract, R contradicts another enabled rule, F conflicts with the formatter,
+# and Q reports code the contracts require.
+#
+# Clippy has no setting that extends another file, so copy this file as the workspace's clippy.toml,
+# and comment any local change beside the key it changes.
+# A repository may declare its own value for a threshold below, with a comment naming the contract that lets it.
+# Fill that copy's `disallowed-methods`, `disallowed-names`, and `doc-valid-idents` lists, as the comment above each says.
+# Keys stay in alphabetical order.
+# A new Clippy version adds options, so this file is tested against Clippy 1.98.0; raise it in a reviewed upgrade.
+
+absolute-paths-allowed-crates = []
+absolute-paths-max-segments = 2
+accept-comment-above-attributes = false
+accept-comment-above-statement = false
+allow-comparison-to-zero = false
+allow-exact-repetitions = false
+allow-expect-in-consts = false
+# C: code-rust-source-structure lets test code call `unwrap` and `expect`.
+allow-expect-in-tests = true
+allow-large-stack-frames-in-tests = false
+allow-mixed-uninlined-format-args = false
+allow-unwrap-in-consts = false
+# C: code-rust-source-structure lets test code call `unwrap` and `expect`.
+allow-unwrap-in-tests = true
+allowed-idents-below-min-chars = []
+allowed-prefixes = []
+# Q: an empty list reports every identifier, and `non_ascii_idents` already limits identifiers to ASCII.
+allowed-scripts = ["Latin"]
+arithmetic-side-effects-allowed = []
+avoid-breaking-exported-api = false
+# Local: a tracing span guard held across an await tags other tasks' records, so code instruments the future instead.
+await-holding-invalid-types = [
+  { path = "tracing::span::Entered", reason = "Instrument the future with the span instead of holding its guard across an await." },
+  { path = "tracing::span::EnteredSpan", reason = "Instrument the future with the span instead of holding its guard across an await." },
+]
+check-grouped-late-init = true
+check-incompatible-msrv-in-tests = true
+check-inconsistent-struct-field-initializers = true
+check-private-items = true
+# code-function-size declares a maximum complexity per function.
+cognitive-complexity-threshold = 15
+# cli-output-channels opens a handle to either standard stream only in the output module.
+# The restriction group already denies the print macros (`print_stdout`, `print_stderr`) and `std::process::exit` (`exit`).
+# Clippy has no path scope, so the output module's one call of each function carries an outer
+# `#[expect(clippy::disallowed_methods, reason = "...")]`, as code-lint-suppressions allows.
+# Add each dependency's function that opens a standard stream, such as a terminal library's constructor.
+disallowed-methods = [
+  { path = "console::Term::buffered_stderr", reason = "Open standard error only in the output module, as cli-output-channels requires." },
+  { path = "std::io::stderr", reason = "Open standard error only in the output module, as cli-output-channels requires." },
+  { path = "std::io::stdout", reason = "Open standard output only in the output module, as cli-output-channels requires." },
+]
+# Add each abbreviation and spelling variant in the repository's code-spelled-out-names word list.
+disallowed-names = [".."]
+# Add each product and proper name that the repository's spelling check accepts.
+doc-valid-idents = []
+enable-raw-pointer-heuristic-for-send = false
+enforce-iter-loop-reborrow = true
+# code-function-size declares a maximum block nesting depth; the function body counts as the first block.
+excessive-nesting-threshold = 4
+ignore-interior-mutability = []
+# C: code-rust-type-ownership lets an operation's file hold the methods that serve it, so impl blocks count per file.
+inherent-impl-lint-scope = "file"
+lint-commented-code = true
+literal-representation-threshold = 16384
+# C: `AllTypes` reports a `match` that names every member of a closed set, which code-exhaustive-branches requires.
+matches-for-let-else = "WellKnownTypes"
+min-ident-chars-threshold = 1
+# C: code-declaration-order puts each function above its first use, such as a constant or impl that calls it,
+# so constants, types, impls, and functions share one group.
+module-item-order-groupings = [
+  [
+    "modules",
+    [
+      "extern_crate",
+      "mod",
+      "foreign_mod",
+    ],
+  ],
+  [
+    "use",
+    [
+      "use",
+    ],
+  ],
+  [
+    "everything_else",
+    [
+      "macro",
+      "global_asm",
+      "static",
+      "const",
+      "ty_alias",
+      "enum",
+      "struct",
+      "union",
+      "trait",
+      "trait_alias",
+      "impl",
+      "fn",
+    ],
+  ],
+]
+# C: code-declaration-order orders a module's items by their callers, not by name.
+module-items-ordered-within-groupings = "none"
+pub-underscore-fields-behavior = "AllPubFields"
+# Struct fields and enum variants sort in code point order, as code-key-order requires,
+# and impl and trait items sort by name within each kind.
+# Where a field's order is behavior, such as a serialized order or a derived `Ord`, suppress the struct at its site.
+source-item-ordering = ["enum", "impl", "module", "struct", "trait"]
+# code-function-size declares a maximum function length in lines; no Clippy lint counts statements or callback nesting, so Rust declares no statement or callback limit.
+too-many-lines-threshold = 50
+# F: rustfmt's reorder_impl_items writes an impl's types before its constants, so traits declare them in that order.
+trait-assoc-item-kinds-order = ["type", "const", "fn"]
+upper-case-acronyms-aggressive = true
+warn-on-all-wildcard-imports = true
+warn-unsafe-macro-metavars-in-private-macros = true

@@ -23,12 +23,12 @@ A diff check assumes the base follows the contracts. It asks whether staged, uns
 
 Each contract finishes with one result:
 
-| Full check | Diff check |
-| --- | --- |
-| `verified` | `preserved` or `unaffected` |
+| Full check                    | Diff check                   |
+| ----------------------------- | ---------------------------- |
+| `verified`                    | `preserved` or `unaffected`  |
 | `clear` for selected subjects | `clear` for selected changes |
-| `failed` | `failed` |
-| `unresolved` | `unresolved` |
+| `failed`                      | `failed`                     |
+| `unresolved`                  | `unresolved`                 |
 
 Failures include the requirement and evidence. A `clear` result applies only to the requested selection. These are model judgments, so a model's `failed` or `unresolved` result stays pending until a reviewer records a conclusion. See [Output](./output.md).
 

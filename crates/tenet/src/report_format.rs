@@ -1,9 +1,23 @@
+use alloc::collections::BTreeMap;
+
 use tenet_engine::{
-    ContextSummary, ContractState, ContractStatus, Coverage, MAX_FILE_BYTES, Omitted, Outcome,
-    Pending, RequestFailure, Status, Summary, review::Answer,
+    ContextSummary,
+    ContractState,
+    ContractStatus,
+    Coverage,
+    MAX_FILE_BYTES,
+    Omitted,
+    Outcome,
+    Pending,
+    RequestFailure,
+    Status,
+    Summary,
+    review::Answer,
 };
 
-pub(super) fn status(state: Status) -> &'static str {
+use crate::output;
+
+pub(super) const fn label_status(state: Status) -> &'static str {
     match state {
         Status::Pass => "PASS",
         Status::Fail => "FAIL",
@@ -15,15 +29,23 @@ pub(super) fn status(state: Status) -> &'static str {
     }
 }
 /// The model's probability of a violation, as a note after a state.
-pub(super) fn violation(probability: Option<f64>) -> String {
+#[expect(
+    clippy::float_arithmetic,
+    reason = "The values are display text: elapsed seconds and violation percentages."
+)]
+pub(super) fn format_violation(probability: Option<f64>) -> String {
     probability
-        .map(|p| format!(" · violation {:.0}%", p * 100.0))
+        .map(|share| format!(" · violation {:.0}%", share * 100.0_f64))
         .unwrap_or_default()
 }
 
 /// The model's conclusion for a contract's input, its probability of a violation, and its raw
 /// answer with the confidence threshold that routed it.
 #[derive(Clone, Copy)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
 pub(super) struct Model {
     pub status: ContractStatus,
     pub violation: Option<f64>,
@@ -32,7 +54,7 @@ pub(super) struct Model {
 }
 
 /// Which way an unresolved answer leaned, and whether its confidence fell short of the threshold.
-fn lean(model: Model) -> String {
+fn format_lean(model: Model) -> String {
     let Some(answer) = model.answer else {
         return String::new();
     };
@@ -50,12 +72,16 @@ fn lean(model: Model) -> String {
 
 /// A contract state's label and a note on what decided it: a record, and the model conclusion it
 /// overrides; the model; or why the contract is pending. `detail` follows the model's answer.
-pub(super) fn state(
+#[expect(
+    clippy::shadow_reuse,
+    reason = "Each step rebinds the value it converts under the same name."
+)]
+pub(super) fn format_state(
     state: &ContractState,
     model: Option<Model>,
     detail: &str,
 ) -> (&'static str, String) {
-    let violation = violation(model.and_then(|model| model.violation));
+    let violation = format_violation(model.and_then(|model| model.violation));
     let answer = |status: &str| format!("model {status}{violation}{detail}");
     let model_status = model.map_or("not assessed", |model| model.status.as_str());
     match state {
@@ -66,15 +92,20 @@ pub(super) fn state(
             let over = match model {
                 Some(model) if model.status != *conclusion => {
                     format!(" over {}", answer(model_status))
-                }
+                },
                 _ => String::new(),
             };
-            (upper(*conclusion), format!("recorded {id}{over}"))
-        }
+            (format_upper(*conclusion), format!("recorded {id}{over}"))
+        },
         ContractState::Settled {
             conclusion,
             record: None,
-        } => (upper(*conclusion), format!("model{violation}{detail}")),
+        } => {
+            (
+                format_upper(*conclusion),
+                format!("model{violation}{detail}"),
+            )
+        },
         ContractState::Pending { reason } => {
             let note = match reason {
                 Pending::ModelFailed => format!("{} · confirm or dispute", answer("failed")),
@@ -82,22 +113,22 @@ pub(super) fn state(
                     format!(
                         "{}{}",
                         answer("unresolved"),
-                        model.map(lean).unwrap_or_default()
+                        model.map(format_lean).unwrap_or_default()
                     )
-                }
+                },
                 Pending::NotAssessed => "not assessed".into(),
                 Pending::InputsChanged => "inputs changed".into(),
                 Pending::NotChecked => "not checked".into(),
                 Pending::ContractChanged => {
                     format!("contract changed in this diff · {}", answer(model_status))
-                }
+                },
             };
             ("PENDING", note)
-        }
+        },
     }
 }
 
-fn upper(status: ContractStatus) -> &'static str {
+const fn format_upper(status: ContractStatus) -> &'static str {
     match status {
         ContractStatus::Verified => "VERIFIED",
         ContractStatus::Preserved => "PRESERVED",
@@ -119,7 +150,7 @@ pub(super) fn request_failure(failure: RequestFailure) -> String {
 }
 
 /// The changed files no contract governs, when there are any.
-pub(super) fn coverage(coverage: &Coverage) -> Option<String> {
+pub(super) fn format_coverage(coverage: &Coverage) -> Option<String> {
     let files = |count: usize| format!("{count} changed file{}", if count == 1 { "" } else { "s" });
     if !coverage.governed && coverage.changed_files > 0 {
         return Some(format!(
@@ -149,7 +180,7 @@ pub(super) fn coverage(coverage: &Coverage) -> Option<String> {
 }
 
 /// What a file check left out of its model input.
-pub(super) fn omitted(omitted: &[Omitted]) -> String {
+pub(super) fn format_omitted(omitted: &[Omitted]) -> String {
     if omitted.contains(&Omitted::Contents) {
         "judged from its patch only".into()
     } else if omitted.contains(&Omitted::Before) {
@@ -160,7 +191,7 @@ pub(super) fn omitted(omitted: &[Omitted]) -> String {
 }
 
 /// The combined input's size and what was left out to fit the limit.
-pub(super) fn context(context: &ContextSummary) -> String {
+pub(super) fn format_context(context: &ContextSummary) -> String {
     let mut text = format!("{} of {MAX_FILE_BYTES} bytes", context.input_bytes);
     if context.input_bytes > MAX_FILE_BYTES {
         text.push_str(", too large; file checks only");
@@ -176,21 +207,21 @@ pub(super) fn context(context: &ContextSummary) -> String {
         omitted.push(format!("{} file contents", context.contents_omitted.len()));
     }
     if !omitted.is_empty() {
-        text.push_str(" · omitted ");
+        text.push_str(" \u{b7} omitted ");
         text.push_str(&omitted.join(", "));
     }
     text
 }
 
-pub(super) fn counts(s: &Summary) -> String {
+pub(super) fn format_counts(summary: &Summary) -> String {
     let entries = [
-        (s.passed, "passed"),
-        (s.failed, "failed"),
-        (s.uncertain, "uncertain"),
-        (s.not_applicable, "not applicable"),
-        (s.errors, "errors"),
-        (s.incomplete, "incomplete"),
-        (s.skipped, "skipped"),
+        (summary.passed, "passed"),
+        (summary.failed, "failed"),
+        (summary.uncertain, "uncertain"),
+        (summary.not_applicable, "not applicable"),
+        (summary.errors, "errors"),
+        (summary.incomplete, "incomplete"),
+        (summary.skipped, "skipped"),
     ];
     let counts = entries
         .into_iter()
@@ -205,8 +236,8 @@ pub(super) fn counts(s: &Summary) -> String {
     }
 }
 
-pub(super) fn paint(state: &str) -> String {
-    let styled = console::style(state).for_stderr();
+pub(super) fn format_painted(state: &str) -> String {
+    let styled = output::format_styled(state);
     match state.to_ascii_uppercase().as_str() {
         "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => styled.green().to_string(),
         "FAIL" | "FAILED" | "ERROR" => styled.red().bold().to_string(),
@@ -215,23 +246,20 @@ pub(super) fn paint(state: &str) -> String {
     }
 }
 
-pub(super) fn marker(state: &str) -> String {
-    let symbol = |symbol| console::style(symbol).for_stderr();
+pub(super) fn format_marker(state: &str) -> String {
+    let symbol = |symbol| output::format_styled(symbol);
     match state {
-        "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => symbol("✓").green().to_string(),
-        "FAIL" | "FAILED" | "ERROR" => symbol("×").red().to_string(),
+        "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => symbol("\u{2713}").green().to_string(),
+        "FAIL" | "FAILED" | "ERROR" => symbol("\u{d7}").red().to_string(),
         "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" | "PENDING" => symbol("?").yellow().to_string(),
-        _ => symbol("−").dim().to_string(),
+        _ => symbol("\u{2212}").dim().to_string(),
     }
 }
 
-pub(super) fn contract_counts(
-    states: &std::collections::BTreeMap<&str, usize>,
-    total: usize,
-) -> String {
+pub(super) fn format_contract_counts(states: &BTreeMap<&str, usize>, total: usize) -> String {
     let counts = states
         .iter()
-        .map(|(state, count)| format!("{count} {}", paint(&state.to_lowercase())))
+        .map(|(state, count)| format!("{count} {}", format_painted(&state.to_lowercase())))
         .collect::<Vec<_>>()
         .join(" | ");
     if counts.is_empty() {

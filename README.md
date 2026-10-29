@@ -30,7 +30,7 @@ Install shared contracts from the public [tenet-contracts](https://github.com/ma
 
 ```sh
 tenet contracts add tenet/data-and-apis --scope packages/api
-tenet contracts update             # Take later releases, keeping local edits
+tenet contracts update             # Take releases up to the next major, keeping local edits
 ```
 
 See [Guidance](docs/guidance.md) for local adaptations and conflicts.

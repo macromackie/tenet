@@ -1,31 +1,41 @@
 //! Installing shared contracts and skills through `.tenet.lock`, and taking their upstream changes.
 //!
-//! Checking never reads the lock. Only these operations touch the network, and nothing persists outside the project.
+//! Checking reads only the lock's separate `projects`, through discovery. Only these operations
+//! touch the network, and nothing persists outside the project.
 
 mod add;
+mod error;
 mod kind;
 mod unit;
 mod upstream;
 
+use alloc::collections::{BTreeMap, btree_map::Entry};
+use core::iter;
 use std::{
-    collections::BTreeMap,
     fs,
+    io::Write as _,
     path::{Component, Path, PathBuf},
 };
 
-use anyhow::{Context, Result, bail, ensure};
-use serde::Serialize;
-use tenet_contracts::{LOCK_FILE, Lock, conflict_marker, name_of, validate_skill, with_name};
-
-use crate::git;
 pub use add::{AddRequest, Destination, SkillDestination, SkillRequest, add, add_skill};
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "Callers name it from the public `adoption` module, beside the other crates' error \
+              types."
+)]
+pub use error::{AdoptionError, HashError, LockFileError};
 pub use kind::Kind;
 use kind::Rule;
+use serde::Serialize;
+use tempfile::NamedTempFile;
+use tenet_contracts::{LOCK_FILE, Lock, find_conflict_marker, name_of, validate_skill, with_name};
 use unit::Unit;
 use upstream::{Files, Upstream};
 
+use crate::git;
+
 /// The library entry an installed copy came from, written as its `contract` or `skill` name.
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Origin {
     Contract(String),
@@ -33,21 +43,32 @@ pub enum Origin {
 }
 
 impl Origin {
-    pub fn kind(&self) -> Kind {
+    /// Return the local name of the installed copy.
+    #[must_use]
+    #[inline]
+    pub fn name(&self) -> &str {
         match self {
-            Origin::Contract(_) => Kind::Contracts,
-            Origin::Skill(_) => Kind::Skills,
+            Self::Contract(name) | Self::Skill(name) => name,
         }
     }
 
-    pub fn name(&self) -> &str {
+    /// Return whether the copy is a contract or a skill.
+    #[must_use]
+    #[inline]
+    pub const fn read_kind(&self) -> Kind {
         match self {
-            Origin::Contract(name) | Origin::Skill(name) => name,
+            Self::Contract(_) => Kind::Contracts,
+            Self::Skill(_) => Kind::Skills,
         }
     }
 }
 
-#[derive(Serialize)]
+/// What an add installed, and where.
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
+#[derive(Debug, Serialize)]
 pub struct Added {
     /// The lock key: a contract's CONTRACT.md or a skill's folder.
     pub path: PathBuf,
@@ -61,24 +82,31 @@ pub struct Added {
     pub written: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+/// Whether an installed copy is unchanged, edited, or missing locally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalState {
-    Unchanged,
     Edited,
     Missing,
+    Unchanged,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+/// How a release changes one installed file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Change {
-    Current,
-    Changed,
     Added,
+    Changed,
+    Current,
     Removed,
 }
 
-#[derive(Serialize)]
+/// The newest release an installed copy can move to.
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
+#[derive(Debug, Serialize)]
 pub struct Newest {
     #[serde(rename = "ref")]
     pub reference: String,
@@ -87,9 +115,17 @@ pub struct Newest {
     /// The other files upstream changed, added, or removed, relative to the copy's folder.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub files: BTreeMap<PathBuf, Change>,
+    /// The highest release of each major crossed, oldest first; `update` stops at the first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub majors: Vec<String>,
 }
 
-#[derive(Serialize)]
+/// One installed copy's lock entry, local state, and newest release.
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
+#[derive(Debug, Serialize)]
 pub struct Status {
     /// The lock key: a contract's CONTRACT.md or a skill's folder.
     pub path: PathBuf,
@@ -111,11 +147,13 @@ pub struct Status {
 
 impl Status {
     /// True when a file is missing, a read-only file is edited, or upstream changed the copy.
+    #[must_use]
+    #[inline]
     pub fn needs_attention(&self) -> bool {
-        let kind = self.origin.kind();
+        let kind = self.origin.read_kind();
         self.state == LocalState::Missing
             || self.files.iter().any(|(path, state)| {
-                *state == LocalState::Missing || kind.rule(path) == Rule::ReadOnly
+                *state == LocalState::Missing || kind.derive_rule(path) == Rule::ReadOnly
             })
             || self
                 .newest
@@ -124,18 +162,24 @@ impl Status {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+/// What an update did to one installed file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum Outcome {
-    Unchanged,
-    Replaced,
-    Merged,
-    Conflict { regions: u32 },
     Added,
+    Conflict { regions: u32 },
+    Merged,
     Removed,
+    Replaced,
+    Unchanged,
 }
 
-#[derive(Serialize)]
+/// What an update did to one installed copy and its files.
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
+#[derive(Debug, Serialize)]
 pub struct Updated {
     pub path: PathBuf,
     pub from: String,
@@ -150,14 +194,28 @@ pub struct Updated {
 
 impl Updated {
     /// True when the update wrote a conflict or upstream removed the copy or one of its files.
+    #[must_use]
+    #[inline]
     pub fn needs_attention(&self) -> bool {
-        std::iter::once(&self.outcome)
+        iter::once(&self.outcome)
             .chain(self.files.values())
-            .any(|outcome| matches!(outcome, Outcome::Conflict { .. } | Outcome::Removed))
+            .any(|outcome| {
+                match outcome {
+                    Outcome::Conflict { .. } | Outcome::Removed => true,
+                    Outcome::Added | Outcome::Merged | Outcome::Replaced | Outcome::Unchanged => {
+                        false
+                    },
+                }
+            })
     }
 }
 
-#[derive(Serialize)]
+/// A release of a library copy: its reference, commit, and text.
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
+#[derive(Debug, Serialize)]
 pub struct Version {
     #[serde(rename = "ref")]
     pub reference: String,
@@ -165,8 +223,12 @@ pub struct Version {
     pub text: String,
 }
 
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
 /// The texts behind an update, the CONTRACT.md or SKILL.md rendered with the local name.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Comparison {
     pub path: PathBuf,
     pub base: Version,
@@ -178,9 +240,13 @@ pub struct Comparison {
     pub files: Vec<FileComparison>,
 }
 
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "Field order is the serialized key order."
+)]
 /// One other file of a copy at the locked release, the newest release, and locally. Bytes that are
 /// not UTF-8 read as replacement characters.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct FileComparison {
     /// Relative to the copy's folder.
     pub path: PathBuf,
@@ -193,42 +259,47 @@ pub struct FileComparison {
 }
 
 /// What `validate` found recorded in the lock.
+#[derive(Clone, Copy, Debug)]
 pub struct Recorded {
     pub contracts: usize,
     pub skills: usize,
 }
 
-pub fn outdated(root: &Path, kind: Kind, offline: bool) -> Result<Vec<Status>> {
+/// List each installed copy of `kind` with its newest release, reading no remote when `offline` is
+/// set.
+#[inline]
+pub fn list_outdated(root: &Path, kind: Kind, offline: bool) -> Result<Vec<Status>, AdoptionError> {
     let lock = read_lock(root)?;
     let mut libraries = Libraries::new(&lock);
     let mut statuses = Vec::new();
-    for unit in Unit::all(&lock, kind)? {
-        let (state, mut files) = unit.split(unit.local_states(root)?)?;
-        files.retain(|_, state| *state != LocalState::Unchanged);
+    for unit in Unit::list_all(&lock, kind)? {
+        let (state, mut files) = unit.split(unit.read_local_states(root)?)?;
+        files.retain(|_, file_state| *file_state != LocalState::Unchanged);
         let name = match state {
             LocalState::Missing => None,
             LocalState::Unchanged | LocalState::Edited => {
-                Some(name_of(&read_text(root, &unit.document())?)?.to_owned())
-            }
+                Some(name_of(&read_text(root, &unit.name_document())?)?.to_owned())
+            },
         };
         let newest = if offline {
             None
         } else {
-            let upstream = libraries.get(&unit.source)?;
-            let revision = upstream.newest(&unit.reference)?;
-            let (change, files) =
-                match upstream.folder(&revision.commit, kind, unit.origin.name())? {
+            let upstream = libraries.read_upstream(&unit.source)?;
+            let revision = upstream.find_newest(&unit.reference)?;
+            let (change, changed_files) =
+                match upstream.read_folder(&revision.commit, kind, unit.origin.name())? {
                     None => (Change::Removed, BTreeMap::new()),
                     Some(next) => {
-                        let (change, mut files) = unit.split(unit.changes(&next)?)?;
-                        files.retain(|_, change| *change != Change::Current);
-                        (change, files)
-                    }
+                        let (change, mut upstream_files) = unit.split(unit.plan_changes(&next)?)?;
+                        upstream_files.retain(|_, file_change| *file_change != Change::Current);
+                        (change, upstream_files)
+                    },
                 };
             Some(Newest {
                 reference: revision.reference,
                 change,
-                files,
+                files: changed_files,
+                majors: upstream.list_majors(&unit.reference)?,
             })
         };
         statuses.push(Status {
@@ -246,39 +317,51 @@ pub fn outdated(root: &Path, kind: Kind, offline: bool) -> Result<Vec<Status>> {
 }
 
 /// Apply the update rule to the selected entries, then write their files and the lock together.
+#[inline]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The steps run in one order and share local state; splitting them would add \
+              forwarding functions."
+)]
 pub fn update(
     root: &Path,
     kind: Kind,
     paths: &[PathBuf],
     reference: Option<&str>,
-) -> Result<Vec<Updated>> {
+) -> Result<Vec<Updated>, AdoptionError> {
     let mut lock = read_lock(root)?;
-    ensure!(!lock.is_empty(), "nothing is recorded in {LOCK_FILE}");
+    if lock.is_empty() {
+        return Err(AdoptionError::NothingRecorded);
+    }
     let units = select(&lock, kind, paths)?;
     let edits = units
         .iter()
         .map(|unit| unit.ensure_updatable(root))
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
     let mut tracked = vec![PathBuf::from(LOCK_FILE)];
-    tracked.extend(units.iter().flat_map(Unit::locked_paths));
-    ensure!(
-        !uncommitted(root, kind, &tracked)?,
-        "commit or set aside changes to {LOCK_FILE} and the selected {} first",
-        kind.name()
-    );
+    tracked.extend(units.iter().flat_map(Unit::list_locked_paths));
+    if has_uncommitted(root, kind, &tracked)? {
+        return Err(AdoptionError::UncommittedUpdate(kind));
+    }
 
     let mut libraries = Libraries::new(&lock);
     let mut writes = Vec::new();
     let mut recorded = Vec::new();
     let mut results = Vec::new();
     for (mut unit, edited) in units.into_iter().zip(edits) {
-        let upstream = libraries.get(&unit.source)?;
+        let upstream = libraries.read_upstream(&unit.source)?;
+        // Without a reference, stop at the next major, so each one arrives as its own update.
         let revision = match reference {
-            Some(reference) => upstream.resolve(Some(reference))?,
-            None => upstream.newest(&unit.reference)?,
+            Some(requested) => upstream.resolve(Some(requested))?,
+            None => {
+                match upstream.list_majors(&unit.reference)?.first() {
+                    Some(next) => upstream.resolve(Some(next))?,
+                    None => upstream.find_newest(&unit.reference)?,
+                }
+            },
         };
-        let name = unit.local_name(root)?;
-        let Some(next) = upstream.folder(&revision.commit, kind, unit.origin.name())? else {
+        let name = unit.derive_local_name(root)?;
+        let Some(next) = upstream.read_folder(&revision.commit, kind, unit.origin.name())? else {
             results.push(Updated {
                 path: unit.key,
                 from: unit.reference,
@@ -290,7 +373,7 @@ pub fn update(
         };
         let planned = unit.plan_update(root, &name, &edited, upstream, &revision, next)?;
         let (outcome, mut files) = unit.split(planned.outcomes)?;
-        files.retain(|_, outcome| *outcome != Outcome::Unchanged);
+        files.retain(|_, file_outcome| *file_outcome != Outcome::Unchanged);
         writes.extend(planned.writes);
         recorded.extend(planned.files.keys().map(|path| unit.folder.join(path)));
         results.push(Updated {
@@ -314,27 +397,31 @@ pub fn update(
     Ok(results)
 }
 
-/// Return base, newest upstream, and local texts for one entry. Works while conflict markers remain.
-pub fn diff(root: &Path, kind: Kind, path: &Path) -> Result<Comparison> {
+/// Return base, newest upstream, and local texts for one entry. Works while conflict markers
+/// remain.
+#[inline]
+pub fn diff(root: &Path, kind: Kind, path: &Path) -> Result<Comparison, AdoptionError> {
     let lock = read_lock(root)?;
-    let unit = Unit::find(&lock, kind, &kind.key(path)?)?;
-    let document = unit.document();
+    let unit = Unit::find(&lock, kind, &kind.derive_key(path)?)?;
+    let document = unit.name_document();
     let local = read_text(root, &document)?;
     let name = name_of(&local)?;
     let mut libraries = Libraries::new(&lock);
-    let upstream = libraries.get(&unit.source)?;
+    let upstream = libraries.read_upstream(&unit.source)?;
     let base = upstream
-        .folder(&unit.commit, kind, unit.origin.name())?
-        .with_context(|| unit.missing_at_lock())?;
-    let revision = upstream.newest(&unit.reference)?;
-    let next = upstream.folder(&revision.commit, kind, unit.origin.name())?;
-    let renamed = |files: &Files| -> Result<String> {
+        .read_folder(&unit.commit, kind, unit.origin.name())?
+        .ok_or_else(|| unit.report_missing_at_lock())?;
+    let revision = upstream.find_newest(&unit.reference)?;
+    let next = upstream.read_folder(&revision.commit, kind, unit.origin.name())?;
+    let renamed = |files: &Files| -> Result<String, AdoptionError> {
         let file = files
-            .get(Path::new(kind.document()))
-            .with_context(|| format!("library copy has no {}", kind.document()))?;
-        with_name(unit::text(&file.bytes, &document)?, name)
+            .get(Path::new(kind.name_document()))
+            .ok_or(AdoptionError::NoLibraryDocument(kind.name_document()))?;
+        Ok(with_name(unit::decode_text(&file.bytes, &document)?, name)?)
     };
+    let files = unit.compare(root, &base, next.as_ref())?;
     Ok(Comparison {
+        path: unit.key,
         base: Version {
             reference: unit.reference.clone(),
             commit: unit.commit.clone(),
@@ -342,40 +429,41 @@ pub fn diff(root: &Path, kind: Kind, path: &Path) -> Result<Comparison> {
         },
         upstream: next
             .as_ref()
-            .map(|next| {
-                Ok::<_, anyhow::Error>(Version {
+            .map(|next_files| {
+                Ok::<_, AdoptionError>(Version {
                     reference: revision.reference.clone(),
                     commit: revision.commit.clone(),
-                    text: renamed(next)?,
+                    text: renamed(next_files)?,
                 })
             })
             .transpose()?,
         local: local.clone(),
-        files: unit.compare(root, &base, next.as_ref())?,
-        path: unit.key,
+        files,
     })
 }
 
 /// Drop a lock entry. Unless the files are kept as local files, delete the locked ones and the
 /// folders they leave empty, refusing while Git has uncommitted changes to any of them.
-pub fn remove(root: &Path, kind: Kind, path: &Path, keep_file: bool) -> Result<PathBuf> {
+#[inline]
+pub fn remove(
+    root: &Path,
+    kind: Kind,
+    path: &Path,
+    keep_file: bool,
+) -> Result<PathBuf, AdoptionError> {
     let mut lock = read_lock(root)?;
-    let key = kind.key(path)?;
+    let key = kind.derive_key(path)?;
     let unit = Unit::find(&lock, kind, &key)?;
-    if !keep_file {
-        ensure!(
-            !uncommitted(root, kind, &unit.locked_paths().collect::<Vec<_>>())?,
-            "commit or set aside changes to {} first, or keep its files with --keep-file",
-            key.display()
-        );
+    if !keep_file && has_uncommitted(root, kind, &unit.list_locked_paths().collect::<Vec<_>>())? {
+        return Err(AdoptionError::UncommittedRemove(key));
     }
     match kind {
         Kind::Contracts => {
-            lock.contracts.remove(&key);
-        }
+            drop(lock.contracts.remove(&key));
+        },
         Kind::Skills => {
-            lock.skills.remove(&key);
-        }
+            drop(lock.skills.remove(&key));
+        },
     }
     if !keep_file {
         unit.delete(root)?;
@@ -386,33 +474,24 @@ pub fn remove(root: &Path, kind: Kind, path: &Path, keep_file: bool) -> Result<P
 
 /// Check the lock's format, that every locked file exists, that read-only files match their
 /// hashes, and that installed skills' Markdown is valid. Works offline.
-pub fn validate_lock(root: &Path) -> Result<Recorded> {
-    let path = root.join(LOCK_FILE);
-    if !path.exists() {
-        return Ok(Recorded {
-            contracts: 0,
-            skills: 0,
-        });
-    }
-    let lock = Lock::parse(&read_text(root, Path::new(LOCK_FILE))?)?;
-    let units = Unit::all(&lock, Kind::Contracts)?
+#[inline]
+pub fn validate_lock(root: &Path) -> Result<Recorded, AdoptionError> {
+    let lock = read_lock(root)?;
+    let units = Unit::list_all(&lock, Kind::Contracts)?
         .into_iter()
-        .chain(Unit::all(&lock, Kind::Skills)?);
+        .chain(Unit::list_all(&lock, Kind::Skills)?);
     for unit in units {
-        let kind = unit.kind();
+        let kind = unit.read_kind();
         for path in unit.check_files(root)? {
             let file = unit.folder.join(&path);
-            if kind.rule(&path) == Rule::Merged
-                && let Some(line) = conflict_marker(&read_text(root, &file)?)
+            if kind.derive_rule(&path) == Rule::Merged
+                && let Some(line) = find_conflict_marker(&read_text(root, &file)?)
             {
-                bail!(
-                    "{}:{line}: unresolved merge conflict marker",
-                    file.display()
-                );
+                return Err(AdoptionError::ConflictMarker { file, line });
             }
         }
         if kind == Kind::Skills {
-            let document = unit.document();
+            let document = unit.name_document();
             validate_skill(&document, &read_text(root, &document)?)?;
         }
     }
@@ -424,115 +503,136 @@ pub fn validate_lock(root: &Path) -> Result<Recorded> {
 
 /// Clones each source at most once per command.
 struct Libraries {
-    sources: BTreeMap<String, String>,
     clones: BTreeMap<String, Upstream>,
+    sources: BTreeMap<String, String>,
 }
 
 impl Libraries {
     fn new(lock: &Lock) -> Self {
         Self {
-            sources: lock.sources.clone(),
             clones: BTreeMap::new(),
+            sources: lock.sources.clone(),
         }
     }
 
-    fn get(&mut self, source: &str) -> Result<&Upstream> {
-        if !self.clones.contains_key(source) {
-            let url = self
-                .sources
-                .get(source)
-                .with_context(|| format!("{LOCK_FILE} names unknown source {source}"))?;
-            self.clones.insert(source.into(), Upstream::clone(url)?);
+    fn read_upstream(&mut self, source: &str) -> Result<&Upstream, AdoptionError> {
+        match self.clones.entry(source.to_owned()) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let url = self
+                    .sources
+                    .get(source)
+                    .ok_or_else(|| AdoptionError::UnknownLockSource(source.to_owned()))?;
+                Ok(entry.insert(Upstream::download(url)?))
+            },
         }
-        self.clones.get(source).context("source clone disappeared")
     }
 }
 
-fn read_lock(root: &Path) -> Result<Lock> {
-    if !root.join(LOCK_FILE).exists() {
+pub(crate) fn read_lock(root: &Path) -> Result<Lock, LockFileError> {
+    let path = root.join(LOCK_FILE);
+    if !path.exists() {
         return Ok(Lock::default());
     }
-    Lock::parse(&read_text(root, Path::new(LOCK_FILE))?)
+    let text = fs::read_to_string(path).map_err(LockFileError::Read)?;
+    Ok(Lock::parse(&text)?)
 }
 
-/// Write the lock, or delete it once it records nothing.
-fn write_lock(root: &Path, lock: &Lock) -> Result<()> {
+/// Write the lock, or delete it once it records nothing. The lock is renamed into place, so an
+/// interrupted write leaves the previous lock whole.
+fn write_lock(root: &Path, lock: &Lock) -> Result<(), AdoptionError> {
     let path = root.join(LOCK_FILE);
-    let cannot = || format!("cannot write {LOCK_FILE}");
     if lock.is_empty() {
         if path.exists() {
-            fs::remove_file(path).with_context(cannot)?;
+            fs::remove_file(path).map_err(AdoptionError::WriteLock)?;
         }
         return Ok(());
     }
-    fs::write(path, lock.render()?).with_context(cannot)
+    let mut file = NamedTempFile::new_in(root).map_err(AdoptionError::WriteLock)?;
+    file.write_all(lock.render()?.as_bytes())
+        .map_err(AdoptionError::WriteLock)?;
+    // A temporary file starts readable only by its owner; the lock stays readable by everyone.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        file.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o644))
+            .map_err(AdoptionError::WriteLock)?;
+    }
+    drop(file.persist(path).map_err(AdoptionError::PersistLock)?);
+    Ok(())
 }
 
 /// Read a text file; `path` is relative to the project root.
-fn read_text(root: &Path, path: &Path) -> Result<String> {
-    fs::read_to_string(root.join(path)).with_context(|| format!("cannot read {}", path.display()))
+fn read_text(root: &Path, path: &Path) -> Result<String, AdoptionError> {
+    fs::read_to_string(root.join(path)).map_err(|source| {
+        AdoptionError::Read {
+            path: path.to_owned(),
+            source,
+        }
+    })
 }
 
 /// Whether Git reports uncommitted changes to any of `paths`, which are relative to the project
 /// root.
-fn uncommitted(root: &Path, kind: Kind, paths: &[PathBuf]) -> Result<bool> {
-    let paths = paths
+fn has_uncommitted(root: &Path, kind: Kind, paths: &[PathBuf]) -> Result<bool, AdoptionError> {
+    let texts = paths
         .iter()
-        .map(|path| path.to_str().context("path is not UTF-8"))
-        .collect::<Result<Vec<_>>>()?;
-    let status = git::output(
+        .map(|path| path.to_str().ok_or(AdoptionError::NotUtf8Path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let status = git::run_git(
         root,
-        &[&["status", "--porcelain", "--"][..], &paths].concat(),
+        &[&["status", "--porcelain", "--"][..], &texts].concat(),
     )
-    .with_context(|| format!("tenet {} needs a Git checkout", kind.name()))?;
+    .map_err(|source| AdoptionError::NeedsCheckout { kind, source })?;
     Ok(!status.is_empty())
 }
 
 /// Refuse to record paths that Git ignores, since Git would never commit them and every other
 /// clone would fail `tenet validate`. `paths` are relative to the project root.
-fn refuse_ignored(root: &Path, paths: &[PathBuf]) -> Result<()> {
-    if let Some(ignored) = git::ignored(root, paths).context("Tenet needs a Git checkout")? {
-        bail!(
-            "Git ignores {} through {}; change that rule or install the copy elsewhere",
-            ignored.path,
-            ignored.rule
-        );
+fn refuse_ignored(root: &Path, paths: &[PathBuf]) -> Result<(), AdoptionError> {
+    if let Some(ignored) = git::find_ignored(root, paths).map_err(AdoptionError::NeedsGit)? {
+        return Err(AdoptionError::Ignored {
+            path: ignored.path,
+            rule: ignored.rule,
+        });
     }
     Ok(())
 }
 
-fn parse_spec(spec: &str) -> Result<(&str, &str, Option<&str>)> {
-    let (source, rest) = spec
-        .split_once('/')
-        .context("expected SOURCE/NAME[@REF], such as tenet/data-and-apis")?;
+fn parse_spec(spec: &str) -> Result<(&str, &str, Option<&str>), AdoptionError> {
+    let (source, rest) = spec.split_once('/').ok_or(AdoptionError::SpecFormat)?;
     let (name, reference) = match rest.split_once('@') {
         Some((name, reference)) => (name, Some(reference)),
         None => (rest, None),
     };
-    ensure!(
-        tenet_contracts::is_kebab(source) && tenet_contracts::is_kebab(name),
-        "expected SOURCE/NAME[@REF] with kebab-case names"
-    );
+    if !(tenet_contracts::is_kebab(source) && tenet_contracts::is_kebab(name)) {
+        return Err(AdoptionError::SpecNames);
+    }
     Ok((source, name, reference))
 }
 
-fn select(lock: &Lock, kind: Kind, paths: &[PathBuf]) -> Result<Vec<Unit>> {
+fn select(lock: &Lock, kind: Kind, paths: &[PathBuf]) -> Result<Vec<Unit>, AdoptionError> {
     if paths.is_empty() {
-        return Unit::all(lock, kind);
+        return Unit::list_all(lock, kind);
     }
     paths
         .iter()
-        .map(|path| Unit::find(lock, kind, &kind.key(path)?))
+        .map(|path| Unit::find(lock, kind, &kind.derive_key(path)?))
         .collect()
 }
 
-fn relative(path: &Path) -> Result<PathBuf> {
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "The remaining variants take no action here, and listing each would repeat the enum."
+)]
+fn make_relative(path: &Path) -> Result<PathBuf, AdoptionError> {
     let mut normal = PathBuf::new();
     for part in path.components() {
         match part {
-            Component::Normal(part) => normal.push(part),
-            Component::CurDir => {}
-            _ => bail!("{} must be relative to the project root", path.display()),
+            Component::Normal(segment) => normal.push(segment),
+            Component::CurDir => {},
+            _ => return Err(AdoptionError::NotRelative(path.to_owned())),
         }
     }
     Ok(normal)

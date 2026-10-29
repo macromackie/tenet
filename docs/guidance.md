@@ -56,15 +56,25 @@ tenet contracts update
 ```
 
 `outdated` exits 1 when a contract or one of its assets changed upstream, a contract was removed, or an installed file
-is missing or an asset edited. `update` needs committed contract files and lock. Each copy then takes one path:
+is missing or an asset edited. It also names the major releases a copy crosses:
 
-| Local copy | Upstream since your release | Result |
-| --- | --- | --- |
-| Unedited | Changed | Replaced with the new text |
-| Edited | Unchanged | Kept; the lock moves to the new release |
-| Edited | Changed elsewhere | Merged, keeping both changes |
-| Edited | Changed on the same lines | Conflict markers; exit 1 |
-| Any | Removed | Left in place; exit 1 |
+```text
+packages/api/.contracts/003-data-and-apis/CONTRACT.md  data-and-apis  tenet/data-and-apis  v9.2.0 -> v12.0.0 (crosses 3 majors; update stops at v10.1.0)  unchanged
+```
+
+`update` stops at the next major. Here it moves to `v10.1.0`, the highest `v10` release, so each major arrives as its
+own reviewed change; read its changelog entry before you merge it. `--ref v12.0.0` moves past it at once. `--ref` with
+an earlier release rolls an update back and merges local edits onto the older text.
+
+`update` needs committed contract files and lock. Each copy then takes one path:
+
+| Local copy | Upstream since your release | Result                                  |
+| ---------- | --------------------------- | --------------------------------------- |
+| Unedited   | Changed                     | Replaced with the new text              |
+| Edited     | Unchanged                   | Kept; the lock moves to the new release |
+| Edited     | Changed elsewhere           | Merged, keeping both changes            |
+| Edited     | Changed on the same lines   | Conflict markers; exit 1                |
+| Any        | Removed                     | Left in place; exit 1                   |
 
 A renamed copy still counts as unedited: the hash ignores the `name` value. Hashes of assets and skill files read CRLF
 line endings as LF, so Git's line-ending settings never fail `tenet validate`. A contract's own hash covers its exact
@@ -94,14 +104,16 @@ replacement, then run `tenet contracts remove PATH`, or `--keep-file` to keep it
 ### Scheduled update pull requests
 
 This workflow opens a pull request when an update is available. It needs no model credentials, and conflicts arrive as
-markers that fail `tenet validate` until resolved.
+markers that fail `tenet validate` until resolved. `update` stops at the next major, so each major gets its own pull
+request on a branch named for it, such as `tenet/contract-updates-v10`. Later runs refresh that pull request until you
+merge it; the run after the merge opens the next major.
 
 ```yaml
 # .github/workflows/tenet-contract-updates.yml
 name: Tenet contract updates
 on:
   schedule:
-    - cron: "0 6 * * 1"
+    - cron: '0 6 * * 1'
   workflow_dispatch:
 permissions:
   contents: write
@@ -112,7 +124,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          curl -fsSL https://tenet-contracts.com/v0.10.0/install.sh | bash
+          curl -fsSL https://tenet-contracts.com/v0.12.0/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - id: update
         run: |
@@ -120,15 +132,17 @@ jobs:
           tenet contracts outdated; code=$?
           if [ "$code" -eq 0 ]; then exit 0; fi
           if [ "$code" -ne 1 ]; then exit "$code"; fi
-          tenet contracts update; code=$?
+          tenet contracts update --json > "$RUNNER_TEMP/update.json"; code=$?
           if [ "$code" -gt 1 ]; then exit "$code"; fi
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-      - if: steps.update.outputs.changed == 'true'
+          majors=$(jq -r '[.contracts[].to | (capture("^(?<major>v[0-9]+)[.]").major // .)] | unique | join("-")' \
+            "$RUNNER_TEMP/update.json")
+          echo "majors=$majors" >> "$GITHUB_OUTPUT"
+      - if: steps.update.outputs.majors != ''
         uses: peter-evans/create-pull-request@v7
         with:
-          branch: tenet/contract-updates
-          title: Update Tenet contracts
-          commit-message: Update Tenet contracts
+          branch: tenet/contract-updates-${{ steps.update.outputs.majors }}
+          title: Update Tenet contracts to ${{ steps.update.outputs.majors }}
+          commit-message: Update Tenet contracts to ${{ steps.update.outputs.majors }}
           body: Conflict markers fail `tenet validate` until resolved. Run `tenet contracts diff PATH` for details.
 ```
 
@@ -193,14 +207,14 @@ The agent reads the library at a release tag, chooses relevant skills and contra
 `tenet skills add` and `tenet contracts add`. It records only its decisions in `.agents/tenet-adoption.md`, because the
 lock records releases and hashes. Installed skills work without network access or the library checkout.
 
-| Skill | Use |
-| --- | --- |
-| `tenet` | Discover contracts and use CLI assessments during review. |
-| `tenet-code-curation` | Clarify code and keep implementation patterns consistent. |
-| `tenet-architecture-curation` | Review ownership, data flow, recovery, and boundaries. |
-| `tenet-test-curation` | Explore during development; retain useful, durable tests. |
-| `tenet-contract-curation` | Write and improve readable, scoped contracts. |
-| `tenet-adoption` | Adopt skills and contracts, and resolve contract update conflicts. |
+| Skill                         | Use                                                                |
+| ----------------------------- | ------------------------------------------------------------------ |
+| `tenet`                       | Discover contracts and use CLI assessments during review.          |
+| `tenet-code-curation`         | Clarify code and keep implementation patterns consistent.          |
+| `tenet-architecture-curation` | Review ownership, data flow, recovery, and boundaries.             |
+| `tenet-test-curation`         | Explore during development; retain useful, durable tests.          |
+| `tenet-contract-curation`     | Write and improve readable, scoped contracts.                      |
+| `tenet-adoption`              | Adopt skills and contracts, and resolve contract update conflicts. |
 
 Skills describe a workflow; installed contracts define requirements. Keep project commands in repository instructions.
 

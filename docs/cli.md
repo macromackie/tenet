@@ -3,7 +3,7 @@
 ```sh
 tenet check
 tenet check --base origin/main
-tenet status [--base REF] [--json]
+tenet status [--base REF] [--json] [--prune-cache]
 tenet show NAME [PATH ...] [--json]
 tenet show --pending [--json]
 tenet record NAME [PATH ...] --conclusion CONCLUSION [--evidence PATH:START-END ...] -m MESSAGE
@@ -21,6 +21,12 @@ tenet skills outdated | update | diff PATH | remove PATH
 Use `--root DIR` to choose a project; the default is the working directory. Contracts outside that root do not participate.
 Use `--state-dir DIR`, or `TENET_STATE_DIR`, to keep [review state](#review-state) outside a read-only
 checkout; every review command must name the same directory.
+Use `--trace PATH`, or `TENET_TRACE`, to write a JSON Lines trace of spans and events, or `--trace -` for stderr.
+The trace records failure kinds, statuses, counts, and durations, never contract text, file contents, keys, or provider
+messages. A check's `tenet.check` span takes the caller's trace and span ids from a W3C `TRACEPARENT`.
+Inside it, `tenet.contract` and `tenet.pair` spans cover each contract and each contract and file.
+`tenet.wait` times each wait for a parallel slot.
+`cache.hit` and `budget.exhausted` events mark answers read from the cache and requests the budget refuses.
 
 ## Full check
 
@@ -97,14 +103,15 @@ the working tree with that commit, not with what `--base` names today.
 The directory ignores itself; if Git tracks a file in it anyway, every command below exits 2 until it is untracked.
 Each contract is settled or pending; see [Reviews](./reviews.md).
 
-| Command | Effect | Exit |
-| --- | --- | --- |
-| `status` | Recompute inputs from the working tree and list each contract's state; never writes or calls a model | As `check` |
-| `status --base REF` | The same for the review against `REF` | As `check`, or 4 when no check compares with `REF` |
-| `show NAME` | Show the model's answer, records, changes since an outdated result, the contract, and the change | 0 |
-| `show --pending` | Show every pending contract and their shared change once | 0 |
-| `record NAME` | Settle the contract's current input with a conclusion, evidence, and a message | 0, or 2 if refused |
-| `log [NAME]` | List revisions, assessments, and records, newest first; `--json` prints each entry in order | 0 |
+| Command                | Effect                                                                                                       | Exit                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `status`               | Recompute inputs from the working tree and list each contract's state; never writes or calls a model         | As `check`                                         |
+| `status --base REF`    | The same for the review against `REF`                                                                        | As `check`, or 4 when no check compares with `REF` |
+| `status --prune-cache` | First remove the cached answers this Tenet cannot reuse, and say how many on stderr; the log stays unchanged | As `status`                                        |
+| `show NAME`            | Show the model's answer, records, changes since an outdated result, the contract, and the change             | 0                                                  |
+| `show --pending`       | Show every pending contract and their shared change once                                                     | 0                                                  |
+| `record NAME`          | Settle the contract's current input with a conclusion, evidence, and a message                               | 0, or 2 if refused                                 |
+| `log [NAME]`           | List revisions, assessments, and records, newest first; `--json` prints each entry in order                  | 0                                                  |
 
 `record` refuses a contract whose scoped files changed after its latest check: run `check` again first. The conclusion
 must fit the check: `verified` for a full check of the full contract, `preserved` or `unaffected` for a diff, and `clear`
@@ -127,7 +134,9 @@ that form and each changed file's patch once. See [JSON](./json.md) for every co
 `check --no-model` captures inputs and appends a revision without credentials or requests. Contracts settled for the
 same input stay settled; the rest are pending. Each row shows the reused model conclusion, as in
 `✓ errors (1 file) preserved · recorded 2540a6592efb over model failed · violation 100% · unchanged`. A model check
-answers repeated identical requests from `.tenet/answers.jsonl`; `--fresh` asks the model again. Delete `.tenet/` to
+answers repeated identical requests from `.tenet/answers.jsonl`; `--fresh` asks the model again. An answer is reused
+only by the same Tenet version and provider, for the model revision the provider reported. `status --prune-cache`
+removes the answers an earlier Tenet wrote and those a later answer to the same request replaced. Delete `.tenet/` to
 forget the review.
 
 ## Export
@@ -139,29 +148,30 @@ size limits, and examples of preparing a focused question.
 ## Shared contracts and skills
 
 `tenet contracts` and `tenet skills` install contracts and agent skills from a library and record them in `.tenet.lock`
-at the project root. They are the only commands that read the lock or reach the network. They need `git`, and `add`,
-`update`, and `remove` need the project to be a Git checkout. `check`, `export`, and `contracts list` and `show` never
-read the lock. `validate` checks offline that the lock is well formed, that each recorded file exists, and that each
-read-only file matches its hash. See [Guidance](./guidance.md) for the workflow.
+at the project root. They are the only commands that write the lock or reach the network. They need `git`, and `add`,
+`update`, and `remove` need the project to be a Git checkout. `check`, `export`, and `contracts list` and `show` read
+only the lock's [`projects`](#discovery). `validate` checks offline that the lock is well formed, that each recorded
+file exists, and that each read-only file matches its hash. See [Guidance](./guidance.md) for the workflow.
 
-| Command | Effect |
-| --- | --- |
-| `contracts add SOURCE/NAME[@REF] --scope DIR` | Copy a library contract and its assets into the next numbered folder under `DIR/.contracts` |
-| `contracts add SOURCE/NAME[@REF] --path FILE` | Record an existing copy; its differences count as local edits |
-| `skills add SOURCE/NAME[@REF] [--dir DIR]` | Copy a library skill's folder into `DIR/NAME`; `DIR` defaults to `.agents/skills` |
-| `skills add SOURCE/NAME[@REF] --path DIR` | Record an existing copy; its Markdown differences count as local edits |
-| `outdated [--offline] [--json]` | Show each copy's release, newest release, and local state, and each file that changed |
-| `update [PATH ...] [--ref REF] [--json]` | Replace unedited files, merge edited Markdown, and move the lock |
-| `diff PATH [--json]` | Show upstream changes since the recorded release, then local edits, for each file that differs |
-| `remove PATH [--keep-file]` | Delete a copy's locked files and its lock entry, or keep them as local files |
+| Command                                       | Effect                                                                                                |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `contracts add SOURCE/NAME[@REF] --scope DIR` | Copy a library contract and its assets into the next numbered folder under `DIR/.contracts`           |
+| `contracts add SOURCE/NAME[@REF] --path FILE` | Record an existing copy; its differences count as local edits                                         |
+| `skills add SOURCE/NAME[@REF] [--dir DIR]`    | Copy a library skill's folder into `DIR/NAME`; `DIR` defaults to `.agents/skills`                     |
+| `skills add SOURCE/NAME[@REF] --path DIR`     | Record an existing copy; its Markdown differences count as local edits                                |
+| `outdated [--offline] [--json]`               | Show each copy's release, newest release, majors crossed, and local state, and each file that changed |
+| `update [PATH ...] [--ref REF] [--json]`      | Replace unedited files, merge edited Markdown, and move the lock, at most to the next major           |
+| `diff PATH [--json]`                          | Show upstream changes since the recorded release, then local edits, for each file that differs        |
+| `remove PATH [--keep-file]`                   | Delete a copy's locked files and its lock entry, or keep them as local files                          |
 
-`SOURCE` is `tenet` for https://github.com/macromackie/tenet-contracts. Register another Git library, or a local
+`SOURCE` is `tenet` for <https://github.com/macromackie/tenet-contracts>. Register another Git library, or a local
 clone of that one, under another alias with `--source ALIAS=URL` on `add`; Git uses your existing credentials.
-Without `@REF`, `add` takes the highest `vX.Y.Z` tag, and `update` moves to it. Both `add` commands accept
-`--name LOCAL`, which also rewrites the copy's `name`; `contracts add` accepts `--number N`. `skills add` refuses a
-destination that exists. `add` and `update` refuse, before writing anything, a file that Git ignores, a library
-contract file other than `CONTRACT.md` and `assets/<tool>/` files, and a release that needs a newer Tenet. A skill's
-`PATH` is its folder; a contract's is its `CONTRACT.md` or folder.
+Without `@REF`, `add` takes the highest `vX.Y.Z` tag. Without `--ref`, `update` moves to the highest tag of the next
+major, or of the recorded major when no later one exists; `--ref` names any release, later or earlier. Both `add`
+commands accept `--name LOCAL`, which also rewrites the copy's `name`; `contracts add` accepts `--number N`.
+`skills add` refuses a destination that exists. `add` and `update` refuse, before writing anything, a file that Git
+ignores, a library contract file other than `CONTRACT.md` and `assets/<tool>/` files, and a release that needs a
+newer Tenet. A skill's `PATH` is its folder; a contract's is its `CONTRACT.md` or folder.
 
 `CONTRACT.md`, `SKILL.md`, and a skill's other Markdown files merge three ways. Every other locked file, such as a
 contract's assets or a skill's scripts, is read-only. `update` replaces it while unedited and refuses, before writing
@@ -171,30 +181,30 @@ upstream stays in place and leaves the lock. `remove` refuses uncommitted change
 never touches files the lock does not list. Hashes ignore the `name` value of `CONTRACT.md` and `SKILL.md`. Hashes of
 assets and skill files read CRLF line endings as LF; a contract's own hash covers its exact bytes, as in version 1.
 
-| Exit | `add`, `diff`, `remove` | `outdated` | `update` |
-| --- | --- | --- | --- |
-| 0 | Done | Every copy is current and present | Every file is unchanged, replaced, added, or merged |
-| 1 | Not used | A file changed, was added, or was removed upstream, a file is missing, or a read-only file is edited | A conflict was written, or a copy or file was removed upstream |
-| 2 | Invalid input or execution error | Same | Same, including a refused update |
+| Exit | `add`, `diff`, `remove`          | `outdated`                                                                                           | `update`                                                       |
+| ---- | -------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| 0    | Done                             | Every copy is current and present                                                                    | Every file is unchanged, replaced, added, or merged            |
+| 1    | Not used                         | A file changed, was added, or was removed upstream, a file is missing, or a read-only file is edited | A conflict was written, or a copy or file was removed upstream |
+| 2    | Invalid input or execution error | Same                                                                                                 | Same, including a refused update                               |
 
-The lock is written as version 2 when it records skills or contract assets, and as version 1 otherwise. A Tenet older
-than 0.11.0 cannot read a version 2 lock.
+The lock is written as version 3 when it lists `projects`, as version 2 when it records skills or contract assets, and
+as version 1 otherwise. A Tenet older than 0.11.0 cannot read a version 2 lock, and Tenet 0.11.0 cannot read version 3.
 
 ## Check options
 
-| Option | Default | Purpose |
-| --- | --- | --- |
-| `--contract NAME` | all contracts | Select one requirement |
-| `--context PATH[:START-END]` | none | Add a repository file, or only its lines START through END, to check inputs; repeat for more files or ranges; see [Add context](./reviews.md#add-context) |
-| `--jobs N` | 4 | Maximum simultaneous model requests |
-| `--max-requests N` | 1000 | Request budget, including combined assessments |
-| `--min-confidence N` | 0.8 | Route lower-confidence answers to unresolved; accepts 0 through 1 |
-| `--provider NAME` | openrouter | Select provider |
-| `--model ID` | provider default | Select a supported pinned model |
-| `--reporter KIND` | default | `default`, `verbose`, or `jsonl` |
-| `--json` | off | Shorthand for JSONL |
-| `--no-model` | off | Capture and keep a revision without requests; see [Review state](#review-state) |
-| `--fresh` | off | Ask the model again instead of reusing answers to identical requests; with `--dry-run`, predict as if nothing were cached |
+| Option                       | Default          | Purpose                                                                                                                                                   |
+| ---------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--contract NAME`            | all contracts    | Select one requirement                                                                                                                                    |
+| `--context PATH[:START-END]` | none             | Add a repository file, or only its lines START through END, to check inputs; repeat for more files or ranges; see [Add context](./reviews.md#add-context) |
+| `--jobs N`                   | 4                | Maximum simultaneous model requests                                                                                                                       |
+| `--max-requests N`           | 1000             | Request budget, including combined assessments                                                                                                            |
+| `--min-confidence N`         | 0.8              | Route lower-confidence answers to unresolved; accepts 0 through 1                                                                                         |
+| `--provider NAME`            | openrouter       | Select provider                                                                                                                                           |
+| `--model ID`                 | provider default | Select a supported pinned model                                                                                                                           |
+| `--reporter KIND`            | default          | `default`, `verbose`, or `jsonl`                                                                                                                          |
+| `--json`                     | off              | Shorthand for JSONL                                                                                                                                       |
+| `--no-model`                 | off              | Capture and keep a revision without requests; see [Review state](#review-state)                                                                           |
+| `--fresh`                    | off              | Ask the model again instead of reusing answers to identical requests; with `--dry-run`, predict as if nothing were cached                                 |
 
 `check --dry-run` lists candidate pairs and builds each file input, including the contract and explicit context,
 without credentials or model requests. JSON `selected` records include encoded `input_bytes`, `input_limit_bytes`,
@@ -212,6 +222,17 @@ prints `No changes since BASE; nothing to check.` Only execution errors exit 2.
 The inventory respects Git ignore files and `.ignore`. Tool configuration and other hidden files are included.
 Only `.git`, `.tenet`, `.tenet.lock`, `.env`, and `.env.*` are excluded by name, at any depth. A directory with its own
 `.git`, such as a nested repository or a worktree under `.claude/worktrees/`, is a separate project and is skipped.
+So is each directory that matches a glob pattern in the `projects` list of the root `.tenet.lock`, such as test
+fixtures with contracts of their own. Add the list by hand and set the lock's `version` to 3; `add`, `update`, and
+`remove` keep it:
+
+```json
+"projects": ["tests/fixtures/*/project"]
+```
+
+Patterns are relative to the project root, and `*` stays within one path segment. A diff skips changes inside those
+directories too. Run `tenet --root DIR` to validate or check one of them.
+
 List build output such as `target/`, `node_modules/`, or `dist/` in `.gitignore` or `.ignore` to keep it out.
 Files inside `.contracts` folders are not subjects unless a contract's [`paths`](./contracts.md#scope) name them.
 Tracked changes to ordinary files are assessed even if current ignore rules hide them from the inventory; a `!` pattern

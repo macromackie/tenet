@@ -1,38 +1,51 @@
-name: Check
-on:
-  push:
-  pull_request:
-  workflow_call:
-    inputs:
-      plan:
-        required: false
-        type: string
-permissions:
-  contents: read
-jobs:
-  rust:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-      - name: Verify release source
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != 'dry-run' && github.event.inputs.tag != ''
-        env:
-          RELEASE_TAG: ${{ github.event.inputs.tag }}
-        run: |
+---
+"concurrency":
+  "cancel-in-progress": true
+  # A release calls this workflow too; its own workflow name keeps its run out of the push group.
+  "group": "${{ github.workflow }}-check-${{ github.ref }}"
+"jobs":
+  "rust":
+    "name": "Rust"
+    "runs-on": "ubuntu-latest"
+    "steps":
+      - "uses": "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803" # v6.1.0
+        "with":
+          "persist-credentials": false
+      - "env":
+          "RELEASE_TAG": "${{ github.event.inputs.tag }}"
+        "if": "github.event_name == 'workflow_dispatch' && github.event.inputs.tag != 'dry-run' && github.event.inputs.tag != ''"
+        "name": "Verify release source"
+        "run": |
           set -euo pipefail
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
-          test "$RELEASE_TAG" = "v$version"
-          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-      - run: rustup show
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
+          test "${RELEASE_TAG}" = "v${version}"
+          test "${GITHUB_REF}" = "refs/tags/${RELEASE_TAG}"
+          head=$(git rev-parse HEAD)
+          test "${head}" = "${GITHUB_SHA}"
+      - "run": "rustup show"
+      - "uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0" # v2.9.3
+      # rustfmt.toml uses unstable options, so formatting runs on one dated nightly rustfmt.
+      # Every other step uses the stable toolchain.
+      - "run": "rustup toolchain install nightly-2026-10-27 --profile minimal --component rustfmt"
+      - "run": "cargo +nightly-2026-10-27 fmt --all --check"
+      - "run": "cargo clippy --workspace --all-targets --locked -- -D warnings"
+      - "run": "cargo test --workspace --locked"
       # Release builds and smoke-tests the production binary for every target, so its check skips this copy.
-      - name: Build the production binary
-        if: github.workflow != 'Release'
-        run: |
+      - "if": "github.workflow != 'Release'"
+        "name": "Build the production binary"
+        "run": |
           cargo build --release --locked -p tenet
           ./target/release/tenet --version
+    "timeout-minutes": 10
+"name": "Check"
+"on":
+  "pull_request": {}
+  "push": {}
+  "workflow_call":
+    "inputs":
+      "plan":
+        "required": false
+        "type": "string"
+"permissions":
+  "contents": "read"
+...

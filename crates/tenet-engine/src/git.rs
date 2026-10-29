@@ -1,25 +1,63 @@
-use anyhow::{Context, Result, bail, ensure};
+use alloc::{collections::BTreeMap, string::FromUtf8Error};
+use core::{str, str::Utf8Error};
 use std::{
-    collections::BTreeMap,
-    io::{Seek, Write},
+    io,
+    io::{Seek as _, Write as _},
     path::{Path, PathBuf},
     process::Command,
 };
 
-pub(crate) fn output(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+use crate::{
+    change,
+    change::{SourceError, Unreadable},
+};
+
+/// Why a Git command failed or its output cannot be read.
+#[derive(Debug, thiserror::Error)]
+pub enum GitError {
+    #[error("Git check-ignore failed: {0:#}")]
+    CheckIgnore(String),
+    #[error("Git {command:?} failed: {stderr:#}")]
+    Failed { command: String, stderr: String },
+    #[error(transparent)]
+    Input(io::Error),
+    #[error("malformed Git check-ignore output")]
+    MalformedCheckIgnore,
+    #[error("missing Git path")]
+    MissingPath,
+    #[error("missing rename path")]
+    MissingRenamePath,
+    #[error("path is not UTF-8")]
+    NotUtf8Path,
+    #[error("Git reference cannot start with '-'")]
+    OptionReference,
+    #[error(transparent)]
+    OutputText(#[from] FromUtf8Error),
+    #[error(transparent)]
+    PathText(#[from] Utf8Error),
+    #[error("cannot run Git")]
+    Run(#[source] io::Error),
+    #[error("base {reference:?} is not a commit in this repository; fetch it or check the name")]
+    UnknownBase {
+        reference: String,
+        source: Box<Self>,
+    },
+}
+
+pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
     let result = Command::new("git")
         .arg("-C")
         .arg(root)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
-        .context("cannot run Git")?;
-    ensure!(
-        result.status.success(),
-        "Git {} failed: {}",
-        args.first().copied().unwrap_or("command"),
-        String::from_utf8_lossy(&result.stderr).trim()
-    );
+        .map_err(GitError::Run)?;
+    if !result.status.success() {
+        return Err(GitError::Failed {
+            command: args.first().copied().unwrap_or("command").to_owned(),
+            stderr: String::from_utf8_lossy(&result.stderr).trim().to_owned(),
+        });
+    }
     Ok(result.stdout)
 }
 
@@ -30,33 +68,35 @@ pub(crate) struct Ignored {
 }
 
 /// The first of `paths` that the project's ignore rules exclude; tracked files are never ignored.
-pub(crate) fn ignored(root: &Path, paths: &[PathBuf]) -> Result<Option<Ignored>> {
+pub(crate) fn find_ignored(root: &Path, paths: &[PathBuf]) -> Result<Option<Ignored>, GitError> {
     // Without `--verbose`, Git lists only excluded paths; with it, Git also lists paths that a
-    // negated `!PATTERN` keeps. So find the first excluded path, then ask for the rule that decided it.
+    // negated `!PATTERN` keeps. So find the first excluded path, then ask for the rule that decided
+    // it.
     let excluded = check_ignore(root, false, paths)?;
     let Some(path) = excluded.first() else {
         return Ok(None);
     };
     let fields = check_ignore(root, true, &[PathBuf::from(path)])?;
-    let [source, line, pattern, path] = fields.as_slice() else {
-        bail!("malformed Git check-ignore output");
+    let [source, line, pattern, matched] = fields.as_slice() else {
+        return Err(GitError::MalformedCheckIgnore);
     };
     Ok(Some(Ignored {
-        path: path.clone(),
+        path: matched.clone(),
         rule: format!("{source}:{line}:{pattern}"),
     }))
 }
 
 /// Run `git check-ignore` on `paths` and return its NUL-separated output fields; none when Git
 /// excludes none of them.
-fn check_ignore(root: &Path, verbose: bool, paths: &[PathBuf]) -> Result<Vec<String>> {
+fn check_ignore(root: &Path, verbose: bool, paths: &[PathBuf]) -> Result<Vec<String>, GitError> {
     // Paths go through a file on standard input, since `-z` needs `--stdin`.
-    let mut input = tempfile::tempfile()?;
+    let mut input = tempfile::tempfile().map_err(GitError::Input)?;
     for path in paths {
-        input.write_all(path.to_str().context("path is not UTF-8")?.as_bytes())?;
-        input.write_all(b"\0")?;
+        let text = path.to_str().ok_or(GitError::NotUtf8Path)?;
+        input.write_all(text.as_bytes()).map_err(GitError::Input)?;
+        input.write_all(b"\0").map_err(GitError::Input)?;
     }
-    input.rewind()?;
+    input.rewind().map_err(GitError::Input)?;
     let result = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -65,137 +105,168 @@ fn check_ignore(root: &Path, verbose: bool, paths: &[PathBuf]) -> Result<Vec<Str
         .stdin(input)
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
-        .context("cannot run Git")?;
+        .map_err(GitError::Run)?;
     match result.status.code() {
-        Some(0) => Ok(String::from_utf8(result.stdout)?
-            .split_terminator('\0')
-            .map(str::to_owned)
-            .collect()),
+        Some(0) => {
+            Ok(String::from_utf8(result.stdout)?
+                .split_terminator('\0')
+                .map(str::to_owned)
+                .collect())
+        },
         Some(1) => Ok(Vec::new()),
-        _ => bail!(
-            "Git check-ignore failed: {}",
-            String::from_utf8_lossy(&result.stderr).trim()
-        ),
+        _ => {
+            Err(GitError::CheckIgnore(
+                String::from_utf8_lossy(&result.stderr).trim().to_owned(),
+            ))
+        },
     }
 }
 
-pub(crate) fn head(root: &Path) -> Option<String> {
-    output(root, &["rev-parse", "HEAD"])
+pub(crate) fn read_head(root: &Path) -> Option<String> {
+    run_git(root, &["rev-parse", "HEAD"])
         .ok()
-        .and_then(|s| String::from_utf8(s).ok())
-        .map(|s| s.trim().to_owned())
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .map(|text| text.trim().to_owned())
 }
 
 pub(crate) struct Changes {
-    pub paths: BTreeMap<PathBuf, Option<PathBuf>>,
     pub base: String,
+    pub paths: BTreeMap<PathBuf, Option<PathBuf>>,
 }
 
 /// The commit `reference` names.
-pub(crate) fn commit(root: &Path, reference: &str) -> Result<String> {
-    ensure!(
-        !reference.starts_with('-'),
-        "Git reference cannot start with '-'"
-    );
-    let oid = output(
+pub(crate) fn commit(root: &Path, reference: &str) -> Result<String, GitError> {
+    if reference.starts_with('-') {
+        return Err(GitError::OptionReference);
+    }
+    let oid = run_git(
         root,
         &["rev-parse", "--verify", &format!("{reference}^{{commit}}")],
     )
-    .with_context(|| {
-        format!("base {reference} is not a commit in this repository; fetch it or check the name")
+    .map_err(|source| {
+        GitError::UnknownBase {
+            reference: reference.to_owned(),
+            source: Box::new(source),
+        }
     })?;
     Ok(String::from_utf8(oid)?.trim().to_owned())
 }
 
-pub(crate) fn changed(root: &Path, reference: &str, discovered: &[PathBuf]) -> Result<Changes> {
+#[expect(
+    clippy::indexing_slicing,
+    reason = "`partition_point` returns an index no larger than the slice length."
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The steps run in one order and share local state; splitting them would add \
+              forwarding functions."
+)]
+#[expect(
+    clippy::else_if_without_else,
+    reason = "`needless_else` rejects the empty `else` this lint asks for."
+)]
+pub(crate) fn list_changed(
+    root: &Path,
+    reference: &str,
+    discovered: &[PathBuf],
+) -> Result<Changes, GitError> {
     let base = commit(root, reference)?;
-    let top = top(root)?;
-    let names = output(
+    let top = find_top(root)?;
+    let names = run_git(
         &top,
         &["diff", "--name-status", "--find-renames", "-z", &base, "--"],
     )?;
-    let mut entries = names.split(|b| *b == 0).filter(|s| !s.is_empty());
+    let mut entries = names
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty());
     let mut paths = BTreeMap::new();
     while let Some(status) = entries.next() {
-        let first = entries.next().context("missing Git path")?;
-        let first = top.join(std::str::from_utf8(first)?);
+        let first = entries.next().ok_or(GitError::MissingPath)?;
+        let first_path = top.join(str::from_utf8(first)?);
         let second = if status.starts_with(b"R") {
-            Some(top.join(std::str::from_utf8(
-                entries.next().context("missing rename path")?,
+            Some(top.join(str::from_utf8(
+                entries.next().ok_or(GitError::MissingRenamePath)?,
             )?))
         } else {
             None
         };
-        if let Some(second) = second {
-            match (first.strip_prefix(root), second.strip_prefix(root)) {
+        if let Some(second_path) = second {
+            match (
+                first_path.strip_prefix(root),
+                second_path.strip_prefix(root),
+            ) {
                 (Ok(old), Ok(new)) => {
-                    paths.insert(new.to_owned(), Some(old.to_owned()));
-                }
+                    drop(paths.insert(new.to_owned(), Some(old.to_owned())));
+                },
                 (Ok(old), Err(_)) => {
-                    paths.insert(old.to_owned(), None);
-                }
+                    drop(paths.insert(old.to_owned(), None));
+                },
                 (Err(_), Ok(new)) => {
-                    paths.insert(new.to_owned(), None);
-                }
-                _ => {}
+                    drop(paths.insert(new.to_owned(), None));
+                },
+                _ => {},
             }
-        } else if let Ok(path) = first.strip_prefix(root) {
-            paths.insert(path.to_owned(), None);
+        } else if let Ok(path) = first_path.strip_prefix(root) {
+            drop(paths.insert(path.to_owned(), None));
         }
     }
-    for name in output(&top, &["ls-files", "--others", "--exclude-standard", "-z"])?
-        .split(|b| *b == 0)
-        .filter(|s| !s.is_empty())
+    for name in run_git(&top, &["ls-files", "--others", "--exclude-standard", "-z"])?
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
     {
-        if let Ok(path) = top.join(std::str::from_utf8(name)?).strip_prefix(root) {
+        if let Ok(path) = top.join(str::from_utf8(name)?).strip_prefix(root) {
             let start = discovered.partition_point(|candidate| candidate.as_path() < path);
             for candidate in discovered[start..]
                 .iter()
                 .take_while(|candidate| candidate.starts_with(path))
             {
-                paths.entry(candidate.clone()).or_insert(None);
+                let _: &mut Option<PathBuf> = paths.entry(candidate.clone()).or_insert(None);
             }
         }
     }
-    Ok(Changes { paths, base })
+    Ok(Changes { base, paths })
 }
 
-fn top(root: &Path) -> Result<PathBuf> {
+fn find_top(root: &Path) -> Result<PathBuf, GitError> {
     Ok(PathBuf::from(
-        String::from_utf8(output(root, &["rev-parse", "--show-toplevel"])?)?.trim(),
+        String::from_utf8(run_git(root, &["rev-parse", "--show-toplevel"])?)?.trim(),
     ))
 }
 
-pub(crate) fn before(root: &Path, base: &str, path: &Path) -> Result<Option<String>> {
-    let top = top(root)?;
+pub(crate) fn read_before(
+    root: &Path,
+    base: &str,
+    path: &Path,
+) -> Result<Option<String>, SourceError> {
+    let top = find_top(root)?;
     let full = root.join(path);
     let relative = full
         .strip_prefix(&top)?
         .to_str()
-        .context("path is not UTF-8")?;
-    let listing = output(&top, &["ls-tree", "-z", base, "--", relative])?;
+        .ok_or(SourceError::NotUtf8Path)?;
+    let listing = run_git(&top, &["ls-tree", "-z", base, "--", relative])?;
     if listing.is_empty() {
         return Ok(None);
     }
     if listing.starts_with(b"120000 ") {
-        return Err(crate::change::Unreadable::SymbolicLink.into());
+        return Err(Unreadable::SymbolicLink.into());
     }
-    ensure!(
-        listing.starts_with(b"100644 ") || listing.starts_with(b"100755 "),
-        "base input must be a regular file: {relative}"
-    );
+    if !(listing.starts_with(b"100644 ") || listing.starts_with(b"100755 ")) {
+        return Err(SourceError::BaseNotRegularFile(relative.to_owned()));
+    }
     let object = format!("{base}:{relative}");
-    let size = String::from_utf8(output(&top, &["cat-file", "-s", &object])?)?
+    let size = String::from_utf8(run_git(&top, &["cat-file", "-s", &object])?)?
         .trim()
         .parse()?;
-    crate::change::check_capture_size(path, size)?;
-    crate::change::decode(output(&top, &["cat-file", "blob", &object])?).map(Some)
+    change::check_capture_size(path, size)?;
+    let bytes = run_git(&top, &["cat-file", "blob", &object])?;
+    Ok(Some(change::decode(bytes)?))
 }
 
-pub(crate) fn branch(root: &Path) -> Option<String> {
-    output(root, &["rev-parse", "--abbrev-ref", "HEAD"])
+pub(crate) fn read_branch(root: &Path) -> Option<String> {
+    run_git(root, &["rev-parse", "--abbrev-ref", "HEAD"])
         .ok()
-        .and_then(|s| String::from_utf8(s).ok())
-        .map(|s| s.trim().to_owned())
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .map(|text| text.trim().to_owned())
         .filter(|name| !name.is_empty())
 }

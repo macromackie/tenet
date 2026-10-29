@@ -64,7 +64,8 @@ changed since. Reverting the edit restores the earlier input, so its record sett
 were not kept.
 
 Repeated checks answer identical requests from `.tenet/answers.jsonl`, so an unchanged contract costs no request and
-keeps its answer. A failed request caches nothing and leaves its contract pending, so rerunning the check sends only
+keeps its answer. An answer counts only for the Tenet version and provider that asked and the model revision the
+provider reported; `tenet status --prune-cache` removes the ones no check can reuse. A failed request caches nothing and leaves its contract pending, so rerunning the check sends only
 the failed requests; `check --dry-run` predicts how many. A record still settles an input whose request failed. Use `--fresh` to sample the model again. `tenet check --no-model` captures a revision without
 credentials; only conclusions for unchanged inputs carry over, and its rows mark them `unchanged`. `tenet log` lists
 every revision and record. Each revision keeps its `--min-confidence`, and `status`, `show`, and `log` print it when it
@@ -111,10 +112,19 @@ exit 2
 {
   "hooks": {
     "SessionStart": [
-      { "matcher": "startup", "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/tenet-start.sh" }] }
+      {
+        "matcher": "startup",
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/tenet-start.sh" }
+        ]
+      }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/tenet-stop.sh" }] }
+      {
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/tenet-stop.sh" }
+        ]
+      }
     ]
   }
 }
@@ -125,13 +135,13 @@ review without requests, so `status --base` covers every contract the session's 
 has checked is pending as `not_checked`. `status` reads the review without writing it or calling a model, and its exit
 code decides the hook:
 
-| Exit | Meaning for the hook |
-| --- | --- |
-| 0 | Every contract is settled without a violation; let the agent stop |
-| 1 | A recorded failure; the review is complete, and the agent reports the violation |
-| 3 | A recorded `unresolved` conclusion; the review is complete, and the agent reports what is missing |
-| 4 | A contract is pending, or no check compares the working tree with the session base; block |
-| 2 | Tenet could not read the review, for example after `.tenet/` was deleted, edited, or committed; block |
+| Exit | Meaning for the hook                                                                                  |
+| ---- | ----------------------------------------------------------------------------------------------------- |
+| 0    | Every contract is settled without a violation; let the agent stop                                     |
+| 1    | A recorded failure; the review is complete, and the agent reports the violation                       |
+| 3    | A recorded `unresolved` conclusion; the review is complete, and the agent reports what is missing     |
+| 4    | A contract is pending, or no check compares the working tree with the session base; block             |
+| 2    | Tenet could not read the review, for example after `.tenet/` was deleted, edited, or committed; block |
 
 Claude Code sets `stop_hook_active` in a `Stop` hook's input when the agent is already continuing because a stop hook
 blocked. The recipe then lets it stop, so it blocks once per stop and cannot trap an agent that cannot settle a contract.

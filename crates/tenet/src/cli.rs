@@ -1,10 +1,21 @@
+use std::{path::PathBuf, process::ExitCode};
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use ev_grep_jev::Provider;
-use std::path::PathBuf;
-use tenet_engine::SpanRequest;
+use tenet_engine::{
+    SpanRequest,
+    review::{DIRECTORY, OverallStatus},
+};
+
+use crate::telemetry::Environment;
 
 #[derive(Parser)]
 #[command(version, about = "Check code against Markdown contracts")]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
+              codes."
+)]
 pub(crate) struct Cli {
     #[arg(long, global = true, default_value = ".")]
     pub root: PathBuf,
@@ -12,18 +23,98 @@ pub(crate) struct Cli {
     /// is read-only.
     #[arg(long, global = true, env = "TENET_STATE_DIR")]
     pub state_dir: Option<PathBuf>,
+    /// Write a JSON Lines trace of spans and events to PATH, or to stderr with '-'.
+    #[arg(long, global = true, env = "TENET_TRACE", value_name = "PATH")]
+    pub trace: Option<PathBuf>,
+    /// Environment that the trace's first record names; the default is ci when CI is set,
+    /// otherwise local.
+    #[arg(
+        long,
+        global = true,
+        env = "TENET_TRACE_ENVIRONMENT",
+        value_enum,
+        default_value_t = Environment::detect(),
+        hide_default_value = true
+    )]
+    pub trace_environment: Environment,
     #[command(subcommand)]
     pub command: Command,
 }
 
 impl Cli {
     /// Where `check` keeps review state and the other review commands read it.
-    pub(crate) fn state(&self) -> PathBuf {
-        (self.state_dir.clone()).unwrap_or_else(|| self.root.join(tenet_engine::review::DIRECTORY))
+    pub(crate) fn resolve_state(&self) -> PathBuf {
+        (self.state_dir.clone()).unwrap_or_else(|| self.root.join(DIRECTORY))
+    }
+}
+
+/// How a command ended.
+///
+/// Its conversion to `u8` is the one place each exit status's number is
+/// written. `check` and `status` end with a review's overall status; `outdated` and `update` fail
+/// when a copy needs attention.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
+              codes."
+)]
+pub(crate) enum ExitStatus {
+    /// Every contract is settled without a violation, or the command succeeded.
+    Passed,
+    /// A settled violation, or an installed copy the user has to resolve.
+    Failed,
+    /// Invalid input or configuration, or another execution error.
+    Error,
+    /// A recorded unresolved conclusion.
+    Unresolved,
+    /// A contract is pending.
+    Pending,
+    /// The command was cancelled.
+    Cancelled,
+}
+
+impl From<OverallStatus> for ExitStatus {
+    fn from(status: OverallStatus) -> Self {
+        match status {
+            OverallStatus::Passed => Self::Passed,
+            OverallStatus::Unresolved => Self::Unresolved,
+            OverallStatus::Failed => Self::Failed,
+            OverallStatus::Pending => Self::Pending,
+            OverallStatus::Error => Self::Error,
+            OverallStatus::Cancelled => Self::Cancelled,
+        }
+    }
+}
+
+/// The number that JSON output's `exit_code` reports and the process returns.
+impl From<ExitStatus> for u8 {
+    #[inline]
+    fn from(status: ExitStatus) -> Self {
+        match status {
+            ExitStatus::Passed => 0,
+            ExitStatus::Failed => 1,
+            ExitStatus::Error => 2,
+            ExitStatus::Unresolved => 3,
+            ExitStatus::Pending => 4,
+            ExitStatus::Cancelled => 130,
+        }
+    }
+}
+
+impl From<ExitStatus> for ExitCode {
+    #[inline]
+    fn from(status: ExitStatus) -> Self {
+        Self::from(u8::from(status))
     }
 }
 
 #[derive(Subcommand)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
+              codes."
+)]
 pub(crate) enum Command {
     /// Assess a repository, or whether a change preserves its contracts, and update the review.
     Check(Check),
@@ -34,6 +125,10 @@ pub(crate) enum Command {
         base: Option<String>,
         #[arg(long)]
         json: bool,
+        /// First remove cached answers this Tenet cannot reuse: those an earlier Tenet wrote and
+        /// those a later answer to the same request replaced.
+        #[arg(long)]
+        prune_cache: bool,
     },
     /// Show what a reviewer needs to settle one contract: rule, change, model answer, and history.
     Show {
@@ -73,6 +168,11 @@ pub(crate) enum Command {
 }
 
 #[derive(Subcommand)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
+              codes."
+)]
 pub(crate) enum Contracts {
     List {
         /// List only the contracts that govern this file.
@@ -141,6 +241,11 @@ pub(crate) enum Skills {
 
 /// Commands for copies recorded in .tenet.lock, the same for contracts and skills.
 #[derive(Subcommand)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
+              codes."
+)]
 pub(crate) enum Locked {
     /// Compare installed copies with their sources.
     Outdated {
@@ -177,13 +282,19 @@ pub(crate) enum Locked {
 }
 
 #[derive(Args)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
+              codes."
+)]
 pub(crate) struct Check {
     #[command(flatten)]
     pub input: Input,
     /// Show candidate pairs and predict requests without calling a model or updating the review.
     #[arg(long, conflicts_with = "no_model")]
     pub dry_run: bool,
-    /// Capture the change and reuse earlier conclusions for unchanged inputs; leave the rest pending.
+    /// Capture the change and reuse earlier conclusions for unchanged inputs; leave the rest
+    /// pending.
     #[arg(long, conflicts_with = "fresh")]
     pub no_model: bool,
     /// Ask the model again instead of reusing answers to identical earlier requests.
@@ -194,6 +305,11 @@ pub(crate) struct Check {
 }
 
 #[derive(Args)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
+              codes."
+)]
 pub(crate) struct Record {
     pub contract: String,
     /// The selected paths of the check to settle, when the contract stands in several.
@@ -214,11 +330,20 @@ pub(crate) struct Export {
     #[command(flatten)]
     pub input: Input,
     /// Maximum encoded packet size in bytes; oversized input is rejected, never truncated.
-    #[arg(long, default_value_t = 1_048_576, value_parser = clap::value_parser!(u32).range(1..=67_108_864))]
+    #[arg(
+        long,
+        default_value_t = 1_048_576,
+        value_parser = clap::value_parser!(u32).range(1..=67_108_864)
+    )]
     pub max_bytes: u32,
 }
 
 #[derive(Args)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
+              codes."
+)]
 pub(crate) struct Input {
     pub paths: Vec<PathBuf>,
     /// Supply a related repository file, or only some of its lines, without changing contract
@@ -238,6 +363,11 @@ pub(crate) struct Input {
 }
 
 #[derive(Args)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
+              codes."
+)]
 pub(crate) struct Run {
     #[arg(long, env = "TENET_PROVIDER", default_value = "openrouter")]
     pub provider: Provider,
@@ -251,7 +381,11 @@ pub(crate) struct Run {
     #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..))]
     pub max_requests: u32,
     /// Route lower-confidence answers to unresolved while preserving their raw values.
-    #[arg(long, default_value_t = tenet_engine::MIN_CONFIDENCE, value_parser = min_confidence)]
+    #[arg(
+        long,
+        default_value_t = tenet_engine::MIN_CONFIDENCE,
+        value_parser = parse_min_confidence
+    )]
     pub min_confidence: f64,
     #[arg(long, value_enum, default_value_t = ReporterKind::Default)]
     pub reporter: ReporterKind,
@@ -260,10 +394,14 @@ pub(crate) struct Run {
     pub json: bool,
 }
 
-fn min_confidence(value: &str) -> Result<f64, String> {
+#[expect(
+    clippy::shadow_reuse,
+    reason = "Each step rebinds the value it converts under the same name."
+)]
+fn parse_min_confidence(value: &str) -> Result<f64, String> {
     let value: f64 = value
         .parse()
-        .map_err(|_| "expected a number between 0 and 1")?;
+        .map_err(|error| format!("expected a number between 0 and 1: {error:#}"))?;
     if value.is_finite() && (0.0..=1.0).contains(&value) {
         Ok(value)
     } else {
@@ -272,6 +410,11 @@ fn min_confidence(value: &str) -> Result<f64, String> {
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
+              codes."
+)]
 pub(crate) enum ReporterKind {
     Default,
     Verbose,

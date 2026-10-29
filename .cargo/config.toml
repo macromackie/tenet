@@ -1,0 +1,4 @@
+[env]
+# The cc crate compiles C dependencies such as ring for the SDK's own macOS version unless this is set, while rustc
+# links for macOS 11.0. The shipped lint table denies the linker's version-mismatch warning, so both use 11.0.
+MACOSX_DEPLOYMENT_TARGET = "11.0"

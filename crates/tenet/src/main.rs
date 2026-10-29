@@ -1,53 +1,87 @@
+//! The `tenet` command: it validates, adopts and checks contracts and keeps their review.
+
+#![expect(
+    clippy::multiple_crate_versions,
+    reason = "Dependencies pin base64, cpufeatures, getrandom and windows-sys at two versions \
+              each, as deny.toml's skip entries record."
+)]
+
+extern crate alloc;
+
 mod adoption;
 mod cli;
 mod commands;
 mod diagnostics;
+mod error;
+mod output;
 mod progress;
 mod provider;
 mod report_format;
 mod reporter;
 mod review;
+mod telemetry;
 
-use clap::Parser;
-use cli::{Cli, Command, ReporterKind};
-use std::{
-    io::{self, Write},
-    process::ExitCode,
-};
+use std::{io, process::ExitCode};
+
+use clap::Parser as _;
+use cli::{Cli, Command, ExitStatus, ReporterKind};
+use error::CommandError;
+use tracing::{Instrument as _, Span};
 
 #[tokio::main(flavor = "current_thread")]
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "Only the commands that take `--json` print a JSON error."
+)]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
     let json = match &cli.command {
-        Command::Check(c) => c.run.json || c.run.reporter == ReporterKind::Jsonl,
+        Command::Check(check) => check.run.json || check.run.reporter == ReporterKind::Jsonl,
         Command::Status { json, .. } | Command::Show { json, .. } | Command::Log { json, .. } => {
             *json
-        }
+        },
         _ => false,
     };
-    match commands::execute(&cli).await {
-        Ok(code) => ExitCode::from(code),
+    let traced = match &cli.trace {
+        Some(path) => telemetry::install(path, cli.trace_environment),
+        None => Ok(()),
+    };
+    let span = (matches!(cli.command, Command::Check(_)).then(telemetry::check))
+        .unwrap_or_else(Span::none);
+    let result = async {
+        traced?;
+        commands::execute(&cli).await
+    }
+    .instrument(span.clone())
+    .await;
+    let status = match result {
+        Ok(status) => status,
         // A reader such as `head` closed the output early; it has what it wanted.
-        Err(error)
-            if error.chain().any(|cause| {
-                cause
-                    .downcast_ref::<io::Error>()
-                    .is_some_and(|error| error.kind() == io::ErrorKind::BrokenPipe)
-            }) =>
-        {
-            ExitCode::from(2)
-        }
+        Err(CommandError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe => {
+            ExitStatus::Error
+        },
         Err(error) => {
+            span.in_scope(|| telemetry::record_stopped(&error));
             // JSON output carries the error too, but an agent may read only stderr.
             if json {
-                let _ = writeln!(
-                    io::stdout(),
-                    "{}",
-                    serde_json::json!({"version": 4, "type": "error", "message": format!("{error:#}"), "exit_code": 2})
-                );
+                drop(output::write_document(
+                    &mut output::open_stdout(),
+                    tenet_engine::EVENTS_VERSION,
+                    serde_json::json!({
+                        "type": "error",
+                        "message": tenet_engine::Causes(&error).to_string(),
+                        "exit_code": u8::from(ExitStatus::Error),
+                    }),
+                ));
             }
-            let _ = diagnostics::error(&cli.root, &error, &mut io::stderr());
-            ExitCode::from(2)
-        }
-    }
+            drop(diagnostics::write_error(
+                &cli.root,
+                &error,
+                &mut output::open_stderr(),
+            ));
+            ExitStatus::Error
+        },
+    };
+    let _: &Span = span.record("exit_code", u8::from(status));
+    ExitCode::from(status)
 }

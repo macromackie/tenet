@@ -1,30 +1,86 @@
-use crate::{
-    CheckResult, Event, EvidencePacket, FailureKind, RequestFailure, Stage, Status,
-    evidence::content_hash, review::Answers,
-};
-use anyhow::{Context as _, Result};
+use core::cell::Cell;
+use std::{path::Path, time::Instant};
+
 use ev_grep_core::{Evaluator, Outcome};
-use std::{cell::Cell, path::Path, time::Instant};
 use tenet_contracts::Contract;
 
-pub(super) struct Context<'a, E, F> {
-    pub(super) evidence: &'a EvidencePacket<'a>,
-    pub(super) contract: &'a Contract,
-    pub(super) evaluator: &'a E,
-    pub(super) answers: &'a Answers,
-    pub(super) emit: &'a F,
-    pub(super) requests: &'a Cell<usize>,
-    pub(super) max_requests: usize,
-    pub(super) min_confidence: f64,
-    pub(super) classify: fn(&anyhow::Error) -> FailureKind,
-    pub(super) local_requests: &'a Cell<usize>,
-    pub(super) refused: &'a Cell<usize>,
+use super::CheckError;
+use crate::{
+    CheckResult,
+    ClassifyRequest,
+    Event,
+    EvidencePacket,
+    Stage,
+    Status,
+    evidence::{InputError, hash_content},
+    report::Causes,
+    review::{Answers, StoreError},
+    telemetry::{self, Request},
+};
+
+/// Why one file's check produced no answer; its result reports it.
+#[derive(Debug, thiserror::Error)]
+enum FileError {
+    #[error(transparent)]
+    Cache(#[from] StoreError),
+    #[error(transparent)]
+    Encode(#[from] serde_json::Error),
+    #[error(transparent)]
+    Input(#[from] InputError),
+    #[error("missing {0:?} answer")]
+    MissingAnswer(&'static str),
+    #[error(transparent)]
+    Request(anyhow::Error),
 }
 
-pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
-    context: &Context<'_, E, F>,
+/// Why judging a file ended early: a failure of the file's own check, or one that ends the check.
+enum Halt<Halted> {
+    Check(Halted),
+    File(FileError),
+}
+
+impl<Halted> From<FileError> for Halt<Halted> {
+    fn from(error: FileError) -> Self {
+        Self::File(error)
+    }
+}
+
+#[expect(
+    clippy::field_scoped_visibility_modifiers,
+    reason = "The sibling modules fill these fields, and the type stays private to its parent \
+              module."
+)]
+pub(super) struct Context<'plan, Assessor, Emit> {
+    pub(super) answers: &'plan Answers,
+    pub(super) contract: &'plan Contract,
+    pub(super) emit: &'plan Emit,
+    pub(super) evaluator: &'plan Assessor,
+    pub(super) evidence: &'plan EvidencePacket<'plan>,
+    pub(super) local_requests: &'plan Cell<usize>,
+    pub(super) max_requests: usize,
+    pub(super) min_confidence: f64,
+    pub(super) refused: &'plan Cell<usize>,
+    pub(super) requests: &'plan Cell<usize>,
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "The checker drives this future on one task and never moves it across threads."
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The steps run in one order and share local state; splitting them would add \
+              forwarding functions."
+)]
+pub(super) async fn assess<Assessor, Emit, Halted>(
+    context: &Context<'_, Assessor, Emit>,
     path: &Path,
-) -> Result<CheckResult> {
+) -> Result<CheckResult, Halted>
+where
+    Assessor: Evaluator<Error: ClassifyRequest>,
+    Emit: Fn(Event) -> Result<(), Halted>,
+    Halted: From<CheckError>,
+{
     let started = Instant::now();
     let contract = context.contract;
     let mode = context.evidence.plan.mode;
@@ -56,43 +112,69 @@ pub(super) async fn assess<E: Evaluator, F: Fn(Event) -> Result<()>>(
         contract: contract.name.clone(),
         path: result.path.clone(),
     })?;
-    let change = context.evidence.change(path);
-    let judged = async {
-        let change = change?;
-        result.change_kind = Some(change.kind);
-        result.previous_path = change
-            .previous_path
-            .as_ref()
-            .map(|p| p.display().to_string());
-        result.before_hash = change.before.as_deref().map(content_hash);
-        result.after_hash = change.after.as_deref().map(content_hash);
-        judge(context, change, &mut result).await
-    }
-    .await;
-    if let Err(error) = judged {
-        if let Some(cause) = result.failure.and_then(RequestFailure::stops_check) {
-            return Err(error.context(format!(
-                "{cause}, while checking {} against {}",
-                result.path, contract.name
-            )));
-        }
-        let (status, reason) = crate::input_status(&error);
-        result.status = status;
-        result.reason = Some(reason);
+    let judged = match context.evidence.change(path) {
+        Ok(change) => {
+            result.change_kind = Some(change.kind);
+            result.previous_path = change
+                .previous_path
+                .as_ref()
+                .map(|previous| previous.display().to_string());
+            result.before_hash = change.before.as_deref().map(hash_content);
+            result.after_hash = change.after.as_deref().map(hash_content);
+            judge(context, change, &mut result).await
+        },
+        Err(error) => Err(Halt::File(FileError::Input(error.into()))),
+    };
+    match judged {
+        Ok(()) => {},
+        Err(Halt::Check(error)) => return Err(error),
+        Err(Halt::File(FileError::Input(error))) => {
+            let (status, reason) = crate::classify_input_status(&error);
+            result.status = status;
+            result.reason = Some(reason);
+        },
+        Err(Halt::File(
+            error @ (FileError::Request(_)
+            | FileError::Encode(_)
+            | FileError::Cache(_)
+            | FileError::MissingAnswer(_)),
+        )) => {
+            result.status = Status::Error;
+            result.reason = Some(Causes(&error).to_string());
+        },
     }
     result.elapsed_ms = started.elapsed().as_millis();
     Ok(result)
 }
 
-async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
-    context: &Context<'_, E, F>,
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "Counts of results, contracts and requests are bounded by the repository's files and \
+              the request budget, far below the integer's limit."
+)]
+#[expect(
+    clippy::future_not_send,
+    reason = "The checker drives this future on one task and never moves it across threads."
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The steps run in one order and share local state; splitting them would add \
+              forwarding functions."
+)]
+async fn judge<Assessor, Emit, Halted>(
+    context: &Context<'_, Assessor, Emit>,
     change: &crate::Change,
     result: &mut CheckResult,
-) -> Result<()> {
-    let (state, omitted) = context
-        .evidence
-        .file_input(context.contract, &change.path)?;
-    result.input_bytes = Some(serde_json::to_vec(&state)?.len());
+) -> Result<(), Halt<Halted>>
+where
+    Assessor: Evaluator<Error: ClassifyRequest>,
+    Emit: Fn(Event) -> Result<(), Halted>,
+    Halted: From<CheckError>,
+{
+    let (state, omitted) = (context.evidence)
+        .build_file_input(context.contract, &change.path)
+        .map_err(FileError::Input)?;
+    result.input_bytes = Some(serde_json::to_vec(&state).map_err(FileError::Encode)?.len());
     result.omitted = omitted;
     let relevance = super::prompt::query(Stage::Applicability, result.mode);
     let violation = super::prompt::query(Stage::Verification, result.mode);
@@ -106,13 +188,15 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
             query: &violation,
         },
     ];
-    let key = context.answers.key(&questions, &state);
-    let mut answers = if let Some(answers) = context.answers.get(&key) {
+    let key = Answers::derive_key(&questions, &state);
+    let mut answers = if let Some(answers) = context.answers.read(&key) {
         result.cached = true;
+        telemetry::record_cache_hit(Request::File);
         answers
     } else {
         if context.requests.get() >= context.max_requests {
             context.refused.set(context.refused.get() + 1);
+            telemetry::record_budget_exhausted(Request::File, context.max_requests);
             result.status = Status::Incomplete;
             result.reason = Some("request budget exhausted".into());
             return Ok(());
@@ -123,24 +207,40 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
             contract: context.contract.name.clone(),
             path: result.path.clone(),
             stage: Stage::Applicability,
-        })?;
+        })
+        .map_err(Halt::Check)?;
         let batch = match context.evaluator.assess_questions(&questions, &state).await {
             Ok(batch) => batch,
             Err(error) => {
-                result.failure = Some((context.classify)(&error).into());
-                return Err(error);
-            }
+                let failure = error.classify_request();
+                result.failure = Some(failure);
+                if let Some(reason) = failure.explain_stop() {
+                    return Err(Halt::Check(
+                        CheckError::FileRequest {
+                            failure,
+                            reason,
+                            path: result.path.clone(),
+                            contract: context.contract.name.clone(),
+                            source: error.into(),
+                        }
+                        .into(),
+                    ));
+                }
+                return Err(FileError::Request(error.into()).into());
+            },
         };
-        context.answers.put(&key, &batch.answers)?;
+        (context.answers)
+            .put(&key, &batch.answers)
+            .map_err(FileError::Cache)?;
         result.request = Some(batch.request);
         batch.answers
     };
     let applicability = answers
         .remove("relevance")
-        .context("missing relevance answer")?;
+        .ok_or(FileError::MissingAnswer("relevance"))?;
     let verification = answers
         .remove("violation")
-        .context("missing violation answer")?;
+        .ok_or(FileError::MissingAnswer("violation"))?;
     let applicability_routing = applicability.route(context.min_confidence);
     let verification_routing = verification.route(context.min_confidence);
     for (stage, routing) in [
@@ -152,7 +252,8 @@ async fn judge<E: Evaluator, F: Fn(Event) -> Result<()>>(
             path: result.path.clone(),
             stage,
             outcome: routing.outcome,
-        })?;
+        })
+        .map_err(Halt::Check)?;
     }
     result.status = match verification_routing.outcome {
         Outcome::Match => Status::Fail,

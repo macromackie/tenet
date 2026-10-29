@@ -1,71 +1,95 @@
 //! `add`: install a library contract or skill, or record an existing copy, and lock its files.
 
+use alloc::collections::BTreeMap;
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
-use tenet_contracts::{LOCK_FILE, Lock, file_hash, is_kebab, is_skill_name, name_of, with_name};
+use tenet_contracts::{Lock, hash_file, is_kebab, is_skill_name, name_of, with_name};
 
 use super::{
-    Added, Kind, Origin,
+    Added,
+    AdoptionError,
+    Kind,
+    Origin,
     kind::Rule,
-    parse_spec, read_lock, refuse_ignored, relative,
+    make_relative,
+    parse_spec,
+    read_lock,
+    refuse_ignored,
     unit::{self, Unit},
     upstream::{File, Files, Revision, Upstream},
     write_lock,
 };
 use crate::discovery;
 
-/// Where `add` puts a contract: a new numbered folder in a scope, or an existing copy recorded as is.
-pub enum Destination<'a> {
+/// Where `add` puts a contract: a new numbered folder in a scope, or an existing copy recorded as
+/// is.
+#[derive(Debug)]
+pub enum Destination<'input> {
+    Existing(&'input Path),
     Scope {
-        scope: &'a Path,
-        name: Option<&'a str>,
+        scope: &'input Path,
+        name: Option<&'input str>,
         number: Option<u32>,
     },
-    Existing(&'a Path),
 }
 
-pub struct AddRequest<'a> {
-    /// `SOURCE/NAME[@REF]`.
-    pub spec: &'a str,
-    pub destination: Destination<'a>,
+/// What `tenet contracts add` installs, and from where.
+#[derive(Debug)]
+pub struct AddRequest<'input> {
+    pub destination: Destination<'input>,
     /// `ALIAS=URL` registrations for non-default sources.
-    pub sources: &'a [String],
+    pub sources: &'input [String],
+    /// `SOURCE/NAME[@REF]`.
+    pub spec: &'input str,
 }
 
 /// Where `add_skill` puts a skill: a new folder in a directory, or an existing copy recorded as is.
-pub enum SkillDestination<'a> {
+#[derive(Debug)]
+pub enum SkillDestination<'input> {
     Directory {
-        directory: &'a Path,
-        name: Option<&'a str>,
+        directory: &'input Path,
+        name: Option<&'input str>,
     },
-    Existing(&'a Path),
+    Existing(&'input Path),
 }
 
-pub struct SkillRequest<'a> {
-    /// `SOURCE/NAME[@REF]`.
-    pub spec: &'a str,
-    pub destination: SkillDestination<'a>,
+/// What `tenet skills add` installs, and from where.
+#[derive(Debug)]
+pub struct SkillRequest<'input> {
+    pub destination: SkillDestination<'input>,
     /// `ALIAS=URL` registrations for non-default sources.
-    pub sources: &'a [String],
+    pub sources: &'input [String],
+    /// `SOURCE/NAME[@REF]`.
+    pub spec: &'input str,
 }
 
 /// A library entry's files at the revision an `add` resolved.
 struct Fetched {
-    source: String,
+    files: Files,
     name: String,
     revision: Revision,
-    files: Files,
+    source: String,
 }
 
-pub fn add(root: &Path, request: &AddRequest<'_>) -> Result<Added> {
+/// Install a library contract into the project and record it in the lock.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "The next contract number is one above the highest existing number in the scope, \
+              which the scope's directory listing bounds."
+)]
+#[inline]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The steps run in one order and share local state; splitting them would add \
+              forwarding functions."
+)]
+pub fn add(root: &Path, request: &AddRequest<'_>) -> Result<Added, AdoptionError> {
     let kind = Kind::Contracts;
     let mut lock = read_lock(root)?;
-    let fetched = fetch(&mut lock, kind, request.spec, request.sources)?;
+    let fetched = read_request(&mut lock, kind, request.spec, request.sources)?;
     let existing = discovery::discover_contracts(root)?;
 
     let (path, name, writes) = match request.destination {
@@ -74,57 +98,70 @@ pub fn add(root: &Path, request: &AddRequest<'_>) -> Result<Added> {
             name,
             number,
         } => {
-            let scope = relative(scope)?;
-            ensure!(
-                root.join(&scope).is_dir(),
-                "scope {} is not a directory",
-                scope.display()
-            );
-            let name = name.unwrap_or(&fetched.name);
-            ensure!(
-                existing.iter().all(|c| c.name != name),
-                "contract name {name} is already used; choose another with --name {}-{}",
-                scope
-                    .file_name()
-                    .map_or("local".into(), |n| n.to_string_lossy()),
-                fetched.name
-            );
-            let in_scope = existing.iter().filter(|c| c.scope == scope);
-            let number = match number {
-                Some(number) => number,
-                None => in_scope.clone().map(|c| c.number).max().unwrap_or(0) + 1,
+            let relative_scope = make_relative(scope)?;
+            if !root.join(&relative_scope).is_dir() {
+                return Err(AdoptionError::ScopeNotDirectory(relative_scope));
+            }
+            let chosen = name.unwrap_or(&fetched.name);
+            if existing.iter().any(|entry| entry.name == chosen) {
+                return Err(AdoptionError::NameUsed {
+                    name: chosen.to_owned(),
+                    scope: relative_scope
+                        .file_name()
+                        .map_or_else(|| "local".into(), |file_name| file_name.to_string_lossy())
+                        .into_owned(),
+                    library_name: fetched.name.clone(),
+                });
+            }
+            let in_scope = existing
+                .iter()
+                .filter(|entry| entry.scope == relative_scope);
+            let assigned = match number {
+                Some(given) => given,
+                None => {
+                    in_scope
+                        .clone()
+                        .map(|entry| entry.number)
+                        .max()
+                        .unwrap_or(0)
+                        + 1
+                },
             };
-            ensure!(
-                in_scope.clone().all(|c| c.number != number),
-                "contract number {number:03} is already used in {}",
-                scope.display()
-            );
-            let path = scope
+            if in_scope.clone().any(|entry| entry.number == assigned) {
+                return Err(AdoptionError::NumberUsed {
+                    number: assigned,
+                    scope: relative_scope,
+                });
+            }
+            let path = relative_scope
                 .join(".contracts")
-                .join(format!("{number:03}-{name}"))
-                .join(kind.document());
-            let writes = fetched.renamed(
+                .join(format!("{assigned:03}-{chosen}"))
+                .join(kind.name_document());
+            let writes = fetched.rename_unit(
                 root,
                 kind,
-                path.parent().context("contract has no folder")?,
-                name,
+                path.parent().ok_or(AdoptionError::NoContractFolder)?,
+                chosen,
             )?;
-            (path, name.to_owned(), writes)
-        }
+            (path, chosen.to_owned(), writes)
+        },
         Destination::Existing(path) => {
-            let path = kind.key(path)?;
+            let key = kind.derive_key(path)?;
             let local = existing
                 .iter()
-                .find(|c| c.path == path)
-                .with_context(|| format!("{} is not a contract in this project", path.display()))?;
-            let folder = path.parent().context("contract has no folder")?;
-            let writes = fetched.missing(root, kind, folder, &local.name)?;
-            (path, local.name.clone(), writes)
-        }
+                .find(|entry| entry.path == key)
+                .ok_or_else(|| AdoptionError::NotProjectContract(key.clone()))?;
+            let folder = key.parent().ok_or(AdoptionError::NoContractFolder)?;
+            let writes = fetched.find_missing(root, kind, folder, &local.name)?;
+            (key, local.name.clone(), writes)
+        },
     };
-    let folder = path.parent().context("contract has no folder")?.to_owned();
-    let unit = fetched.unit(kind, path, folder)?;
-    let added = added(
+    let folder = path
+        .parent()
+        .ok_or(AdoptionError::NoContractFolder)?
+        .to_owned();
+    let unit = fetched.build_unit(kind, path, folder)?;
+    let added = build_added(
         &unit,
         name,
         matches!(request.destination, Destination::Scope { .. }),
@@ -133,53 +170,51 @@ pub fn add(root: &Path, request: &AddRequest<'_>) -> Result<Added> {
     Ok(added)
 }
 
-pub fn add_skill(root: &Path, request: &SkillRequest<'_>) -> Result<Added> {
+/// Install a library skill into the project and record it in the lock.
+#[inline]
+pub fn add_skill(root: &Path, request: &SkillRequest<'_>) -> Result<Added, AdoptionError> {
     let kind = Kind::Skills;
     if let SkillDestination::Directory {
         name: Some(name), ..
     } = request.destination
+        && !is_skill_name(name)
     {
-        ensure!(
-            is_skill_name(name),
-            "skill name {name} must use lowercase letters, digits, and single hyphens, at most 64 characters"
-        );
+        return Err(AdoptionError::SkillName(name.to_owned()));
     }
     let mut lock = read_lock(root)?;
-    let fetched = fetch(&mut lock, kind, request.spec, request.sources)?;
+    let fetched = read_request(&mut lock, kind, request.spec, request.sources)?;
 
     let (folder, writes) = match request.destination {
         SkillDestination::Directory { directory, name } => {
-            let name = name.unwrap_or(&fetched.name);
-            let folder = relative(directory)?.join(name);
-            ensure!(
-                root.join(&folder).symlink_metadata().is_err(),
-                "{0} already exists; record it with --path {0}",
-                folder.display()
-            );
-            let writes = fetched.renamed(root, kind, &folder, name)?;
+            let chosen = name.unwrap_or(&fetched.name);
+            let folder = make_relative(directory)?.join(chosen);
+            if root.join(&folder).symlink_metadata().is_ok() {
+                return Err(AdoptionError::SkillExists(folder));
+            }
+            let writes = fetched.rename_unit(root, kind, &folder, chosen)?;
             (folder, writes)
-        }
+        },
         SkillDestination::Existing(path) => {
-            let folder = kind.key(path)?;
-            let document = folder.join(kind.document());
-            let local = fs::read_to_string(root.join(&document)).with_context(|| {
-                format!(
-                    "cannot read {}; install a new copy with --dir",
-                    document.display()
-                )
+            let folder = kind.derive_key(path)?;
+            let document = folder.join(kind.name_document());
+            let local = fs::read_to_string(root.join(&document)).map_err(|source| {
+                AdoptionError::ReadExistingSkill {
+                    path: document.clone(),
+                    source,
+                }
             })?;
             kind.validate(&document, &local)?;
-            let writes = fetched.missing(root, kind, &folder, name_of(&local)?)?;
+            let writes = fetched.find_missing(root, kind, &folder, name_of(&local)?)?;
             (folder, writes)
-        }
+        },
     };
     let name = folder
         .file_name()
-        .context("skill has no folder name")?
+        .ok_or(AdoptionError::NoSkillFolderName)?
         .to_string_lossy()
         .into_owned();
-    let unit = fetched.unit(kind, folder.clone(), folder)?;
-    let added = added(
+    let unit = fetched.build_unit(kind, folder.clone(), folder)?;
+    let added = build_added(
         &unit,
         name,
         matches!(request.destination, SkillDestination::Directory { .. }),
@@ -189,126 +224,122 @@ pub fn add_skill(root: &Path, request: &SkillRequest<'_>) -> Result<Added> {
 }
 
 /// Register `--source ALIAS=URL` values, then fetch `SOURCE/NAME[@REF]`.
-fn fetch(lock: &mut Lock, kind: Kind, spec: &str, sources: &[String]) -> Result<Fetched> {
+fn read_request(
+    lock: &mut Lock,
+    kind: Kind,
+    spec: &str,
+    sources: &[String],
+) -> Result<Fetched, AdoptionError> {
     let (source, name, reference) = parse_spec(spec)?;
     for registration in sources {
         let (alias, url) = registration
             .split_once('=')
-            .context("--source expects ALIAS=URL")?;
-        ensure!(is_kebab(alias), "source alias must be lowercase kebab-case");
-        ensure!(
-            !url.is_empty() && !url.starts_with('-'),
-            "invalid URL for source {alias}"
-        );
-        // `tenet` always names the public library, even before a lock exists.
-        if let Some(existing) = lock.sources.get(alias) {
-            ensure!(
-                existing == url,
-                "source {alias} already names {existing}; register {url} under another alias, \
-                 as in --source local={url} with local/{name}"
-            );
+            .ok_or(AdoptionError::SourceFormat)?;
+        if !is_kebab(alias) {
+            return Err(AdoptionError::SourceAlias);
         }
-        lock.sources.insert(alias.into(), url.into());
+        if url.is_empty() || url.starts_with('-') {
+            return Err(AdoptionError::SourceUrl(alias.to_owned()));
+        }
+        // `tenet` always names the public library, even before a lock exists.
+        if let Some(existing) = lock.sources.get(alias)
+            && existing != url
+        {
+            return Err(AdoptionError::SourceTaken {
+                alias: alias.to_owned(),
+                existing: existing.clone(),
+                url: url.to_owned(),
+                name: name.to_owned(),
+            });
+        }
+        drop(lock.sources.insert(alias.into(), url.into()));
     }
-    let url = lock.sources.get(source).with_context(|| {
-        format!("unknown source {source}; register it with --source {source}=URL")
-    })?;
-    let upstream = Upstream::clone(url)?;
+    let url = lock
+        .sources
+        .get(source)
+        .ok_or_else(|| AdoptionError::UnknownSource(source.to_owned()))?;
+    let upstream = Upstream::download(url)?;
     let revision = upstream.resolve(reference)?;
     let files = upstream
-        .folder(&revision.commit, kind, name)?
-        .with_context(|| format!("{source}/{name} does not exist at {}", revision.reference))?;
+        .read_folder(&revision.commit, kind, name)?
+        .ok_or_else(|| {
+            AdoptionError::NotInLibrary {
+                library: [source, name].join("/"),
+                reference: revision.reference.clone(),
+            }
+        })?;
     Ok(Fetched {
-        source: source.into(),
+        files,
         name: name.into(),
         revision,
-        files,
+        source: source.into(),
     })
 }
 
 impl Fetched {
     /// The lock entry for a copy of these files at `key`.
-    fn unit(&self, kind: Kind, key: PathBuf, folder: PathBuf) -> Result<Unit> {
+    fn build_unit(&self, kind: Kind, key: PathBuf, folder: PathBuf) -> Result<Unit, AdoptionError> {
         let files = self
             .files
             .iter()
             .map(|(path, file)| Ok((path.clone(), kind.hash(path, &file.bytes)?)))
-            .collect::<Result<BTreeMap<_, _>>>()?;
+            .collect::<Result<BTreeMap<_, _>, AdoptionError>>()?;
         Ok(Unit {
+            commit: self.revision.commit.clone(),
+            files,
+            folder,
+            key,
             origin: match kind {
                 Kind::Contracts => Origin::Contract(self.name.clone()),
                 Kind::Skills => Origin::Skill(self.name.clone()),
             },
-            key,
-            folder,
-            source: self.source.clone(),
             reference: self.revision.reference.clone(),
-            commit: self.revision.commit.clone(),
-            files,
+            source: self.source.clone(),
         })
-    }
-
-    /// Every file for a new copy in `folder`, its CONTRACT.md or SKILL.md renamed to `name`.
-    /// Refuses a path that already exists or a file in the way of one.
-    fn renamed(
-        &self,
-        root: &Path,
-        kind: Kind,
-        folder: &Path,
-        name: &str,
-    ) -> Result<Vec<(PathBuf, File)>> {
-        let mut writes = Vec::new();
-        for (path, file) in &self.files {
-            let target = folder.join(path);
-            if let Some(found) = unit::obstruction(root, folder, path)? {
-                bail!("{} already exists", found.display());
-            }
-            let file = match kind.rule(path) {
-                Rule::Named => self.document(kind, &target, file, name)?,
-                Rule::Merged | Rule::ReadOnly => file.clone(),
-            };
-            writes.push((target, file));
-        }
-        Ok(writes)
     }
 
     /// The files an existing copy in `folder`, whose local name is `name`, lacks. Refuses an
     /// upstream CONTRACT.md or SKILL.md this Tenet cannot read, a read-only file whose content
     /// differs from upstream, and a file in the way of a missing one. Leaves Markdown edits and
     /// files upstream does not have alone.
-    fn missing(
+    #[expect(
+        clippy::excessive_nesting,
+        reason = "Each level is a loop, match or closure over one parsed structure, and \
+                  flattening it would split one decision."
+    )]
+    fn find_missing(
         &self,
         root: &Path,
         kind: Kind,
         folder: &Path,
         name: &str,
-    ) -> Result<Vec<(PathBuf, File)>> {
+    ) -> Result<Vec<(PathBuf, File)>, AdoptionError> {
         let mut writes = Vec::new();
         for (path, file) in &self.files {
             let target = folder.join(path);
-            let rule = kind.rule(path);
+            let rule = kind.derive_rule(path);
             if rule == Rule::Named {
-                self.document(kind, &target, file, name)?;
+                drop(self.read_document(kind, &target, file, name)?);
             }
-            match unit::obstruction(root, folder, path)? {
+            match unit::find_obstruction(root, folder, path)? {
                 None => writes.push((target, file.clone())),
-                Some(found) if found == target => ensure!(
-                    rule != Rule::ReadOnly
-                        || file_hash(&unit::read(root, &target)?) == file_hash(&file.bytes),
-                    "{} differs from {}/{} {}; Tenet installs it read-only, so restore the released file before recording this copy",
-                    target.display(),
-                    self.source,
-                    self.name,
-                    self.revision.reference
-                ),
-                Some(found) => bail!(
-                    "{} is in the way of {}, which {}/{} {} has; move it aside and add again",
-                    found.display(),
-                    target.display(),
-                    self.source,
-                    self.name,
-                    self.revision.reference
-                ),
+                Some(found) if found == target => {
+                    if rule == Rule::ReadOnly
+                        && hash_file(&unit::read(root, &target)?) != hash_file(&file.bytes)
+                    {
+                        return Err(AdoptionError::ReadOnlyDiffers {
+                            target,
+                            release: self.release(),
+                        });
+                    }
+                },
+                Some(found) => {
+                    return Err(AdoptionError::InTheWayOfAdd {
+                        found,
+                        target,
+                        release: self.release(),
+                    });
+                },
             }
         }
         Ok(writes)
@@ -316,37 +347,73 @@ impl Fetched {
 
     /// The upstream CONTRACT.md or SKILL.md renamed to `name`, refused unless this Tenet reads it
     /// at `target`.
-    fn document(&self, kind: Kind, target: &Path, file: &File, name: &str) -> Result<File> {
-        let document = with_name(unit::text(&file.bytes, target)?, name)?;
+    fn read_document(
+        &self,
+        kind: Kind,
+        target: &Path,
+        file: &File,
+        name: &str,
+    ) -> Result<File, AdoptionError> {
+        let document = with_name(unit::decode_text(&file.bytes, target)?, name)?;
         // Report the upstream text's error as a message, since it does not point into a local file.
         kind.validate(target, &document).map_err(|error| {
-            anyhow!(
-                "cannot install {}/{} {}: {error:#}",
-                self.source,
-                self.name,
-                self.revision.reference
-            )
+            AdoptionError::CannotInstall {
+                release: self.release(),
+                error: Box::new(error),
+            }
         })?;
         Ok(File {
             bytes: document.into_bytes(),
             executable: file.executable,
         })
     }
+
+    /// The library entry and release, as `SOURCE/NAME REF`.
+    fn release(&self) -> String {
+        format!("{}/{} {}", self.source, self.name, self.revision.reference)
+    }
+
+    /// Every file for a new copy in `folder`, its CONTRACT.md or SKILL.md renamed to `name`.
+    /// Refuses a path that already exists or a file in the way of one.
+    fn rename_unit(
+        &self,
+        root: &Path,
+        kind: Kind,
+        folder: &Path,
+        name: &str,
+    ) -> Result<Vec<(PathBuf, File)>, AdoptionError> {
+        let mut writes = Vec::new();
+        for (path, file) in &self.files {
+            let target = folder.join(path);
+            if let Some(found) = unit::find_obstruction(root, folder, path)? {
+                return Err(AdoptionError::Exists(found));
+            }
+            let written = match kind.derive_rule(path) {
+                Rule::Named => self.read_document(kind, &target, file, name)?,
+                Rule::Merged | Rule::ReadOnly => file.clone(),
+            };
+            writes.push((target, written));
+        }
+        Ok(writes)
+    }
 }
 
 /// Write a new copy's files and record it, refusing a copy the lock already records or a file Git
 /// ignores.
-fn record(root: &Path, lock: &mut Lock, unit: Unit, writes: &[(PathBuf, File)]) -> Result<()> {
-    let recorded = match unit.kind() {
+fn record(
+    root: &Path,
+    lock: &mut Lock,
+    unit: Unit,
+    writes: &[(PathBuf, File)],
+) -> Result<(), AdoptionError> {
+    let recorded = match unit.read_kind() {
         Kind::Contracts => lock.contracts.contains_key(&unit.key),
         Kind::Skills => lock.skills.contains_key(&unit.key),
     };
-    ensure!(
-        !recorded,
-        "{} is already recorded in {LOCK_FILE}",
-        unit.key.display()
-    );
-    refuse_ignored(root, &unit.locked_paths().collect::<Vec<_>>())?;
+    if recorded {
+        return Err(AdoptionError::AlreadyRecorded(unit.key));
+    }
+    refuse_ignored(root, &unit.list_locked_paths().collect::<Vec<_>>())?;
     for (path, file) in writes {
         unit::write(root, path, file)?;
     }
@@ -354,7 +421,7 @@ fn record(root: &Path, lock: &mut Lock, unit: Unit, writes: &[(PathBuf, File)]) 
     write_lock(root, lock)
 }
 
-fn added(unit: &Unit, name: String, written: bool) -> Added {
+fn build_added(unit: &Unit, name: String, written: bool) -> Added {
     Added {
         path: unit.key.clone(),
         name,

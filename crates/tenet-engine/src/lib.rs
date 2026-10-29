@@ -1,5 +1,7 @@
 //! Scoped file selection and ordered, bounded contract evaluation.
 
+extern crate alloc;
+
 pub mod adoption;
 mod change;
 mod check;
@@ -11,20 +13,60 @@ mod plan;
 mod report;
 pub mod review;
 mod snapshot;
+mod telemetry;
 
-pub use change::{Change, ChangeKind, Mode};
-pub use check::{Options, Prediction, carry, predict, run};
-pub use discovery::{Coverage, ExcludedPath, Exclusion, Plan, Selection, discover_contracts, plan};
+pub use change::{Change, ChangeKind, InputLimit, Mode, SourceError, Unreadable};
+pub use check::{CheckError, CombinedError, Options, Prediction, apply_review, estimate, run};
+pub use discovery::{
+    Coverage,
+    DiscoveryError,
+    ExcludedPath,
+    Exclusion,
+    Plan,
+    Selection,
+    discover_contracts,
+    plan,
+};
 pub use ev_grep_core::{
-    Assessment, Candidate, DecisionBatch, Evaluator, MAX_FILE_BYTES, MIN_CONFIDENCE, Outcome,
+    Assessment,
+    Candidate,
+    DecisionBatch,
+    Evaluator,
+    MAX_FILE_BYTES,
+    MIN_CONFIDENCE,
+    Outcome,
     Question,
 };
-pub use evidence::{EvidencePacket, MAX_CAPTURE_BYTES, input_status};
-pub use failure::{FailureKind, RequestFailure};
-pub use plan::{Excerpt, SpanRequest, line_ranges};
+pub use evidence::{
+    CaptureError,
+    ChangeError,
+    EvidenceError,
+    EvidencePacket,
+    InputError,
+    MAX_CAPTURE_BYTES,
+    classify_input_status,
+};
+pub use failure::{ClassifyRequest, FailureKind, RequestFailure};
+pub use git::GitError;
+pub use plan::{ContextError, Excerpt, ExcerptError, SpanError, SpanRequest, format_line_ranges};
 pub use report::{
-    CheckResult, ConclusionReason, ContextSummary, ContractResult, ContractState, ContractStatus,
-    Event, Omitted, Pending, RequestedScope, RunInfo, Stage, Status, Summary, violation,
+    Causes,
+    CheckResult,
+    ConclusionReason,
+    ContextSummary,
+    ContractResult,
+    ContractState,
+    ContractStatus,
+    EVENTS_VERSION,
+    Event,
+    Omitted,
+    Pending,
+    RequestedScope,
+    RunInfo,
+    Stage,
+    Status,
+    Summary,
+    estimate_violation,
 };
 pub use review::Review;
-pub use snapshot::PreparedSnapshot;
+pub use snapshot::{PreparedSnapshot, SnapshotError};

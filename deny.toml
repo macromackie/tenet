@@ -1,0 +1,742 @@
+# The strictest cargo-deny settings that code-lint-strictness requires.
+# Every check runs, every lint level is deny, and every list that allows something starts empty.
+#
+# cargo-deny reads only its own file, so copy this file to `deny.toml` beside the workspace's root manifest.
+# Fill that copy's allow lists: each license expression the dependencies carry, each registry and git source,
+# each crate whose build script runs, and each crate allowed to keep its default features.
+# Give each entry a comment naming the dependency that needs it.
+# Run it from the workspace root, with every warning raised to an error:
+#   cargo deny --all-features --locked check --deny warnings
+# The advisories check fetches the advisory database, so the run needs network access to it.
+# A new cargo-deny version adds checks, so this file is tested against cargo-deny 0.19.9;
+# pin that exact version and raise it in a reviewed upgrade.
+
+[advisories]
+ignore = []
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+
+[bans]
+allow = []
+allow-wildcard-paths = false
+deny = []
+external-default-features = "deny"
+highlight = "all"
+multiple-versions = "deny"
+multiple-versions-include-dev = true
+skip = [
+  { crate = "base64@0.22.1", reason = "reqwest depends on base64 0.22, and hyper-util on 0.23" },
+  { crate = "cpufeatures@0.2.17", reason = "sha2 depends on cpufeatures 0.2, and blake3 and chacha20 on 0.3" },
+  { crate = "getrandom@0.2.17", reason = "ring depends on getrandom 0.2, and quinn-proto, rand and tempfile on 0.4" },
+  { crate = "windows-sys@0.52.0", reason = "ring depends on windows-sys 0.52, and tokio, tempfile and 10 other crates on 0.61" },
+]
+skip-tree = []
+wildcards = "deny"
+workspace-default-features = "deny"
+
+# Each crate allowed to keep its default features. cargo-deny then denies each other feature the
+# crate has on unless an allowed feature turns it on, so an entry also names the features that its
+# dependents turn on.
+
+# globset needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "aho-corasick"
+
+# tenet needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "annotate-snippets"
+
+# clap_builder needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "anstream"
+
+# anstream, anstyle-wincon and clap_builder need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "anstyle"
+
+# anstream needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "anstyle-parse"
+
+# ev-grep-core, ev-grep-jev, tenet and tenet-engine need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "anyhow"
+
+# reqwest needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "base64@0.22.1"
+
+# hyper-util needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "base64@0.23.1"
+
+# tenet-contracts and tenet-engine need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "blake3"
+
+# wasm-bindgen-macro-support needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "bumpalo"
+
+# http, http-body, http-body-util, hyper, hyper-util, reqwest, tokio and tower-http need its default
+# features.
+[[bans.features]]
+allow = ["default"]
+crate = "bytes"
+
+# tenet needs its default features.
+[[bans.features]]
+allow = ["default", "derive", "env"]
+crate = "clap"
+
+# clap needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "clap_derive"
+
+# tenet needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "console"
+
+# security-framework needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "core-foundation"
+
+# security-framework and security-framework-sys need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "core-foundation-sys"
+
+# ignore needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "crossbeam-deque"
+
+# sha2 needs its default features.
+[[bans.features]]
+allow = ["default", "std"]
+crate = "digest"
+
+# console needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "encode_unicode"
+
+# signal-hook-registry needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "errno"
+
+# ev-grep-jev and tempfile need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "fastrand"
+
+# serde_urlencoded needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "form_urlencoded"
+
+# hyper and hyper-util need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "futures-channel"
+
+# hyper and tower need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "futures-core"
+
+# ev-grep-core, ev-grep-jev and tenet-engine need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "futures-util"
+
+# pulldown-cmark needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "getopts"
+
+# ignore and tenet-contracts need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "globset"
+
+# http-body, http-body-util, hyper, hyper-rustls, hyper-util, reqwest and tower-http need its
+# default features.
+[[bans.features]]
+allow = ["default"]
+crate = "http"
+
+# reqwest needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "http-body-util"
+
+# hyper and hyper-util need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "httparse"
+
+# hyper-util and reqwest need its default features.
+[[bans.features]]
+allow = ["default", "client", "http1"]
+crate = "hyper"
+
+# reqwest needs its default features.
+[[bans.features]]
+allow = ["default", "client-legacy", "client-proxy", "http1", "tokio"]
+crate = "hyper-util"
+
+# serde_yaml needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "indexmap"
+
+# hyper-util needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "ipnet"
+
+# anstream needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "is_terminal_polyfill"
+
+# reqwest needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "js-sys"
+
+# console, core-foundation, hyper-util, mio, security-framework, security-framework-sys,
+# signal-hook-registry, socket2 and tokio need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "libc"
+
+# ignore and pulldown-cmark need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "memchr"
+
+# tracing-core needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "once_cell"
+
+# anstyle-wincon needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "once_cell_polyfill"
+
+# hyper-util and reqwest need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "percent-encoding"
+
+# clap_derive, displaydoc, futures-macro, thiserror-impl, tokio-macros, wasm-bindgen-macro-support,
+# yoke-derive, zerofrom-derive and zerovec-derive need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "proc-macro2"
+
+# tenet-contracts needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "pulldown-cmark"
+
+# clap_derive, displaydoc, futures-macro, thiserror-impl, tokio-macros, wasm-bindgen-macro,
+# wasm-bindgen-macro-support, yoke-derive, zerofrom-derive and zerovec-derive need its default
+# features.
+[[bans.features]]
+allow = ["default"]
+crate = "quote"
+
+# rustls needs its default features.
+[[bans.features]]
+allow = ["default", "wasm32_unknown_unknown_js"]
+crate = "ring"
+
+# tempfile needs its default features.
+[[bans.features]]
+allow = ["default", "fs"]
+crate = "rustix"
+
+# reqwest, rustls and rustls-native-certs need its default features.
+[[bans.features]]
+allow = ["default", "std", "web"]
+crate = "rustls-pki-types"
+
+# rustls-native-certs needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "security-framework"
+
+# ev-grep-core, ev-grep-jev, reqwest, serde_urlencoded, serde_yaml, tenet-contracts and tenet-engine
+# need its default features.
+[[bans.features]]
+allow = ["default", "derive"]
+crate = "serde"
+
+# serde needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "serde_derive"
+
+# ev-grep-core, ev-grep-jev, reqwest, tenet, tenet-contracts and tenet-engine need its default
+# features.
+[[bans.features]]
+allow = ["default", "arbitrary_precision", "raw_value"]
+crate = "serde_json"
+
+# ev-grep-jev needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "sha2"
+
+# cc needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "shlex"
+
+# tenet and tenet-engine need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "similar"
+
+# clap_derive, displaydoc, futures-macro, thiserror-impl, tokio-macros, wasm-bindgen-macro-support,
+# yoke-derive, zerofrom-derive and zerovec-derive need its default features.
+[[bans.features]]
+allow = ["default", "extra-traits", "fold", "full", "visit", "visit-mut"]
+crate = "syn"
+
+# yoke-derive and zerofrom-derive need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "synstructure"
+
+# tenet and tenet-engine need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "tempfile"
+
+# tenet, tenet-contracts and tenet-engine need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "thiserror"
+
+# ev-grep-jev, hyper, hyper-rustls, tenet, tenet-engine, tokio-rustls and tower need its default
+# features.
+[[bans.features]]
+allow = [
+  "default",
+  "fs",
+  "io-std",
+  "io-util",
+  "macros",
+  "mio",
+  "net",
+  "rt",
+  "signal",
+  "sync",
+  "time",
+  "windows-sys",
+]
+crate = "tokio"
+
+# tracing-serde needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "tracing-core"
+
+# annotate-snippets, console and getopts need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "unicode-width"
+
+# reqwest and tower-http need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "url"
+
+# anstream and anstyle-parse need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "utf8parse"
+
+# mio needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "wasi"
+
+# reqwest needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "wasm-bindgen"
+
+# reqwest needs its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "wasm-bindgen-futures"
+
+# reqwest needs its default features.
+[[bans.features]]
+allow = [
+  "default",
+  "AbortController",
+  "AbortSignal",
+  "BlobPropertyBag",
+  "File",
+  "FormData",
+  "Headers",
+  "ReadableStream",
+  "Request",
+  "RequestCache",
+  "RequestCredentials",
+  "RequestInit",
+  "RequestMode",
+  "Response",
+  "ServiceWorkerGlobalScope",
+  "Window",
+]
+crate = "web-sys"
+
+# ring needs its default features.
+[[bans.features]]
+allow = ["default", "Win32_Foundation", "Win32_System_Threading"]
+crate = "windows-sys@0.52.0"
+
+# anstyle-query, anstyle-wincon, console, errno, mio, rustix, schannel, socket2, tempfile, tokio and
+# winapi-util need its default features.
+# Its features enable each other in a cycle, which cargo-deny follows without end, so the entry
+# names every feature it has on.
+[[bans.features]]
+allow = [
+  "default",
+  "Wdk",
+  "Wdk_Foundation",
+  "Wdk_Storage",
+  "Wdk_Storage_FileSystem",
+  "Wdk_System",
+  "Wdk_System_IO",
+  "Win32",
+  "Win32_Foundation",
+  "Win32_Networking",
+  "Win32_Networking_WinSock",
+  "Win32_Security",
+  "Win32_Security_Authentication",
+  "Win32_Security_Authentication_Identity",
+  "Win32_Security_Credentials",
+  "Win32_Security_Cryptography",
+  "Win32_Storage",
+  "Win32_Storage_FileSystem",
+  "Win32_System",
+  "Win32_System_Console",
+  "Win32_System_Diagnostics",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_IO",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_Pipes",
+  "Win32_System_SystemInformation",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+  "Win32_System_WindowsProgramming",
+  "Win32_UI",
+  "Win32_UI_Input",
+  "Win32_UI_Input_KeyboardAndMouse",
+]
+crate = "windows-sys@0.61.2"
+
+# rustls and rustls-pki-types need its default features.
+[[bans.features]]
+allow = ["default"]
+crate = "zeroize"
+
+[bans.build]
+allow-build-scripts = [
+  # Needed by ev-grep-core, ev-grep-jev, tenet and tenet-engine.
+  "anyhow",
+  # Needed by tenet-contracts and tenet-engine.
+  "blake3",
+  # Needed by ignore.
+  "crossbeam-deque",
+  # Needed by crossbeam-deque.
+  "crossbeam-epoch",
+  # Needed by crossbeam-deque and crossbeam-epoch.
+  "crossbeam-utils",
+  # Needed by block-buffer and crypto-common.
+  "generic-array",
+  # Needed by quinn-proto, rand and tempfile.
+  "getrandom@0.4.3",
+  # Needed by hyper and hyper-util.
+  "httparse",
+  # Needed by icu_normalizer.
+  "icu_normalizer_data",
+  # Needed by icu_properties.
+  "icu_properties_data",
+  # Needed by console, core-foundation, cpufeatures, errno, getrandom, hyper-util, mio, quinn-udp,
+  # ring, rustix, security-framework, security-framework-sys, signal-hook-registry, socket2 and
+  # tokio.
+  "libc",
+  # Needed by clap_derive, displaydoc, futures-macro, quote, serde_derive, syn, synstructure,
+  # thiserror-impl, tokio-macros, wasm-bindgen-macro-support, yoke-derive, zerofrom-derive and
+  # zerovec-derive.
+  "proc-macro2",
+  # Needed by tenet-contracts.
+  "pulldown-cmark",
+  # Needed by clap_derive, displaydoc, futures-macro, serde_derive, syn, synstructure,
+  # thiserror-impl, tokio-macros, wasm-bindgen-macro, wasm-bindgen-macro-support, yoke-derive,
+  # zerofrom-derive and zerovec-derive.
+  "quote",
+  # Needed by quinn-proto, rustls and rustls-webpki.
+  "ring",
+  # Needed by tempfile.
+  "rustix",
+  # Needed by hyper-rustls, quinn, quinn-proto, reqwest and tokio-rustls.
+  "rustls",
+  # Needed by wasm-bindgen.
+  "rustversion",
+  # Needed by ev-grep-core, ev-grep-jev, reqwest, serde_json, serde_urlencoded, serde_yaml,
+  # tenet-contracts, tenet-engine and url.
+  "serde",
+  # Needed by bstr, serde and serde_json.
+  "serde_core",
+  # Needed by ev-grep-core, ev-grep-jev, reqwest, tenet, tenet-contracts and tenet-engine.
+  "serde_json",
+  # Its own build script records the Git revision that the first trace record names.
+  "tenet",
+  # Needed by quinn, quinn-proto, tenet, tenet-contracts and tenet-engine.
+  "thiserror",
+  # Needed by getrandom, js-sys, reqwest, wasm-bindgen-futures, web-sys and web-time.
+  "wasm-bindgen",
+  # Needed by wasm-bindgen and wasm-bindgen-macro-support.
+  "wasm-bindgen-shared",
+  # Needed by windows-targets.
+  "windows_aarch64_gnullvm",
+  # Needed by windows-targets.
+  "windows_aarch64_msvc",
+  # Needed by windows-targets.
+  "windows_i686_gnu",
+  # Needed by windows-targets.
+  "windows_i686_gnullvm",
+  # Needed by windows-targets.
+  "windows_i686_msvc",
+  # Needed by windows-targets.
+  "windows_x86_64_gnu",
+  # Needed by windows-targets.
+  "windows_x86_64_gnullvm",
+  # Needed by windows-targets.
+  "windows_x86_64_msvc",
+  # Needed by serde_json.
+  "zmij",
+]
+bypass = [
+  # blake3 ships its release and C test scripts; its build script compiles C and assembly and runs
+  # neither.
+  { allow = [
+    { path = ".github/workflows/build_b3sum.py" },
+    { path = ".github/workflows/upload_github_release_asset.py" },
+    { path = "c/test.py" },
+  ], crate = "blake3@1.8.7" },
+  # encode_unicode ships a maintainer script; it has no build script.
+  { allow = [
+    { path = "do.sh" },
+  ], crate = "encode_unicode@1.0.0" },
+  # js-sys ships this Web Worker script, which wasm32 builds with atomics load in a browser; it has
+  # no build script.
+  { allow = [
+    { path = "src/futures/task/worker.js" },
+  ], crate = "js-sys@0.3.106" },
+  # libc ships a maintainer script, and its build script runs only rustc and platform version
+  # probes.
+  { allow = [
+    { path = "etc/libc-util.py" },
+  ], crate = "libc@0.2.189" },
+  # ring's build script assembles the pregenerated sources it ships, and runs these Perl generators
+  # only in a git checkout of ring.
+  { allow = [
+    { path = "crypto/chacha/asm/chacha-armv4.pl" },
+    { path = "crypto/chacha/asm/chacha-armv8.pl" },
+    { path = "crypto/chacha/asm/chacha-x86.pl" },
+    { path = "crypto/chacha/asm/chacha-x86_64.pl" },
+    { path = "crypto/cipher/asm/chacha20_poly1305_armv8.pl" },
+    { path = "crypto/cipher/asm/chacha20_poly1305_x86_64.pl" },
+    { path = "crypto/fipsmodule/aes/asm/aes-gcm-avx2-x86_64.pl" },
+    { path = "crypto/fipsmodule/aes/asm/aesni-gcm-x86_64.pl" },
+    { path = "crypto/fipsmodule/aes/asm/aesni-x86.pl" },
+    { path = "crypto/fipsmodule/aes/asm/aesni-x86_64.pl" },
+    { path = "crypto/fipsmodule/aes/asm/aesv8-armx.pl" },
+    { path = "crypto/fipsmodule/aes/asm/aesv8-gcm-armv8.pl" },
+    { path = "crypto/fipsmodule/aes/asm/bsaes-armv7.pl" },
+    { path = "crypto/fipsmodule/aes/asm/ghash-armv4.pl" },
+    { path = "crypto/fipsmodule/aes/asm/ghash-neon-armv8.pl" },
+    { path = "crypto/fipsmodule/aes/asm/ghash-x86.pl" },
+    { path = "crypto/fipsmodule/aes/asm/ghash-x86_64.pl" },
+    { path = "crypto/fipsmodule/aes/asm/ghashv8-armx.pl" },
+    { path = "crypto/fipsmodule/aes/asm/vpaes-armv7.pl" },
+    { path = "crypto/fipsmodule/aes/asm/vpaes-armv8.pl" },
+    { path = "crypto/fipsmodule/aes/asm/vpaes-x86.pl" },
+    { path = "crypto/fipsmodule/aes/asm/vpaes-x86_64.pl" },
+    { path = "crypto/fipsmodule/bn/asm/armv4-mont.pl" },
+    { path = "crypto/fipsmodule/bn/asm/armv8-mont.pl" },
+    { path = "crypto/fipsmodule/bn/asm/x86-mont.pl" },
+    { path = "crypto/fipsmodule/bn/asm/x86_64-mont.pl" },
+    { path = "crypto/fipsmodule/bn/asm/x86_64-mont5.pl" },
+    { path = "crypto/fipsmodule/ec/asm/p256-armv8-asm.pl" },
+    { path = "crypto/fipsmodule/ec/asm/p256-x86_64-asm.pl" },
+    { path = "crypto/fipsmodule/sha/asm/sha256-armv4.pl" },
+    { path = "crypto/fipsmodule/sha/asm/sha512-armv4.pl" },
+    { path = "crypto/fipsmodule/sha/asm/sha512-armv8.pl" },
+    { path = "crypto/fipsmodule/sha/asm/sha512-x86_64.pl" },
+    { path = "crypto/perlasm/arm-xlate.pl" },
+    { path = "crypto/perlasm/x86_64-xlate.pl" },
+    { path = "crypto/perlasm/x86asm.pl" },
+    { path = "crypto/perlasm/x86gas.pl" },
+    { path = "crypto/perlasm/x86nasm.pl" },
+  ], crate = "ring@0.17.14" },
+  # sharded-slab ships the script that runs its Loom tests; it has no build script.
+  { allow = [
+    { path = "bin/loom.sh" },
+  ], crate = "sharded-slab@0.1.7" },
+  # similar ships a script that runs its WebAssembly tests; it has no build script.
+  { allow = [
+    { path = "scripts/wasmtime-wrapper.sh" },
+  ], crate = "similar@2.7.0" },
+  # tracing ships the script that runs its macro tests; it has no build script.
+  { allow = [
+    { path = "test-macros/bin/macro-results.sh" },
+  ], crate = "tracing@0.1.44" },
+  # unicode-width ships the Python script that regenerates its Unicode tables, and nothing runs it
+  # during a build.
+  { allow = [
+    { path = "scripts/unicode.py" },
+  ], crate = "unicode-width@0.2.2" },
+  # untrusted ships its own CI scripts; it has no build script, and ring's build does not run them.
+  { allow = [
+    { path = "mk/cargo.sh" },
+    { path = "mk/install-build-tools.sh" },
+    { path = "mk/runner" },
+  ], crate = "untrusted@0.9.0" },
+  # walkdir ships a script that compares its walk with Python's; it has no build script.
+  { allow = [
+    { path = "compare/walk.py" },
+  ], crate = "walkdir@2.5.0" },
+  # wasm-bindgen-macro ships this file for its `link_to!` doctest, and the macro does not run it.
+  { allow = [
+    { path = "src/worker.js" },
+  ], crate = "wasm-bindgen-macro@0.2.129" },
+  # windows-targets links this Windows API import library only when building for
+  # aarch64-pc-windows-gnullvm.
+  { allow = [
+    { path = "lib/libwindows.0.52.0.a" },
+  ], crate = "windows_aarch64_gnullvm@0.52.6" },
+  # windows-targets links this Windows API import library only when building for
+  # aarch64-pc-windows-msvc.
+  { allow = [
+    { path = "lib/windows.0.52.0.lib" },
+  ], crate = "windows_aarch64_msvc@0.52.6" },
+  # windows-targets links this Windows API import library only when building for
+  # i686-pc-windows-gnu.
+  { allow = [
+    { path = "lib/libwindows.0.52.0.a" },
+  ], crate = "windows_i686_gnu@0.52.6" },
+  # windows-targets links this Windows API import library only when building for
+  # i686-pc-windows-gnullvm.
+  { allow = [
+    { path = "lib/libwindows.0.52.0.a" },
+  ], crate = "windows_i686_gnullvm@0.52.6" },
+  # windows-targets links this Windows API import library only when building for
+  # i686-pc-windows-msvc.
+  { allow = [
+    { path = "lib/windows.0.52.0.lib" },
+  ], crate = "windows_i686_msvc@0.52.6" },
+  # windows-targets links this Windows API import library only when building for
+  # x86_64-pc-windows-gnu.
+  { allow = [
+    { path = "lib/libwindows.0.52.0.a" },
+  ], crate = "windows_x86_64_gnu@0.52.6" },
+  # windows-targets links this Windows API import library only when building for
+  # x86_64-pc-windows-gnullvm.
+  { allow = [
+    { path = "lib/libwindows.0.52.0.a" },
+  ], crate = "windows_x86_64_gnullvm@0.52.6" },
+  # windows-targets links this Windows API import library only when building for
+  # x86_64-pc-windows-msvc.
+  { allow = [
+    { path = "lib/windows.0.52.0.lib" },
+  ], crate = "windows_x86_64_msvc@0.52.6" },
+]
+enable-builtin-globs = true
+executables = "deny"
+include-archives = true
+include-dependencies = true
+include-workspace = true
+interpreted = "deny"
+
+[bans.workspace-dependencies]
+duplicates = "deny"
+include-path-dependencies = true
+unused = "deny"
+
+[graph]
+all-features = true
+exclude-dev = false
+
+[licenses]
+allow = [
+  # Needed by blake3, constant_time_eq, ring, ryu, similar and sync_wrapper.
+  "Apache-2.0",
+  # Needed by subtle.
+  "BSD-3-Clause",
+  # Needed by webpki-roots.
+  "CDLA-Permissive-2.0",
+  # Needed by ring, rustls-webpki and untrusted.
+  "ISC",
+  # Needed by aho-corasick, bytes, cfg_aliases, console, ev-grep-core, ev-grep-jev, generic-array,
+  # globset, http-body, http-body-util, hyper, hyper-util, ignore, memchr, mio, pulldown-cmark,
+  # pulldown-cmark-escape, same-file, schannel, slab, strsim, synstructure, tenet, tenet-contracts,
+  # tenet-engine, tokio, tokio-macros, tower, tower-http, tower-layer, tower-service, tracing,
+  # tracing-core, try-lock, unsafe-libyaml, walkdir, want, winapi-util and zmij.
+  "MIT",
+  # Needed by icu_collections, icu_locale_core, icu_normalizer, icu_normalizer_data, icu_properties,
+  # icu_properties_data, icu_provider, litemap, potential_utf, tinystr, unicode-ident, writeable,
+  # yoke, yoke-derive, zerofrom, zerofrom-derive, zerotrie, zerovec and zerovec-derive.
+  "Unicode-3.0",
+]
+confidence-threshold = 1.0
+exceptions = []
+include-build = true
+include-dev = true
+unused-allowed-license = "deny"
+unused-license-exception = "deny"
+
+[licenses.private]
+ignore = false
+
+[sources]
+allow-git = [
+  # Needed by ev-grep-core and ev-grep-jev, pinned to one revision.
+  "https://github.com/macromackie/ev-grep",
+]
+allow-registry = [
+  # Needed by every dependency that comes from a registry.
+  "https://github.com/rust-lang/crates.io-index",
+]
+required-git-spec = "rev"
+unknown-git = "deny"
+unknown-registry = "deny"
+unused-allowed-source = "deny"

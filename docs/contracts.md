@@ -80,7 +80,7 @@ under `paths` to govern only matching files, such as the source of one language:
 ---
 name: python-errors
 message: Preserve failures in Python code.
-paths: ["**/*.py"]
+paths: ['**/*.py']
 ---
 ```
 
@@ -92,7 +92,7 @@ governs every file in scope except those. Use one to leave out generated files t
 lockfile, which ignore files cannot hide from a diff:
 
 ```yaml
-paths: ["!**/package-lock.json"]
+paths: ['!**/package-lock.json']
 ```
 
 A pattern reaches files inside `.contracts` only when it names `.contracts`, such as `".contracts/*/CONTRACT.md"`
@@ -114,7 +114,7 @@ tenet contracts show database-failures
 [tenet-contracts](https://github.com/macromackie/tenet-contracts) library as an ordinary local file. It takes the next
 number in the scope and keeps the library name unless the project already uses it; `--name` chooses another.
 `.tenet.lock` records where each copy came from. Put local exceptions under a final `## Local adaptations` heading so
-updates merge cleanly. Lines that begin with `<<<<<<< ` or `>>>>>>> ` are unresolved conflict markers and fail
+updates merge cleanly. Lines that begin with `<<<<<<<` or `>>>>>>>` and a space are unresolved conflict markers and fail
 validation. A library contract may also ship tool configuration in `assets/<tool>/`. Such a contract declares
 `requires-tenet: 0.11.0`, and `add` copies its assets into the contract's folder as read-only files. See
 [Guidance](./guidance.md).
