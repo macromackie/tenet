@@ -7,11 +7,6 @@ use std::{
     process::Command,
 };
 
-use crate::{
-    change,
-    change::{SourceError, Unreadable},
-};
-
 /// Why a Git command failed or its output cannot be read.
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
@@ -227,40 +222,10 @@ pub(crate) fn list_changed(
     Ok(Changes { base, paths })
 }
 
-fn find_top(root: &Path) -> Result<PathBuf, GitError> {
+pub(crate) fn find_top(root: &Path) -> Result<PathBuf, GitError> {
     Ok(PathBuf::from(
         String::from_utf8(run_git(root, &["rev-parse", "--show-toplevel"])?)?.trim(),
     ))
-}
-
-pub(crate) fn read_before(
-    root: &Path,
-    base: &str,
-    path: &Path,
-) -> Result<Option<String>, SourceError> {
-    let top = find_top(root)?;
-    let full = root.join(path);
-    let relative = full
-        .strip_prefix(&top)?
-        .to_str()
-        .ok_or(SourceError::NotUtf8Path)?;
-    let listing = run_git(&top, &["ls-tree", "-z", base, "--", relative])?;
-    if listing.is_empty() {
-        return Ok(None);
-    }
-    if listing.starts_with(b"120000 ") {
-        return Err(Unreadable::SymbolicLink.into());
-    }
-    if !(listing.starts_with(b"100644 ") || listing.starts_with(b"100755 ")) {
-        return Err(SourceError::BaseNotRegularFile(relative.to_owned()));
-    }
-    let object = format!("{base}:{relative}");
-    let size = String::from_utf8(run_git(&top, &["cat-file", "-s", &object])?)?
-        .trim()
-        .parse()?;
-    change::check_capture_size(path, size)?;
-    let bytes = run_git(&top, &["cat-file", "blob", &object])?;
-    Ok(Some(change::decode(bytes)?))
 }
 
 pub(crate) fn read_branch(root: &Path) -> Option<String> {

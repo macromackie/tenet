@@ -1,0 +1,80 @@
+{
+  "source": {
+    "repository": "https://github.com/macromackie/tenet-contracts",
+    "tag": "v13.0.0",
+    "revision": "8653bc259aca95baaee547336782de6795177388",
+    "path": "contracts/code-duplicated-blocks/assets/uv"
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "60f5a6de6a5c7eb4783ee85f9aeeebf7597e1333864f0ed0a71fe27bbecaa2f2",
+      "mode": "100644"
+    },
+    {
+      "path": "check-clones.py",
+      "sha256": "2b35796742ae011b1bbb76d001c5bfa1111a1e97b10e4b6a17f205815190f9e8",
+      "mode": "100755"
+    },
+    {
+      "path": "check-clones.py.lock",
+      "sha256": "5bf2426551ca32b204e9356cb4197e4187f08a431c5028c20a85c8c3431c3a11",
+      "mode": "100644"
+    },
+    {
+      "path": "clones/__init__.py",
+      "sha256": "c711c685d6692b09b6e34645fcee3fa115bbe58bd23fa5385a6db14975658131",
+      "mode": "100644"
+    },
+    {
+      "path": "clones/constants.py",
+      "sha256": "24581a0dd6e66ae01a726af600df7c55f466380c656914f39f7a6018ea9d7366",
+      "mode": "100644"
+    },
+    {
+      "path": "clones/errors.py",
+      "sha256": "56cd6513043ecc004f3e4aeef22ad8bc47983e5fccfcd692b124fbfacf53bb22",
+      "mode": "100644"
+    },
+    {
+      "path": "clones/inspect_clones.py",
+      "sha256": "713644d0062764e236e98db25008c24d1cac7b730460d60eccbb561e0e5fe735",
+      "mode": "100644"
+    },
+    {
+      "path": "clones/read_policy.py",
+      "sha256": "1a8c341459dea44bff73af07316e518f80e541602888955db9178adeed1e204f",
+      "mode": "100644"
+    },
+    {
+      "path": "clones/read_sources.py",
+      "sha256": "28a797958798496b836b8ded77aafc0e9304b7281cff2c34a3525324f4c4844f",
+      "mode": "100644"
+    },
+    {
+      "path": "clones/read_suppressions.py",
+      "sha256": "c5cfe6c17ac4fc4da7a4566e3a856b5d16c03bfbceb3ea457b0594559423727d",
+      "mode": "100644"
+    },
+    {
+      "path": "clones/run_detector.py",
+      "sha256": "460af41f9aa5653483c31d1375775223b40291ce8a44093d08c7a1666230110b",
+      "mode": "100644"
+    },
+    {
+      "path": "clones/types.py",
+      "sha256": "e81f812fd65b97433d4b859e64212449ed02fb25407ed037f5c01f17f8f49226",
+      "mode": "100644"
+    },
+    {
+      "path": "copy-detector.json",
+      "sha256": "2709839c087a561b76f1dd8341022d9e74ada75b65db8f30aabbc7064e1bc003",
+      "mode": "100644"
+    },
+    {
+      "path": "copy-detector.schema.json",
+      "sha256": "df06aae666c996811bb2246dbd5c18f812edc74e89dfcad451ffb7b1287655cc",
+      "mode": "100644"
+    }
+  ]
+}

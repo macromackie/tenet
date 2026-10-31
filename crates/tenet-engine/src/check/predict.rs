@@ -45,7 +45,7 @@ pub async fn estimate(
     evidence: &EvidencePacket<'_>,
     review: &Review,
     jobs: usize,
-) -> Result<Prediction, CheckError> {
+) -> Result<Prediction, CheckError<PredictionError>> {
     let options = super::Options {
         jobs,
         max_requests: usize::MAX,
@@ -64,7 +64,7 @@ pub async fn estimate(
             } => file_requests.set(file_requests.get() + 1),
             _ => {},
         }
-        Ok::<_, CheckError>(())
+        Ok::<_, CheckError<PredictionError>>(())
     })
     .await?;
     Ok(Prediction {
@@ -78,14 +78,17 @@ struct Unsent;
 
 /// Why a dry run's evaluator answered nothing.
 #[derive(Debug, thiserror::Error)]
-enum DryRunError {
+pub enum PredictionError {
+    /// Preparing the evaluator's input failed.
     #[error(transparent)]
     Core(#[from] ev_grep_core::InputError),
+    /// A dry run counts requests without sending them.
     #[error("a dry run sends no request")]
     Unsent,
 }
 
-impl Failure for DryRunError {
+impl Failure for PredictionError {
+    #[inline]
     fn classify(&self) -> ErrorKind {
         match self {
             Self::Core(error) => error.classify(),
@@ -94,21 +97,22 @@ impl Failure for DryRunError {
     }
 }
 
-impl ClassifyRequest for DryRunError {
+impl ClassifyRequest for PredictionError {
+    #[inline]
     fn classify_request(&self) -> RequestFailure {
         RequestFailure::new(FailureKind::Unknown, false)
     }
 }
 
 impl Evaluator for Unsent {
-    type Error = DryRunError;
+    type Error = PredictionError;
 
     #[expect(
         clippy::unused_async_trait_impl,
         reason = "The trait is async for evaluators that wait on a model."
     )]
-    async fn assess(&self, _: &str, _: &Candidate) -> Result<Assessment, DryRunError> {
-        Err(DryRunError::Unsent)
+    async fn assess(&self, _: &str, _: &Candidate) -> Result<Assessment, PredictionError> {
+        Err(PredictionError::Unsent)
     }
 
     #[expect(
@@ -119,7 +123,7 @@ impl Evaluator for Unsent {
         &self,
         _: &[Question<'_>],
         _: &serde_json::Value,
-    ) -> Result<DecisionBatch, DryRunError> {
-        Err(DryRunError::Unsent)
+    ) -> Result<DecisionBatch, PredictionError> {
+        Err(PredictionError::Unsent)
     }
 }

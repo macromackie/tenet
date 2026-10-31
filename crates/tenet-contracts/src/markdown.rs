@@ -3,7 +3,7 @@ use core::ops::Range;
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
 
-use crate::parse::DocumentProblem;
+use crate::document::DocumentProblem;
 
 pub(crate) struct Markdown {
     pub body: String,

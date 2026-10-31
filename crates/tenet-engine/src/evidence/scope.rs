@@ -50,7 +50,7 @@ impl<'plan> Scope<'plan> {
         clippy::arithmetic_side_effects,
         reason = "The file counts are bounded by the repository's file list."
     )]
-    pub(super) fn summarize(&self, plan: &Plan, input_bytes: usize) -> ContextSummary {
+    pub(crate) fn summarize(&self, plan: &Plan, input_bytes: usize) -> ContextSummary {
         ContextSummary {
             input_bytes,
             limit_bytes: ev_grep_core::MAX_FILE_BYTES,

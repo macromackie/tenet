@@ -9,14 +9,26 @@ mod discovery;
 mod evidence;
 mod failure;
 mod git;
+mod lock;
 mod plan;
 mod report;
 pub mod review;
 mod snapshot;
 mod telemetry;
 
-pub use change::{Change, ChangeKind, InputLimit, Mode, SourceError, Unreadable};
-pub use check::{CheckError, CombinedError, Options, Prediction, apply_review, estimate, run};
+pub use change::{
+    Change,
+    ChangeKind,
+    Excerpt,
+    ExcerptError,
+    InputLimit,
+    MAX_CAPTURE_BYTES,
+    Mode,
+    SourceError,
+    Unreadable,
+    format_line_ranges,
+};
+pub use check::{CheckError, Options, Prediction, PredictionError, apply_review, estimate, run};
 pub use discovery::{
     Coverage,
     DiscoveryError,
@@ -43,12 +55,11 @@ pub use evidence::{
     EvidenceError,
     EvidencePacket,
     InputError,
-    MAX_CAPTURE_BYTES,
     classify_input_status,
 };
 pub use failure::{ClassifyRequest, FailureKind, RequestFailure};
 pub use git::GitError;
-pub use plan::{ContextError, Excerpt, ExcerptError, SpanError, SpanRequest, format_line_ranges};
+pub use plan::{ContextError, SpanError, SpanRequest};
 pub use report::{
     Causes,
     CheckResult,

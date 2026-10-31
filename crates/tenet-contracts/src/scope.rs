@@ -1,13 +1,13 @@
 //! Which files a contract governs: those beneath its scope directory, narrowed by optional `paths`
 //! inclusions and `!` exclusions.
 
-use std::path::{Component, Path};
+use std::path::Path;
 
 use globset::{GlobBuilder, GlobSet};
 
-use crate::{Contract, parse::DocumentProblem};
+use crate::document::DocumentProblem;
 
-const CONTRACTS: &str = ".contracts";
+pub(crate) const CONTRACTS: &str = ".contracts";
 /// The path segments that name the current or parent directory.
 const DOT_SEGMENTS: [&str; 2] = [".", ".."];
 
@@ -25,7 +25,7 @@ pub(crate) struct Patterns {
 }
 
 impl Patterns {
-    fn is_match(&self, relative: &Path, contract_file: bool) -> bool {
+    pub(crate) fn is_match(&self, relative: &Path, contract_file: bool) -> bool {
         let included = if contract_file {
             self.contracts.is_match(relative)
         } else {
@@ -80,24 +80,5 @@ impl Patterns {
             excluded: GlobSet::new(&excluded)?,
             files: GlobSet::new(&files)?,
         })
-    }
-}
-
-impl Contract {
-    /// Whether this contract governs `path`, given relative to the project root. Without `paths`,
-    /// it governs every file beneath its scope except those under `.contracts`.
-    #[must_use]
-    #[inline]
-    pub fn is_governing(&self, path: &Path) -> bool {
-        let Ok(relative) = path.strip_prefix(&self.scope) else {
-            return false;
-        };
-        let contract_file = relative
-            .components()
-            .any(|part| part == Component::Normal(CONTRACTS.as_ref()));
-        match &self.paths {
-            None => !contract_file,
-            Some(patterns) => patterns.is_match(relative, contract_file),
-        }
     }
 }

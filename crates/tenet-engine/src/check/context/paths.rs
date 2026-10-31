@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use serde_json::{Map, Value};
 
-use super::{CombinedError, scope::Scope};
+use crate::{InputError, evidence::Scope};
 
 pub(super) const ENCODING: &str =
     "The supplied_source and omitted_source trees partition the current scoped inventory. \
@@ -19,7 +19,7 @@ const COUNTS_ENCODING: &str = "supplied_source is a directory tree of the suppli
 
 const MAX_DIRECTORY_DEPTH: usize = 32;
 
-pub(super) fn collect_metadata(scope: &Scope<'_>) -> Result<Map<String, Value>, CombinedError> {
+pub(super) fn collect_metadata(scope: &Scope<'_>) -> Result<Map<String, Value>, InputError> {
     let expanded = Map::from_iter([
         ("inventory".into(), serde_json::json!(scope.inventory)),
         ("omitted_source".into(), serde_json::json!(scope.omitted)),
@@ -65,10 +65,10 @@ pub(super) fn find_coarser(scope: &Scope<'_>, current: Option<usize>) -> Option<
 pub(super) fn count_paths(
     scope: &Scope<'_>,
     depth: usize,
-) -> Result<Map<String, Value>, CombinedError> {
+) -> Result<Map<String, Value>, InputError> {
     let mut counts = BTreeMap::<String, usize>::new();
     for path in &scope.omitted {
-        let text = path.to_str().ok_or(CombinedError::NotUtf8Path)?;
+        let text = path.to_str().ok_or(InputError::NotUtf8Path)?;
         let directories: Vec<_> = text.split('/').collect();
         let prefix: String = directories[..depth.min(directories.len() - 1)].iter().fold(
             String::new(),
@@ -153,10 +153,10 @@ impl<'text> Directory<'text> {
     }
 }
 
-pub(super) fn encode(paths: &[&PathBuf]) -> Result<Value, CombinedError> {
+pub(super) fn encode(paths: &[&PathBuf]) -> Result<Value, InputError> {
     let mut root = Directory::default();
     for path in paths {
-        root.insert(path.to_str().ok_or(CombinedError::NotUtf8Path)?);
+        root.insert(path.to_str().ok_or(InputError::NotUtf8Path)?);
     }
     Ok(root.into_value(0))
 }

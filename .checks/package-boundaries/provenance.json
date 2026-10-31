@@ -1,0 +1,155 @@
+{
+  "source": {
+    "repository": "https://github.com/macromackie/tenet-contracts",
+    "tag": "v13.0.1",
+    "revision": "01e7ac85f524a5446d04941e7db895af0b24f817",
+    "path": "contracts/code-dependency-boundaries/assets/uv"
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "9ba0bca2b10ee323e2ced6cf211df0eed83f7c06b19163b132a08aa82b1ad3da",
+      "mode": "100644"
+    },
+    {
+      "path": "check-package-boundaries.py",
+      "sha256": "1b41284c31b46def12f062c394a31c5346fbede47f0e190226e98fc081f2cf3b",
+      "mode": "100755"
+    },
+    {
+      "path": "check-package-boundaries.py.lock",
+      "sha256": "8df372fce91479ea7b670a118131beb9cfae8ad1091cb3e37e763454c9b113e5",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/__init__.py",
+      "sha256": "0a7a1fbfdacd0ea5aba202eb3d211b18b6a76b4d8fefb71516335b722322fbe8",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/arguments.py",
+      "sha256": "3442529eee48b19c4b88707f95b1af1b24a1ab9e94d13f1f73af64664ad81286",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/cargo.py",
+      "sha256": "52a6141d8fdedf505261534625390ec8245838510633d25f48b32f468e79be9a",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/constants.py",
+      "sha256": "5d90b4b1e6de1f5931575b74093ae8fb68a9e05879deeb863fb732c684a8e9ba",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/errors.py",
+      "sha256": "30bc75bc41b524eaed0f876ef8e82dd94304e3530dc4295f36bed37d80d3c6d6",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/inspect_dependencies.py",
+      "sha256": "6287e861186454d145c65e6e0467d5151194eb6c1482ba88892d23a7f1c48a3a",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/inspect_graph.py",
+      "sha256": "7d388d0375dc93ba5d9dd86a10815e71304807dd5d347215d369dd0fa2962058",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/inventory.py",
+      "sha256": "91ad05f702e57cd88c8e539428b813d331b64e314a1535f9db7644efc08ff57a",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/model.py",
+      "sha256": "b064dd368604187f180d669e3baf5a8e3abc86daae6ed760d207475092ec9106",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/node.py",
+      "sha256": "268ddf4ca2f89168aa06de2975db2c3726f3bc014e5cc27548606819374e7b65",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/node_issues.py",
+      "sha256": "899021999c2f248e2cb3ea67f40b422a9f983b771452dca3efaf7733df2004e9",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/node_report.py",
+      "sha256": "d91ac0576bc5c4904328ea6ee3d56f738fa5d82e5d1b2113e077a5bae7a362dc",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/projection.py",
+      "sha256": "0944a150c0c8fc238fca8c2ab7821cf460f53bfe954f3e562fed45a1f99723f1",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/read_node_manifests.py",
+      "sha256": "6be6656cd552ed3fa3d43b64bb7bbf65fd6a9987d07e90e4b8aac034f50867ec",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/read_policy.py",
+      "sha256": "64557811cd618ab454d504ed6f2613233d1176136a16893da6ac5398ab0c4388",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/read_source_owner.py",
+      "sha256": "1d8760a2d590dbe4e3385e94c3c53699d4160b1461198b9d49b89e0a5c3d3824",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/read_source_rules.py",
+      "sha256": "817730e71bca766a68e1dabb2ffb5de39edceaacf3c0bb9606cca665acded2ee",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/resolve_node_sources.py",
+      "sha256": "386ade95b8c95ad5c4783fe689c1245fc2f8349574ad4608270d010537966834",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/rust/__init__.py",
+      "sha256": "b7a0c4e0bc5ae7d51a85c028d3032a74461f8ae3cdb22e1797a9dab99401d826",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/rust/constants.py",
+      "sha256": "f104f24827cbde065be9e6bf06972cd1226e8c63037de7a4ecc6e44fe17b78da",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/rust/literals.py",
+      "sha256": "832276c5d6e05fdde7bbb24a32b6bc2977331024c352d682706f909dac54feea",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/rust/scan.py",
+      "sha256": "43bf741c0dff405bbc3758f2a10b4e1cd2dd01f40b101358e27c70253cb3ac07",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/rust_sources.py",
+      "sha256": "dafa5ed836c82f4f6cc4fbb9777b943d37e5ec9f74fac15a311fd337ee20c54b",
+      "mode": "100644"
+    },
+    {
+      "path": "dependencies/validate_policy.py",
+      "sha256": "8247c5f423cc9611e77f82433bc1fb2f6ee9178848dcc872c6be3e8a958269ab",
+      "mode": "100644"
+    },
+    {
+      "path": "package-boundaries.json",
+      "sha256": "788b19733f0577a1a68b8202c07ef4970908f23bdf5e392ef03c42a72b13aff2",
+      "mode": "100644"
+    },
+    {
+      "path": "package-boundaries.schema.json",
+      "sha256": "04a4175a004a00d245bb8a681e4ff5366e3bb2c346a6d9a4837e543caf27f586",
+      "mode": "100644"
+    }
+  ]
+}

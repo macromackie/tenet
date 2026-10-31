@@ -63,4 +63,17 @@ cargo build --release --locked -p tenet
 cargo install --path crates/tenet --locked
 ```
 
+Package ownership and allowed crate dependencies are declared in [package-boundaries.json](package-boundaries.json).
+CI verifies that declaration against Cargo and source imports, alongside the source-copy and advisory checks.
+
+The package check requires Cargo, Python 3.14 or later, and uv. From the source checkout, verify the released checker
+and run it against the Cargo policy:
+
+```sh
+shasum -a 256 --check .checks/package-boundaries/SHA256SUMS
+uv run --locked --script .checks/package-boundaries/check-package-boundaries.py --root . --config package-boundaries.json
+```
+
+Policies that include JavaScript or TypeScript packages also install the npm resolver described in the bundled guide.
+
 [MIT](LICENSE).

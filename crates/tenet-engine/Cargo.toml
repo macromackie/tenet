@@ -9,7 +9,6 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 blake3.workspace = true
 ev-grep-core.workspace = true
 futures-util.workspace = true
@@ -26,3 +25,6 @@ tracing.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true

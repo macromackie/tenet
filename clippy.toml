@@ -31,10 +31,10 @@ allowed-prefixes = []
 allowed-scripts = ["Latin"]
 arithmetic-side-effects-allowed = []
 avoid-breaking-exported-api = false
-# Local: a tracing span guard held across an await tags other tasks' records, so code instruments the future instead.
+# An entered span guard across an await tags other tasks' records, so attach spans to futures.
 await-holding-invalid-types = [
-  { path = "tracing::span::Entered", reason = "Instrument the future with the span instead of holding its guard across an await." },
-  { path = "tracing::span::EnteredSpan", reason = "Instrument the future with the span instead of holding its guard across an await." },
+  { path = "tracing::span::Entered", reason = "Attach the span with Instrument::instrument instead of holding its entered guard across an await." },
+  { path = "tracing::span::EnteredSpan", reason = "Attach the span with Instrument::instrument instead of holding its entered guard across an await." },
 ]
 check-grouped-late-init = true
 check-incompatible-msrv-in-tests = true

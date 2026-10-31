@@ -1,28 +1,38 @@
 //! `add`: install a library contract or skill, or record an existing copy, and lock its files.
 
-use alloc::collections::BTreeMap;
+mod fetched;
+
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-use tenet_contracts::{Lock, hash_file, is_kebab, is_skill_name, name_of, with_name};
+use fetched::{Installation, InstallationMode, read_request};
+use tenet_contracts::{Lock, is_skill_name, name_of};
 
 use super::{
     Added,
     AdoptionError,
+    File,
+    Files,
     Kind,
     Origin,
-    kind::Rule,
+    Revision,
+    Rule,
+    Unit,
+    Upstream,
+    decode_text,
+    find_obstruction,
     make_relative,
     parse_spec,
-    read_lock,
+    read,
     refuse_ignored,
-    unit::{self, Unit},
-    upstream::{File, Files, Revision, Upstream},
-    write_lock,
+    write,
 };
-use crate::discovery;
+use crate::{
+    discovery,
+    lock::{read_lock, write_lock},
+};
 
 /// Where `add` puts a contract: a new numbered folder in a scope, or an existing copy recorded as
 /// is.
@@ -137,12 +147,14 @@ pub fn add(root: &Path, request: &AddRequest<'_>) -> Result<Added, AdoptionError
                 .join(".contracts")
                 .join(format!("{assigned:03}-{chosen}"))
                 .join(kind.name_document());
-            let writes = fetched.rename_unit(
+            let installation = Installation::new(
                 root,
                 kind,
                 path.parent().ok_or(AdoptionError::NoContractFolder)?,
                 chosen,
-            )?;
+                InstallationMode::New,
+            );
+            let writes = fetched.prepare_files(&installation)?;
             (path, chosen.to_owned(), writes)
         },
         Destination::Existing(path) => {
@@ -152,7 +164,9 @@ pub fn add(root: &Path, request: &AddRequest<'_>) -> Result<Added, AdoptionError
                 .find(|entry| entry.path == key)
                 .ok_or_else(|| AdoptionError::NotProjectContract(key.clone()))?;
             let folder = key.parent().ok_or(AdoptionError::NoContractFolder)?;
-            let writes = fetched.find_missing(root, kind, folder, &local.name)?;
+            let installation =
+                Installation::new(root, kind, folder, &local.name, InstallationMode::Existing);
+            let writes = fetched.prepare_files(&installation)?;
             (key, local.name.clone(), writes)
         },
     };
@@ -191,20 +205,22 @@ pub fn add_skill(root: &Path, request: &SkillRequest<'_>) -> Result<Added, Adopt
             if root.join(&folder).symlink_metadata().is_ok() {
                 return Err(AdoptionError::SkillExists(folder));
             }
-            let writes = fetched.rename_unit(root, kind, &folder, chosen)?;
+            let installation =
+                Installation::new(root, kind, &folder, chosen, InstallationMode::New);
+            let writes = fetched.prepare_files(&installation)?;
             (folder, writes)
         },
         SkillDestination::Existing(path) => {
             let folder = kind.derive_key(path)?;
-            let document = folder.join(kind.name_document());
-            let local = fs::read_to_string(root.join(&document)).map_err(|source| {
-                AdoptionError::ReadExistingSkill {
-                    path: document.clone(),
-                    source,
-                }
-            })?;
-            kind.validate(&document, &local)?;
-            let writes = fetched.find_missing(root, kind, &folder, name_of(&local)?)?;
+            let local = read_existing_skill(root, kind, &folder)?;
+            let installation = Installation::new(
+                root,
+                kind,
+                &folder,
+                name_of(&local)?,
+                InstallationMode::Existing,
+            );
+            let writes = fetched.prepare_files(&installation)?;
             (folder, writes)
         },
     };
@@ -223,179 +239,16 @@ pub fn add_skill(root: &Path, request: &SkillRequest<'_>) -> Result<Added, Adopt
     Ok(added)
 }
 
-/// Register `--source ALIAS=URL` values, then fetch `SOURCE/NAME[@REF]`.
-fn read_request(
-    lock: &mut Lock,
-    kind: Kind,
-    spec: &str,
-    sources: &[String],
-) -> Result<Fetched, AdoptionError> {
-    let (source, name, reference) = parse_spec(spec)?;
-    for registration in sources {
-        let (alias, url) = registration
-            .split_once('=')
-            .ok_or(AdoptionError::SourceFormat)?;
-        if !is_kebab(alias) {
-            return Err(AdoptionError::SourceAlias);
+fn read_existing_skill(root: &Path, kind: Kind, folder: &Path) -> Result<String, AdoptionError> {
+    let document = folder.join(kind.name_document());
+    let local = fs::read_to_string(root.join(&document)).map_err(|source| {
+        AdoptionError::ReadExistingSkill {
+            path: document.clone(),
+            source,
         }
-        if url.is_empty() || url.starts_with('-') {
-            return Err(AdoptionError::SourceUrl(alias.to_owned()));
-        }
-        // `tenet` always names the public library, even before a lock exists.
-        if let Some(existing) = lock.sources.get(alias)
-            && existing != url
-        {
-            return Err(AdoptionError::SourceTaken {
-                alias: alias.to_owned(),
-                existing: existing.clone(),
-                url: url.to_owned(),
-                name: name.to_owned(),
-            });
-        }
-        drop(lock.sources.insert(alias.into(), url.into()));
-    }
-    let url = lock
-        .sources
-        .get(source)
-        .ok_or_else(|| AdoptionError::UnknownSource(source.to_owned()))?;
-    let upstream = Upstream::download(url)?;
-    let revision = upstream.resolve(reference)?;
-    let files = upstream
-        .read_folder(&revision.commit, kind, name)?
-        .ok_or_else(|| {
-            AdoptionError::NotInLibrary {
-                library: [source, name].join("/"),
-                reference: revision.reference.clone(),
-            }
-        })?;
-    Ok(Fetched {
-        files,
-        name: name.into(),
-        revision,
-        source: source.into(),
-    })
-}
-
-impl Fetched {
-    /// The lock entry for a copy of these files at `key`.
-    fn build_unit(&self, kind: Kind, key: PathBuf, folder: PathBuf) -> Result<Unit, AdoptionError> {
-        let files = self
-            .files
-            .iter()
-            .map(|(path, file)| Ok((path.clone(), kind.hash(path, &file.bytes)?)))
-            .collect::<Result<BTreeMap<_, _>, AdoptionError>>()?;
-        Ok(Unit {
-            commit: self.revision.commit.clone(),
-            files,
-            folder,
-            key,
-            origin: match kind {
-                Kind::Contracts => Origin::Contract(self.name.clone()),
-                Kind::Skills => Origin::Skill(self.name.clone()),
-            },
-            reference: self.revision.reference.clone(),
-            source: self.source.clone(),
-        })
-    }
-
-    /// The files an existing copy in `folder`, whose local name is `name`, lacks. Refuses an
-    /// upstream CONTRACT.md or SKILL.md this Tenet cannot read, a read-only file whose content
-    /// differs from upstream, and a file in the way of a missing one. Leaves Markdown edits and
-    /// files upstream does not have alone.
-    #[expect(
-        clippy::excessive_nesting,
-        reason = "Each level is a loop, match or closure over one parsed structure, and \
-                  flattening it would split one decision."
-    )]
-    fn find_missing(
-        &self,
-        root: &Path,
-        kind: Kind,
-        folder: &Path,
-        name: &str,
-    ) -> Result<Vec<(PathBuf, File)>, AdoptionError> {
-        let mut writes = Vec::new();
-        for (path, file) in &self.files {
-            let target = folder.join(path);
-            let rule = kind.derive_rule(path);
-            if rule == Rule::Named {
-                drop(self.read_document(kind, &target, file, name)?);
-            }
-            match unit::find_obstruction(root, folder, path)? {
-                None => writes.push((target, file.clone())),
-                Some(found) if found == target => {
-                    if rule == Rule::ReadOnly
-                        && hash_file(&unit::read(root, &target)?) != hash_file(&file.bytes)
-                    {
-                        return Err(AdoptionError::ReadOnlyDiffers {
-                            target,
-                            release: self.release(),
-                        });
-                    }
-                },
-                Some(found) => {
-                    return Err(AdoptionError::InTheWayOfAdd {
-                        found,
-                        target,
-                        release: self.release(),
-                    });
-                },
-            }
-        }
-        Ok(writes)
-    }
-
-    /// The upstream CONTRACT.md or SKILL.md renamed to `name`, refused unless this Tenet reads it
-    /// at `target`.
-    fn read_document(
-        &self,
-        kind: Kind,
-        target: &Path,
-        file: &File,
-        name: &str,
-    ) -> Result<File, AdoptionError> {
-        let document = with_name(unit::decode_text(&file.bytes, target)?, name)?;
-        // Report the upstream text's error as a message, since it does not point into a local file.
-        kind.validate(target, &document).map_err(|error| {
-            AdoptionError::CannotInstall {
-                release: self.release(),
-                error: Box::new(error),
-            }
-        })?;
-        Ok(File {
-            bytes: document.into_bytes(),
-            executable: file.executable,
-        })
-    }
-
-    /// The library entry and release, as `SOURCE/NAME REF`.
-    fn release(&self) -> String {
-        format!("{}/{} {}", self.source, self.name, self.revision.reference)
-    }
-
-    /// Every file for a new copy in `folder`, its CONTRACT.md or SKILL.md renamed to `name`.
-    /// Refuses a path that already exists or a file in the way of one.
-    fn rename_unit(
-        &self,
-        root: &Path,
-        kind: Kind,
-        folder: &Path,
-        name: &str,
-    ) -> Result<Vec<(PathBuf, File)>, AdoptionError> {
-        let mut writes = Vec::new();
-        for (path, file) in &self.files {
-            let target = folder.join(path);
-            if let Some(found) = unit::find_obstruction(root, folder, path)? {
-                return Err(AdoptionError::Exists(found));
-            }
-            let written = match kind.derive_rule(path) {
-                Rule::Named => self.read_document(kind, &target, file, name)?,
-                Rule::Merged | Rule::ReadOnly => file.clone(),
-            };
-            writes.push((target, written));
-        }
-        Ok(writes)
-    }
+    })?;
+    kind.validate(&document, &local)?;
+    Ok(local)
 }
 
 /// Write a new copy's files and record it, refusing a copy the lock already records or a file Git
@@ -415,10 +268,10 @@ fn record(
     }
     refuse_ignored(root, &unit.list_locked_paths().collect::<Vec<_>>())?;
     for (path, file) in writes {
-        unit::write(root, path, file)?;
+        write(root, path, file)?;
     }
     unit.store(lock)?;
-    write_lock(root, lock)
+    write_lock(root, lock).map_err(AdoptionError::from)
 }
 
 fn build_added(unit: &Unit, name: String, written: bool) -> Added {

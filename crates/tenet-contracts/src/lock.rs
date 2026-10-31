@@ -1,10 +1,15 @@
+mod hashing;
+mod validation;
+
 use alloc::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 
 use globset::{GlobBuilder, GlobSet};
+pub use hashing::{hash_contract, hash_file, hash_skill};
 use serde::{Deserialize, Serialize};
+pub use validation::is_contract_asset;
 
-use crate::parse::{FrontmatterError, find_conflict_marker, is_kebab, with_name};
+use crate::parse::{find_conflict_marker, is_kebab};
 
 /// The path segments that name the current or parent directory.
 const DOT_SEGMENTS: [&str; 2] = [".", ".."];
@@ -155,96 +160,6 @@ impl Default for Lock {
 }
 
 impl Lock {
-    /// Refuse a contract entry with an invalid path, origin, or hash.
-    fn check_contract(&self, path: &Path, entry: &Entry) -> Result<(), LockError> {
-        if !is_contract_path(path) {
-            return Err(LockError::ContractPath {
-                path: path.to_owned(),
-            });
-        }
-        self.check_origin(path, &entry.source, &entry.contract, &entry.commit)?;
-        if !is_hash(&entry.hash) {
-            return Err(LockError::Hash {
-                path: path.to_owned(),
-            });
-        }
-        if let Some(file) = entry.files.keys().find(|file| !is_contract_asset(file)) {
-            return Err(LockError::AssetPath {
-                path: path.to_owned(),
-                file: file.clone(),
-            });
-        }
-        if let Some(file) = entry
-            .files
-            .iter()
-            .find_map(|(file, hash)| (!is_hash(hash)).then_some(file))
-        {
-            return Err(LockError::FileHash {
-                path: path.to_owned(),
-                file: file.clone(),
-            });
-        }
-        Ok(())
-    }
-
-    fn check_origin(
-        &self,
-        path: &Path,
-        source: &str,
-        name: &str,
-        commit: &str,
-    ) -> Result<(), LockError> {
-        if !self.sources.contains_key(source) {
-            return Err(LockError::UnknownSource {
-                path: path.to_owned(),
-                alias: source.to_owned(),
-            });
-        }
-        if !is_kebab(name) {
-            return Err(LockError::LibraryName {
-                path: path.to_owned(),
-            });
-        }
-        if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(LockError::Commit {
-                path: path.to_owned(),
-            });
-        }
-        Ok(())
-    }
-
-    /// Refuse a skill entry with an invalid folder, origin, file list, or hash.
-    fn check_skill(&self, folder: &Path, entry: &SkillEntry) -> Result<(), LockError> {
-        if !is_relative(folder) {
-            return Err(LockError::SkillFolder {
-                folder: folder.to_owned(),
-            });
-        }
-        self.check_origin(folder, &entry.source, &entry.skill, &entry.commit)?;
-        if !entry.files.contains_key(Path::new("SKILL.md")) {
-            return Err(LockError::SkillDocument {
-                folder: folder.to_owned(),
-            });
-        }
-        if let Some(file) = entry.files.keys().find(|file| !is_relative(file)) {
-            return Err(LockError::SkillFile {
-                folder: folder.to_owned(),
-                file: file.clone(),
-            });
-        }
-        if let Some(file) = entry
-            .files
-            .iter()
-            .find_map(|(file, hash)| (!is_hash(hash)).then_some(file))
-        {
-            return Err(LockError::FileHash {
-                path: folder.to_owned(),
-                file: file.clone(),
-            });
-        }
-        Ok(())
-    }
-
     /// The directories `projects` names. Discovery skips each one, as it skips a nested Git
     /// checkout, so its contracts and files belong only to that project.
     #[inline]
@@ -345,77 +260,4 @@ impl Lock {
         text.push('\n');
         Ok(text)
     }
-}
-
-/// Hash a `CONTRACT.md` for its entry's `hash`: its exact bytes without the `name` value.
-///
-/// A locally renamed copy still matches upstream. This is the version 1 meaning, which every lock
-/// version keeps, so a stored hash never changes meaning.
-#[inline]
-pub fn hash_contract(document: &str) -> Result<String, FrontmatterError> {
-    Ok(format!(
-        "blake3:{}",
-        blake3::hash(with_name(document, "")?.as_bytes()).to_hex()
-    ))
-}
-
-/// Hash a file for an entry's `files`: with CRLF line endings read as LF, so Git's line-ending
-/// settings never make an installed asset or skill file look edited.
-#[must_use]
-#[inline]
-pub fn hash_file(bytes: &[u8]) -> String {
-    let mut empty = blake3::Hasher::new();
-    let hasher = bytes
-        .split_inclusive(|byte| *byte == b'\n')
-        .fold(&mut empty, |partial, line| {
-            match line.strip_suffix(b"\r\n") {
-                Some(text) => partial.update(text).update(b"\n"),
-                None => partial.update(line),
-            }
-        });
-    format!("blake3:{}", hasher.finalize().to_hex())
-}
-
-/// Hash a `SKILL.md` for its entry's `files`, as [`hash_file`] does, without its `name` value.
-#[inline]
-pub fn hash_skill(document: &str) -> Result<String, FrontmatterError> {
-    Ok(hash_file(with_name(document, "")?.as_bytes()))
-}
-
-fn is_hash(value: &str) -> bool {
-    value
-        .strip_prefix("blake3:")
-        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
-}
-
-fn is_relative(path: &Path) -> bool {
-    path.components().next().is_some()
-        && path
-            .components()
-            .all(|part| matches!(part, Component::Normal(_)))
-}
-
-/// Whether `path`, relative to a contract's folder, is a file a contract may ship besides its
-/// `CONTRACT.md`: one under `assets/<tool>/`.
-#[must_use]
-#[inline]
-pub fn is_contract_asset(path: &Path) -> bool {
-    let mut parts = path.components();
-    is_relative(path)
-        && parts
-            .next()
-            .is_some_and(|part| part.as_os_str() == "assets")
-        && parts.count() >= 2
-}
-
-fn is_contract_path(path: &Path) -> bool {
-    let mut parts = path.components().rev();
-    is_relative(path)
-        && parts
-            .next()
-            .is_some_and(|part| part.as_os_str() == "CONTRACT.md")
-        && parts.next().is_some()
-        && parts
-            .next()
-            .is_some_and(|part| part.as_os_str() == ".contracts")
 }

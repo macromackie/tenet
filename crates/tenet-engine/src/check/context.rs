@@ -1,6 +1,4 @@
 mod paths;
-pub(crate) mod scope;
-
 use alloc::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -14,23 +12,9 @@ use crate::{
     MAX_FILE_BYTES,
     Mode,
     change::describe_omitted,
-    evidence::ChangeError,
-    plan::ExcerptError,
+    evidence::{ChangeError, InputError, Scope},
     report::Causes,
 };
-
-/// Why a contract's combined context cannot be assembled.
-#[derive(Debug, thiserror::Error)]
-pub enum CombinedError {
-    #[error(transparent)]
-    Change(#[from] ChangeError),
-    #[error(transparent)]
-    Encode(#[from] serde_json::Error),
-    #[error(transparent)]
-    Excerpt(#[from] ExcerptError),
-    #[error("inventory path is not UTF-8")]
-    NotUtf8Path,
-}
 
 pub(super) struct CombinedContext {
     pub hash: String,
@@ -50,7 +34,7 @@ pub(super) struct Unavailable {
 impl EvidencePacket<'_> {
     /// What a contract's combined assessment would receive, without sending it.
     #[inline]
-    pub fn summarize_combined(&self, contract: &Contract) -> Result<ContextSummary, CombinedError> {
+    pub fn summarize_combined(&self, contract: &Contract) -> Result<ContextSummary, InputError> {
         Ok(capture(self, contract)?.summary)
     }
 }
@@ -110,8 +94,8 @@ pub(super) fn prepare(
 fn capture(
     evidence: &EvidencePacket<'_>,
     contract: &Contract,
-) -> Result<CombinedContext, CombinedError> {
-    let scope = scope::Scope::new(evidence.plan, contract);
+) -> Result<CombinedContext, InputError> {
+    let scope = Scope::new(evidence.plan, contract);
     let mut files = Vec::new();
     let mut changes = Vec::new();
     let mut patched_paths = BTreeSet::new();

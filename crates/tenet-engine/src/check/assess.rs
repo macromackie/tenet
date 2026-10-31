@@ -20,7 +20,7 @@ use crate::{
 
 /// Why one file's check produced no answer; its result reports it.
 #[derive(Debug, thiserror::Error)]
-enum FileError {
+enum FileError<RequestError> {
     #[error(transparent)]
     Cache(#[from] StoreError),
     #[error(transparent)]
@@ -30,17 +30,17 @@ enum FileError {
     #[error("missing {0:?} answer")]
     MissingAnswer(&'static str),
     #[error(transparent)]
-    Request(anyhow::Error),
+    Request(RequestError),
 }
 
 /// Why judging a file ended early: a failure of the file's own check, or one that ends the check.
-enum Halt<Halted> {
+enum Halt<Halted, RequestError> {
     Check(Halted),
-    File(FileError),
+    File(FileError<RequestError>),
 }
 
-impl<Halted> From<FileError> for Halt<Halted> {
-    fn from(error: FileError) -> Self {
+impl<Halted, RequestError> From<FileError<RequestError>> for Halt<Halted, RequestError> {
+    fn from(error: FileError<RequestError>) -> Self {
         Self::File(error)
     }
 }
@@ -79,7 +79,7 @@ pub(super) async fn assess<Assessor, Emit, Halted>(
 where
     Assessor: Evaluator<Error: ClassifyRequest>,
     Emit: Fn(Event) -> Result<(), Halted>,
-    Halted: From<CheckError>,
+    Halted: From<CheckError<Assessor::Error>>,
 {
     let started = Instant::now();
     let contract = context.contract;
@@ -165,11 +165,11 @@ async fn judge<Assessor, Emit, Halted>(
     context: &Context<'_, Assessor, Emit>,
     change: &crate::Change,
     result: &mut CheckResult,
-) -> Result<(), Halt<Halted>>
+) -> Result<(), Halt<Halted, Assessor::Error>>
 where
     Assessor: Evaluator<Error: ClassifyRequest>,
     Emit: Fn(Event) -> Result<(), Halted>,
-    Halted: From<CheckError>,
+    Halted: From<CheckError<Assessor::Error>>,
 {
     let (state, omitted) = (context.evidence)
         .build_file_input(context.contract, &change.path)
@@ -221,12 +221,12 @@ where
                             reason,
                             path: result.path.clone(),
                             contract: context.contract.name.clone(),
-                            source: error.into(),
+                            source: Box::new(error),
                         }
                         .into(),
                     ));
                 }
-                return Err(FileError::Request(error.into()).into());
+                return Err(FileError::Request(error).into());
             },
         };
         (context.answers)

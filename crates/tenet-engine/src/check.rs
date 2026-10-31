@@ -1,19 +1,24 @@
 mod assess;
 mod conclusion;
-pub(crate) mod context;
+mod context;
+mod error;
+mod options;
 mod predict;
 mod prompt;
+mod reuse;
 
 use alloc::collections::BTreeMap;
 use core::cell::Cell;
 use std::time::Instant;
 
-pub use context::CombinedError;
+pub use error::CheckError;
 use ev_grep_core::Evaluator;
 use futures_util::{StreamExt as _, stream};
-pub use predict::{Prediction, estimate};
+pub use options::Options;
+pub use predict::{Prediction, PredictionError, estimate};
+pub use reuse::apply_review;
 use tenet_contracts::Contract;
-use tokio::sync::{AcquireError, Semaphore, SemaphorePermit};
+use tokio::sync::{Semaphore, SemaphorePermit};
 use tracing::Instrument as _;
 
 use crate::{
@@ -23,49 +28,10 @@ use crate::{
     ContractState,
     Event,
     EvidencePacket,
-    RequestFailure,
     Summary,
-    review::{Answer, Checked, Concluded, Conclusion, FileResult, Review, StoreError},
+    review::{Answer, Checked, Concluded, Conclusion, FileResult, Review},
+    telemetry,
 };
-
-/// Why a check stopped before concluding every contract. A failure of the caller's `emit`
-/// callback ends the check as the caller's own error instead.
-#[derive(Debug, thiserror::Error)]
-pub enum CheckError {
-    #[error(transparent)]
-    Cache(#[from] StoreError),
-    /// A combined assessment failed in a way every later request would.
-    #[error("{reason:?}, while assessing {contract:?}")]
-    CombinedRequest {
-        failure: RequestFailure,
-        reason: &'static str,
-        contract: String,
-        source: anyhow::Error,
-    },
-    /// A file's request failed in a way every later request would; `failure` names its kind.
-    #[error("{reason:?}, while checking {path:?} against {contract:?}")]
-    FileRequest {
-        failure: RequestFailure,
-        reason: &'static str,
-        path: String,
-        contract: String,
-        source: anyhow::Error,
-    },
-    #[error("min-confidence must be between 0 and 1")]
-    InvalidConfidence,
-    #[error("jobs must be between 1 and 256 and max-requests must be positive")]
-    InvalidJobs,
-    #[error(transparent)]
-    Slots(#[from] AcquireError),
-}
-
-/// How a check runs: its parallel jobs, request budget, and confidence threshold.
-#[derive(Debug, Clone, Copy)]
-pub struct Options {
-    pub jobs: usize,
-    pub max_requests: usize,
-    pub min_confidence: f64,
-}
 
 /// Assess every planned contract against captured evidence.
 ///
@@ -92,15 +58,16 @@ pub struct Options {
     reason = "The steps run in one order and share local state; splitting them would add \
               forwarding functions."
 )]
-pub async fn run<Halted>(
+pub async fn run<Assessor, Halted>(
     evidence: &EvidencePacket<'_>,
     options: Options,
-    evaluator: &impl Evaluator<Error: ClassifyRequest>,
+    evaluator: &Assessor,
     review: &Review,
     emit: &impl Fn(Event) -> Result<(), Halted>,
 ) -> Result<Checked, Halted>
 where
-    Halted: From<CheckError>,
+    Assessor: Evaluator<Error: ClassifyRequest>,
+    Halted: From<CheckError<Assessor::Error>>,
 {
     if !(1..=256).contains(&options.jobs) || options.max_requests == 0 {
         return Err(CheckError::InvalidJobs.into());
@@ -125,7 +92,7 @@ where
     let borrowed = &shared;
     let mut running = stream::iter(plan.contracts.iter().enumerate())
         .map(async move |(index, contract)| {
-            let span = tracing::info_span!("tenet.contract", contract = contract.name.as_str());
+            let span = telemetry::open_contract(&contract.name);
             let assessed = borrowed.assess_contract(contract).instrument(span).await?;
             Ok::<_, Halted>((index, assessed))
         })
@@ -193,95 +160,6 @@ where
     })
 }
 
-/// Reuse earlier conclusions for unchanged inputs without asking a model, reporting each contract
-/// as `run` does. A reused conclusion counts as answered from an earlier check.
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "Counts of results, contracts and requests are bounded by the repository's files and \
-              the request budget, far below the integer's limit."
-)]
-#[inline]
-#[expect(
-    clippy::impl_trait_in_params,
-    reason = "Callers pass closures and evaluators whose types they cannot name."
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "The steps run in one order and share local state; splitting them would add \
-              forwarding functions."
-)]
-pub fn apply_review<Halted>(
-    evidence: &EvidencePacket<'_>,
-    review: &Review,
-    emit: &impl Fn(Event) -> Result<(), Halted>,
-) -> Result<Checked, Halted> {
-    let plan = evidence.plan;
-    let mut summary = Summary::default();
-    let mut contracts = Vec::new();
-    for contract in &plan.contracts {
-        emit(Event::ContractStarted {
-            contract: contract.name.clone(),
-            path: contract.path.display().to_string(),
-            total: plan
-                .files
-                .iter()
-                .filter(|path| plan.is_governing(contract, path))
-                .count(),
-        })?;
-        let input = evidence.derive_input_key(contract);
-        let scope = plan.find_requested_scope(contract);
-        let earlier = review
-            .find_assessment(&contract.name, &input)
-            .filter(|assessment| assessment.conclusion.is_some());
-        let conclusion = earlier.and_then(|assessment| assessment.conclusion.clone());
-        let state = review.compute_state(
-            plan,
-            contract,
-            &input,
-            conclusion.as_ref().map(|concluded| concluded.status),
-        );
-        let result = conclusion.as_ref().map(|concluded| {
-            ContractResult {
-                status: concluded.status,
-                scope,
-                input: input.clone(),
-                violation: concluded.violation,
-                reason: concluded.reason.clone(),
-                reason_code: concluded.reason_code,
-                context: None,
-                assessment: None,
-                routing: None,
-                evidence_hash: None,
-                error: concluded.error.clone(),
-                failure: None,
-                conflicting_files: concluded.conflicting_files.clone(),
-                request: None,
-                cached: true,
-            }
-        });
-        summary.cached += usize::from(result.is_some());
-        emit(Event::ContractFinished {
-            contract: contract.name.clone(),
-            summary: Summary::default(),
-            conclusion: result.map(Box::new),
-            state: state.clone(),
-        })?;
-        contracts.push(Concluded {
-            carried_from: earlier
-                .map(|assessment| assessment.carried_from.unwrap_or(assessment.rev)),
-            conclusion,
-            contract: contract.name.clone(),
-            input,
-            results: earlier
-                .map(|assessment| assessment.results.clone())
-                .unwrap_or_default(),
-            scope,
-            state,
-        });
-    }
-    Ok(Checked { contracts, summary })
-}
-
 struct Assessed {
     conclusion: ContractResult,
     results: Vec<CheckResult>,
@@ -302,7 +180,7 @@ struct Pool<'plan, Assessor, Emit> {
 impl<
     Assessor: Evaluator<Error: ClassifyRequest>,
     Emit: Fn(Event) -> Result<(), Halted>,
-    Halted: From<CheckError>,
+    Halted: From<CheckError<Assessor::Error>>,
 > Pool<'_, Assessor, Emit>
 {
     /// Wait in a `tenet.wait` span for one of the check's parallel slots.
@@ -310,8 +188,8 @@ impl<
         clippy::future_not_send,
         reason = "The checker drives this future on one task and never moves it across threads."
     )]
-    async fn acquire_slot(&self) -> Result<SemaphorePermit<'_>, CheckError> {
-        let span = tracing::info_span!("tenet.wait");
+    async fn acquire_slot(&self) -> Result<SemaphorePermit<'_>, CheckError<Assessor::Error>> {
+        let span = telemetry::open_wait();
         Ok(self.slots.acquire().instrument(span).await?)
     }
 
@@ -356,11 +234,7 @@ impl<
         };
         let mut running = stream::iter(subjects)
             .map(async |path| {
-                let span = tracing::info_span!(
-                    "tenet.pair",
-                    contract = contract.name.as_str(),
-                    path = %path.display(),
-                );
+                let span = telemetry::open_pair(&contract.name, path);
                 async {
                     let permit = self.acquire_slot().await?;
                     // A buffered failure keeps its permit until the caller can stop queued work.

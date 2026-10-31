@@ -6,7 +6,7 @@
 "jobs":
   "rust":
     "name": "Rust"
-    "runs-on": "ubuntu-latest"
+    "runs-on": "namespace-profile-public-linux"
     "steps":
       - "uses": "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803" # v6.1.0
         "with":
@@ -22,8 +22,30 @@
           test "${GITHUB_REF}" = "refs/tags/${RELEASE_TAG}"
           head=$(git rev-parse HEAD)
           test "${head}" = "${GITHUB_SHA}"
+      - "uses": "astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78" # v7
+        "with":
+          "python-version": "3.14.7"
+          "version": "0.12.9"
+      - "name": "Check source duplication"
+        "run": |
+          shasum -a 256 --check .checks/clone-detector/SHA256SUMS
+          uv run --locked --script .checks/clone-detector/check-clones.py --root . --config copy-detector.json
+      - "name": "Check package dependencies"
+        "run": |
+          shasum -a 256 --check .checks/package-boundaries/SHA256SUMS
+          uv run --locked --script .checks/package-boundaries/check-package-boundaries.py --root . --config package-boundaries.json
       - "run": "rustup show"
       - "uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0" # v2.9.3
+        "with":
+          "cache-directories": "~/.cargo/advisory-dbs"
+      - "uses": "jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c" # v4.3.0
+        "with":
+          "cache": false
+          "env": false
+          "install_args": "aqua:EmbarkStudios/cargo-deny@0.19.9"
+          "version": "2026.8.12"
+      - "name": "Check dependency advisories and policies"
+        "run": "mise exec aqua:EmbarkStudios/cargo-deny@0.19.9 -- cargo deny --all-features --locked check --deny warnings"
       # rustfmt.toml uses unstable options, so formatting runs on one dated nightly rustfmt.
       # Every other step uses the stable toolchain.
       - "run": "rustup toolchain install nightly-2026-10-27 --profile minimal --component rustfmt"

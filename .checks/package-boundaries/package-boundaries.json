@@ -1,0 +1,21 @@
+{
+  "packages": [
+    {
+      "name": "example-application",
+      "manifest": "package.json",
+      "manager": "npm",
+      "ownership": "Application composition and process startup.",
+      "dependencies": [],
+      "testSources": ["test/**", "tests/**", "**/*.test.*", "**/*.spec.*"],
+      "testSupport": false,
+      "tsconfig": "tsconfig.json",
+      "builtins": []
+    }
+  ],
+  "exclusions": [
+    { "pattern": "**/node_modules/**", "reason": "Installed packages are third-party source." },
+    { "pattern": "**/target/**", "reason": "Cargo emits generated build output here." },
+    { "pattern": "**/dist/**", "reason": "The package build emits generated output here." },
+    { "pattern": "**/.git/**", "reason": "Git metadata is repository data." }
+  ]
+}

@@ -94,7 +94,6 @@ pub enum ReviewError {
     NoMessage,
     #[error("no review state in {:?}; run tenet check first", .0.display())]
     NoState(PathBuf),
-    // A record `tenet record` refuses, before it is written or when the log is read.
     #[error("{0:?} has not been checked; run tenet check first")]
     NotChecked(String),
     #[error("{0:?} is not part of the current review; see tenet status")]
@@ -162,7 +161,6 @@ pub enum ReviewError {
         flagged: Vec<String>,
         conclusion: ContractStatus,
     },
-    // The review as it stands in the working tree.
     #[error(transparent)]
     Unchecked(#[from] Unchecked),
     #[error(

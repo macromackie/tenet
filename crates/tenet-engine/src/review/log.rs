@@ -1,14 +1,22 @@
 //! Entries in `.tenet/events.jsonl`, the review's only source of truth.
 
-use alloc::collections::BTreeSet;
-use std::{
-    collections::HashMap,
-    path::{Component, Path, PathBuf},
-};
+mod parsing;
+mod revision;
 
+use std::path::PathBuf;
+
+pub(super) use parsing::{add_files, parse};
+pub use revision::Revision;
 use serde::{Deserialize, Serialize};
 
-use crate::{ConclusionReason, ContractStatus, Mode, Omitted, RequestedScope, Status, evidence};
+use crate::{
+    ConclusionReason,
+    ContractStatus,
+    Omitted,
+    RequestedScope,
+    Status,
+    evidence::{CapturedFile, Role, ScopedFile},
+};
 
 /// The format `check` and `record` write. Each revision lists its captured files once, and its
 /// assessments refer to them by position.
@@ -36,105 +44,6 @@ pub enum Entry {
     Assessment(Assessment),
     Record(Record),
     Revision(Revision),
-}
-
-#[expect(
-    clippy::arbitrary_source_item_ordering,
-    reason = "Field order is the serialized key order."
-)]
-/// One `tenet check`. Its selection lets later commands recapture exactly what it assessed.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Revision {
-    pub rev: u64,
-    /// Unix seconds.
-    pub at: u64,
-    /// The branch and base this revision belongs to, for display.
-    pub review: String,
-    pub base: Option<String>,
-    pub paths: Vec<PathBuf>,
-    pub contract: Option<String>,
-    pub context: Vec<crate::SpanRequest>,
-    pub mode: Mode,
-    pub base_oid: Option<String>,
-    pub head_oid: Option<String>,
-    /// The provider and model that answered; absent for `check --no-model`.
-    pub model: Option<String>,
-    /// The confidence below which the model's answers were routed to unresolved; absent for
-    /// `check --no-model` and for revisions written before Tenet recorded it.
-    pub min_confidence: Option<f64>,
-    pub tenet: String,
-    /// Every file this revision's assessments cover, each once. Format 1 listed them in each
-    /// assessment instead.
-    #[serde(default)]
-    pub files: Vec<CapturedFile>,
-}
-
-impl Revision {
-    /// Whether this revision's path selection includes everything `earlier` selected, so its
-    /// assessment of a contract replaces `earlier`'s. No paths select everything.
-    #[must_use]
-    #[inline]
-    pub fn is_covering(&self, earlier: &Self) -> bool {
-        let selected = build_selectors(&self.paths);
-        let earlier_selectors = build_selectors(&earlier.paths);
-        selected.is_empty()
-            || (!earlier_selectors.is_empty()
-                && earlier_selectors
-                    .iter()
-                    .all(|path| selected.iter().any(|selector| path.starts_with(selector))))
-    }
-
-    /// Revisions against the same base commit review the same change, whichever paths and
-    /// contracts they selected. Full checks have no base and form one review.
-    #[must_use]
-    #[inline]
-    pub fn is_same_review(&self, other: &Self) -> bool {
-        self.base_oid == other.base_oid
-    }
-
-    /// Whether these are the revision's selected paths, however they were spelled.
-    #[must_use]
-    #[inline]
-    pub fn is_selecting(&self, paths: &[PathBuf]) -> bool {
-        build_selectors(&self.paths) == build_selectors(paths)
-    }
-
-    /// The files one of this revision's assessments covers: its selected files, then its
-    /// supporting files.
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "Assessment file indexes point into this log's `files`, which the store \
-                  validates on read."
-    )]
-    #[inline]
-    pub fn list_files<'log>(
-        &'log self,
-        assessment: &'log Assessment,
-    ) -> impl Iterator<Item = (Role, &'log CapturedFile)> {
-        let selected = assessment
-            .selected
-            .iter()
-            .map(|&index| (Role::Selected, index));
-        let support = assessment
-            .support
-            .iter()
-            .map(|&index| (Role::Support, index));
-        selected
-            .chain(support)
-            .map(|(role, index)| (role, &self.files[index]))
-    }
-}
-
-fn build_selectors(paths: &[PathBuf]) -> BTreeSet<PathBuf> {
-    paths
-        .iter()
-        .map(|path| {
-            path.components()
-                .filter(|part| *part != Component::CurDir)
-                .collect::<PathBuf>()
-        })
-        .filter(|path| path != Path::new(""))
-        .collect()
 }
 
 #[expect(
@@ -187,108 +96,6 @@ pub struct Answer {
     pub confidence: f64,
 }
 
-/// Whether a captured file was selected for the check or read as support.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Role {
-    Selected,
-    Support,
-}
-
-#[expect(
-    clippy::arbitrary_source_item_ordering,
-    reason = "Field order is the serialized key order."
-)]
-/// A captured file's identity. Contents live in `.tenet/blobs/` under these hashes.
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub struct CapturedFile {
-    pub path: PathBuf,
-    pub previous_path: Option<PathBuf>,
-    pub before: Option<String>,
-    pub after: Option<String>,
-    pub error: Option<String>,
-    /// In a diff, the resulting lines the change wrote, as in `Change::changed`, so a record can
-    /// be held to the change. Input keys leave them out; `before` and `after` determine them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub changed: Vec<[usize; 2]>,
-    /// For a file named with `--context PATH:START-END`, the resulting lines the check supplied,
-    /// so the input key holds them and a record cites a supporting file only within them. Empty
-    /// for a whole file.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub excerpt: Vec<[usize; 2]>,
-}
-
-impl CapturedFile {
-    /// The citations that show this file's change: each changed range, or the cleared file.
-    #[must_use]
-    #[inline]
-    pub fn change_citations(&self) -> Vec<String> {
-        let path = self.path.display();
-        if self.is_cleared() {
-            return vec![format!("{path} (whole file)")];
-        }
-        (self.changed.iter())
-            .map(|[start, end]| {
-                if start == end {
-                    format!("{path}:{start}")
-                } else {
-                    format!("{path}:{start}-{end}")
-                }
-            })
-            .collect()
-    }
-
-    /// Whether the change touched this file: wrote lines in it or deleted it.
-    #[must_use]
-    #[inline]
-    pub const fn is_changed(&self) -> bool {
-        !self.changed.is_empty() || self.is_deleted()
-    }
-
-    /// Whether a citation of this file, with `lines` or whole, overlaps or adjoins a line the
-    /// change wrote. Only a deleted or emptied file is cited whole.
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "Line numbers are bounded by the file's line count."
-    )]
-    #[must_use]
-    #[inline]
-    pub fn is_citing_change(&self, lines: Option<[usize; 2]>) -> bool {
-        match lines {
-            None => self.is_cleared(),
-            Some([start, end]) => {
-                (self.changed.iter()).any(|&[first, last]| start <= last + 1 && first <= end + 1)
-            },
-        }
-    }
-
-    /// Whether the change left this file without text, by deleting or emptying it, so no line
-    /// shows the change.
-    fn is_cleared(&self) -> bool {
-        self.before.is_some()
-            && (self.after.as_deref()).is_none_or(|after| after == evidence::hash_content(""))
-    }
-
-    /// Return whether the change deleted the file.
-    #[must_use]
-    #[inline]
-    pub const fn is_deleted(&self) -> bool {
-        self.before.is_some() && self.after.is_none()
-    }
-}
-
-#[expect(
-    clippy::arbitrary_source_item_ordering,
-    reason = "Field order is the serialized key order."
-)]
-/// A captured file in one contract's scope.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ScopedFile {
-    pub role: Role,
-    #[serde(flatten)]
-    pub file: CapturedFile,
-}
-
 /// One file's assessment in a recorded revision.
 #[expect(
     clippy::arbitrary_source_item_ordering,
@@ -335,122 +142,4 @@ pub struct Span {
     /// Inclusive, 1-based; absent when the evidence is the whole file.
     pub lines: Option<[usize; 2]>,
     pub blob: String,
-}
-
-/// Parse one line of the log.
-///
-/// An assessment must follow `revision`, its revision, and refer only to files it captured. Format
-/// 1, which Tenet 0.8 wrote, listed every assessment's files in full; those move into `revision`,
-/// so records made with Tenet 0.8 keep settling their inputs, and `moved_files` remembers where
-/// each went.
-#[expect(
-    clippy::too_many_lines,
-    reason = "The steps run in one order and share local state; splitting them would add \
-              forwarding functions."
-)]
-pub(super) fn parse(
-    format: u64,
-    line: &str,
-    revision: Option<&mut Revision>,
-    moved_files: &mut HashMap<CapturedFile, usize>,
-) -> Result<Entry, LogError> {
-    // The type selects the struct to parse. An internally tagged enum would buffer the line first,
-    // which loses the arbitrary-precision numbers serde_json is built with here.
-    #[derive(Deserialize)]
-    struct Kind {
-        #[serde(rename = "type")]
-        kind: String,
-    }
-
-    #[derive(Deserialize)]
-    struct Assessment1 {
-        carried_from: Option<u64>,
-        conclusion: Option<Conclusion>,
-        contract: String,
-        contract_hash: String,
-        files: Vec<ScopedFile>,
-        input: String,
-        results: Vec<FileResult>,
-        rev: u64,
-        scope: RequestedScope,
-    }
-
-    let Kind { kind } = serde_json::from_str(line)?;
-    Ok(match (format, kind.as_str()) {
-        (1 | FORMAT, "revision") => {
-            moved_files.clear();
-            Entry::Revision(serde_json::from_str(line)?)
-        },
-        (1 | FORMAT, "record") => Entry::Record(serde_json::from_str(line)?),
-        (1 | FORMAT, "assessment") => {
-            let (mut assessment, files) = if format == 1 {
-                let old: Assessment1 = serde_json::from_str(line)?;
-                let assessment = Assessment {
-                    rev: old.rev,
-                    contract: old.contract,
-                    contract_hash: old.contract_hash,
-                    input: old.input,
-                    scope: old.scope,
-                    conclusion: old.conclusion,
-                    carried_from: old.carried_from,
-                    selected: Vec::new(),
-                    support: Vec::new(),
-                    results: old.results,
-                };
-                (assessment, old.files)
-            } else {
-                (serde_json::from_str(line)?, Vec::new())
-            };
-            let (rev, contract) = (assessment.rev, &assessment.contract);
-            let Some(found) = revision.filter(|candidate| candidate.rev == rev) else {
-                return Err(LogError::Unordered {
-                    contract: contract.clone(),
-                    rev,
-                });
-            };
-            if format == 1 {
-                (assessment.selected, assessment.support) =
-                    add_files(&mut found.files, moved_files, files);
-            }
-            if !(assessment.selected.iter())
-                .chain(&assessment.support)
-                .all(|&position| position < found.files.len())
-            {
-                return Err(LogError::UncapturedFile {
-                    contract: contract.clone(),
-                    rev,
-                });
-            }
-            Entry::Assessment(assessment)
-        },
-        (1 | FORMAT, name) => return Err(LogError::UnknownEntry(name.to_owned())),
-        _ => return Err(LogError::UnknownFormat(format)),
-    })
-}
-
-/// Add one assessment's scoped files to a revision's `files`, keeping one copy of each, and return
-/// the positions of its selected files and of its supporting files.
-///
-/// `positions` remembers where each file already is.
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "The files vector is nonempty after the push before it."
-)]
-pub(super) fn add_files(
-    files: &mut Vec<CapturedFile>,
-    positions: &mut HashMap<CapturedFile, usize>,
-    scoped: Vec<ScopedFile>,
-) -> (Vec<usize>, Vec<usize>) {
-    let (mut selected, mut support) = (Vec::new(), Vec::new());
-    for ScopedFile { role, file } in scoped {
-        let position = *positions.entry(file.clone()).or_insert_with(|| {
-            files.push(file);
-            files.len() - 1
-        });
-        match role {
-            Role::Selected => selected.push(position),
-            Role::Support => support.push(position),
-        }
-    }
-    (selected, support)
 }

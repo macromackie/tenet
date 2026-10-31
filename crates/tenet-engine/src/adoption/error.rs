@@ -4,28 +4,10 @@ use alloc::string::FromUtf8Error;
 use core::str::Utf8Error;
 use std::{io, path::PathBuf};
 
-use tenet_contracts::{DocumentError, FrontmatterError, LOCK_FILE, LockError};
+use tenet_contracts::{DocumentError, FrontmatterError, LOCK_FILE};
 
-use super::Kind;
+use super::{HashError, Kind, LockFileError};
 use crate::{DiscoveryError, GitError};
-
-/// Why `.tenet.lock` cannot be read.
-#[derive(Debug, thiserror::Error)]
-pub enum LockFileError {
-    #[error(transparent)]
-    Format(#[from] LockError),
-    #[error("cannot read {LOCK_FILE:?}")]
-    Read(#[source] io::Error),
-}
-
-/// Why a copy's file cannot be hashed as the lock records it.
-#[derive(Clone, Copy, Debug, thiserror::Error)]
-pub enum HashError {
-    #[error(transparent)]
-    Frontmatter(#[from] FrontmatterError),
-    #[error(transparent)]
-    NotUtf8(#[from] Utf8Error),
-}
 
 /// Why an adoption command refuses or fails.
 #[derive(Debug, thiserror::Error)]

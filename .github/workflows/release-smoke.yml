@@ -4,6 +4,18 @@
     "name": "Smoke ${{ matrix.target }}"
     "runs-on": "${{ matrix.runner }}"
     "steps":
+      - "env":
+          "EXPECTED_MACHINE": "${{ matrix.machine }}"
+        "name": "Verify native architecture"
+        "run": |
+          machine=$(uname -m)
+          test "${machine}" = "${EXPECTED_MACHINE}"
+      - "if": "matrix.target == 'x86_64-apple-darwin'"
+        "name": "Reject Rosetta translation"
+        "run": |
+          translated=$(/usr/sbin/sysctl -in sysctl.proc_translated)
+          [[ "${translated}" =~ ^0?$ ]]
+        "shell": "bash"
       - "uses": "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
         "with":
           "merge-multiple": true
@@ -105,13 +117,17 @@
       "fail-fast": false
       "matrix":
         "include":
-          - "runner": "macos-14"
+          - "machine": "arm64"
+            "runner": "namespace-profile-public-macos"
             "target": "aarch64-apple-darwin"
-          - "runner": "macos-15-intel"
+          - "machine": "x86_64"
+            "runner": "macos-15-intel"
             "target": "x86_64-apple-darwin"
-          - "runner": "ubuntu-24.04-arm"
+          - "machine": "aarch64"
+            "runner": "namespace-profile-release-linux-arm64"
             "target": "aarch64-unknown-linux-gnu"
-          - "runner": "ubuntu-22.04"
+          - "machine": "x86_64"
+            "runner": "namespace-profile-release-linux"
             "target": "x86_64-unknown-linux-gnu"
     "timeout-minutes": 5
 "name": "Release smoke tests"

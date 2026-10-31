@@ -7,7 +7,7 @@ curl -fsSL https://tenet-contracts.com/install.sh | bash
 tenet --version
 ```
 
-To pin a release, use its path, such as `/v0.12.1/install.sh`.
+To pin a release, use its path, such as `/v0.13.0/install.sh`.
 Archives and SHA-256 checksums are also available on [GitHub Releases](https://github.com/macromackie/tenet/releases).
 
 To build from a source checkout:

@@ -4,18 +4,10 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::parse::{
-    DocumentError,
-    DocumentProblem,
-    convert_yaml_error,
-    find_conflict_marker,
-    find_key_line,
-    is_kebab,
-    split_frontmatter,
+use crate::{
+    document::{DocumentError, DocumentProblem, SKILL_NAME_CHARACTERS},
+    parse::{find_conflict_marker, find_key_line, is_kebab, parse_frontmatter, split_frontmatter},
 };
-
-/// The longest skill name the Agent Skills specification allows.
-pub(crate) const SKILL_NAME_CHARACTERS: usize = 64;
 
 /// The keys every installed skill needs. Other keys, such as Claude Code's `paths`, stay allowed.
 #[derive(Deserialize)]
@@ -47,8 +39,7 @@ pub fn validate_skill(path: &Path, document: &str) -> Result<(), DocumentError> 
         return Err(error(line, DocumentProblem::ConflictMarker));
     }
     let (yaml, _) = split_frontmatter(document).map_err(|cause| error(1, cause.into()))?;
-    let metadata: Metadata =
-        serde_yaml::from_str(yaml).map_err(|cause| convert_yaml_error(path, cause))?;
+    let metadata: Metadata = parse_frontmatter(path, yaml)?;
     let folder = path
         .parent()
         .and_then(Path::file_name)

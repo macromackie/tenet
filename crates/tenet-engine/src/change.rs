@@ -1,3 +1,6 @@
+mod base;
+mod excerpt;
+
 use alloc::string::FromUtf8Error;
 use core::num::ParseIntError;
 use std::{
@@ -6,11 +9,16 @@ use std::{
     path::{Path, PathBuf, StripPrefixError},
 };
 
+pub(crate) use base::read_before;
 use ev_grep_core::MAX_FILE_BYTES;
+pub use excerpt::{Excerpt, ExcerptError, format_line_ranges};
 use serde::{Deserialize, Serialize};
 use similar::DiffOp;
 
-use crate::{MAX_CAPTURE_BYTES, git::GitError};
+use crate::git::GitError;
+
+/// The most bytes a check captures from the files it reads.
+pub const MAX_CAPTURE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Whether a check reads whole files or a diff against a base.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

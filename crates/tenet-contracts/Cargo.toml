@@ -13,8 +13,8 @@ blake3.workspace = true
 globset.workspace = true
 pulldown-cmark.workspace = true
 serde.workspace = true
+serde-saphyr.workspace = true
 serde_json.workspace = true
-serde_yaml.workspace = true
 thiserror.workspace = true
 
 [lints]

@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.13.0
+
+- Library check, prediction, and evidence errors retain their typed causes. `CheckError<RequestError>` carries
+  the provider's typed request error instead of erasing it into `anyhow::Error`. Callers match error variants directly.
+  The `CombinedError` type is removed; use `tenet_engine::InputError`. These source API changes require caller updates;
+  command-line exit statuses and valid-input JSON formats are preserved.
+- YAML frontmatter uses safe Rust `serde-saphyr` instead of unmaintained `unsafe-libyaml`. Valid contract and skill
+  metadata is preserved; malformed YAML diagnostic wording may differ. `tenet_contracts::DocumentProblem::Yaml` now
+  carries `Box<serde_saphyr::Error>`.
+- Update TLS, Tokio, Markdown, and Unicode dependencies to resolve the current RustSec advisories without ignores.
+- Rust source and test modules now pass all configured Clippy groups, module-boundary checks, and source-copy checks.
+  Shared test setup has one owner, and source files stay within the declared layout limits.
+
 ## v0.12.1
 
 - The release smoke provider binds directly to loopback without resolving a hostname, waits until its port is ready,

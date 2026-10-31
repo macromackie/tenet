@@ -1,0 +1,31 @@
+{
+  "detectorVersion": "5.4.2",
+  "minTokens": 50,
+  "minLines": 5,
+  "sourceRoots": ["src"],
+  "sourceFiles": [],
+  "formats": {
+    "bash": [".sh"],
+    "javascript": [".js", ".mjs", ".cjs"],
+    "jsx": [".jsx"],
+    "python": [".py"],
+    "rust": [".rs"],
+    "tsx": [".tsx"],
+    "typescript": [".ts", ".mts", ".cts"]
+  },
+  "extensionlessSources": "shebang",
+  "exclusions": [
+    {
+      "pattern": "**/node_modules/**",
+      "reason": "Installed dependencies are third-party source."
+    },
+    {
+      "pattern": "**/target/**",
+      "reason": "The compiler generates build artifacts here."
+    },
+    {
+      "pattern": "**/__pycache__/**",
+      "reason": "The interpreter generates bytecode caches here."
+    }
+  ]
+}

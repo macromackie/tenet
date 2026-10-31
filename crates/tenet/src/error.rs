@@ -7,10 +7,13 @@ use tenet_engine::{
     ContextError,
     DiscoveryError,
     EvidenceError,
+    PredictionError,
     SnapshotError,
     adoption::AdoptionError,
     review::{ReviewError, StoreError},
 };
+
+use crate::provider::ModelError;
 
 /// A command's failure.
 ///
@@ -41,7 +44,9 @@ pub(crate) enum CommandError {
     #[error(transparent)]
     Provider(#[from] ev_grep_jev::JevError),
     #[error(transparent)]
-    Check(#[from] CheckError),
+    Check(#[from] CheckError<ModelError>),
+    #[error(transparent)]
+    Prediction(#[from] CheckError<PredictionError>),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     /// Writing to standard output or standard error, or waiting for Ctrl-C, failed.

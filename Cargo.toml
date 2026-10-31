@@ -9,7 +9,7 @@ license = "MIT"
 publish = false
 repository = "https://github.com/macromackie/tenet"
 rust-version = "1.98"
-version = "0.12.1"
+version = "0.13.0"
 
 [workspace.dependencies]
 annotate-snippets = "0.12"
@@ -19,21 +19,21 @@ clap = { features = ["derive", "env"], version = "4" }
 console = "0.16"
 # deny.toml refuses a git or path dependency without a version, so each names its source's own version. A release
 # raises the tenet ones with `workspace.package.version`.
-ev-grep-core = { git = "https://github.com/macromackie/ev-grep", rev = "236a26c55d51309b735ba718a30692a4b64fd869", version = "0.8.1" }
-ev-grep-jev = { git = "https://github.com/macromackie/ev-grep", rev = "236a26c55d51309b735ba718a30692a4b64fd869", version = "0.8.1" }
+ev-grep-core = { git = "https://github.com/macromackie/ev-grep", rev = "c2bd87d6c1681c8ff5a0cc27dbc46a7aea79c1e6", version = "0.8.2" }
+ev-grep-jev = { git = "https://github.com/macromackie/ev-grep", rev = "c2bd87d6c1681c8ff5a0cc27dbc46a7aea79c1e6", version = "0.8.2" }
 futures-util = "0.3"
 globset = "0.4"
 ignore = "0.4"
-pulldown-cmark = "0.13"
+pulldown-cmark = "0.13.5"
 serde = { features = ["derive"], version = "1" }
+serde-saphyr = { default-features = false, features = ["deserialize"], version = "2" }
 serde_json = "1"
-serde_yaml = "0.9"
 similar = "2"
 tempfile = "3"
-tenet-contracts = { path = "crates/tenet-contracts", version = "0.12.1" }
-tenet-engine = { path = "crates/tenet-engine", version = "0.12.1" }
+tenet-contracts = { path = "crates/tenet-contracts", version = "0.13.0" }
+tenet-engine = { path = "crates/tenet-engine", version = "0.13.0" }
 thiserror = "2"
-tokio = { features = ["macros", "rt", "signal", "sync", "time"], version = "1" }
+tokio = { features = ["macros", "rt", "signal", "sync", "time"], version = "1.53.3" }
 # Only the tenet binary installs a subscriber; the libraries and Jev only emit spans and events.
 tracing = { default-features = false, features = ["std"], version = "0.1.44" }
 tracing-subscriber = { default-features = false, features = ["fmt", "json"], version = "0.3.23" }
@@ -207,6 +207,7 @@ cargo-dist-version = "0.33.0"
 checksum = "sha256"
 ci = "github"
 dispatch-releases = true
+github-release = "announce"
 global-artifacts-jobs = ["./release-smoke"]
 install-path = "~/.local/bin"
 install-updater = false
@@ -220,10 +221,14 @@ targets = [
   "x86_64-unknown-linux-gnu",
 ]
 
-# Intel runners built releases 1.5 to 3 times slower than Apple Silicon runners, so Apple Silicon cross-compiles the
-# Intel binary. Release smoke tests still run it on an Intel runner.
+# Ubuntu 22.04 preserves the Linux runtime baseline. Apple Silicon also cross-compiles the Intel Mac binary.
+# Its native Intel smoke test stays on GitHub because Namespace provides only Apple Silicon Macs.
 [workspace.metadata.dist.github-custom-runners]
-x86_64-apple-darwin = "macos-14"
+aarch64-apple-darwin = { host = "aarch64-apple-darwin", runner = "namespace-profile-public-macos" }
+aarch64-unknown-linux-gnu = { host = "aarch64-unknown-linux-gnu", runner = "namespace-profile-release-linux-arm64" }
+global = { host = "x86_64-unknown-linux-gnu", runner = "namespace-profile-public-linux" }
+x86_64-apple-darwin = { host = "aarch64-apple-darwin", runner = "namespace-profile-public-macos" }
+x86_64-unknown-linux-gnu = { host = "x86_64-unknown-linux-gnu", runner = "namespace-profile-release-linux" }
 
 # Version comments belong in the generated YAML, so the action references include them.
 [workspace.metadata.dist.github-action-commits]

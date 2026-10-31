@@ -20,7 +20,13 @@ yanked = "deny"
 [bans]
 allow = []
 allow-wildcard-paths = false
-deny = []
+deny = [
+  { crate = "opentelemetry_sdk", reason = "Only application binaries install telemetry exporters.", wrappers = [
+  ] },
+  { crate = "tracing-subscriber", reason = "Only application binaries install telemetry subscribers.", wrappers = [
+    "tenet",
+  ] },
+]
 external-default-features = "deny"
 highlight = "all"
 multiple-versions = "deny"
@@ -120,6 +126,11 @@ crate = "core-foundation"
 allow = ["default"]
 crate = "core-foundation-sys"
 
+# encoding_rs needs its CPU detection defaults.
+[[bans.features]]
+allow = ["default"]
+crate = "core_detect"
+
 # ignore needs its default features.
 [[bans.features]]
 allow = ["default"]
@@ -134,6 +145,11 @@ crate = "digest"
 [[bans.features]]
 allow = ["default"]
 crate = "encode_unicode"
+
+# encoding_rs_io needs its default allocation support.
+[[bans.features]]
+allow = ["default", "alloc"]
+crate = "encoding_rs"
 
 # signal-hook-registry needs its default features.
 [[bans.features]]
@@ -201,11 +217,6 @@ crate = "hyper"
 allow = ["default", "client-legacy", "client-proxy", "http1", "tokio"]
 crate = "hyper-util"
 
-# serde_yaml needs its default features.
-[[bans.features]]
-allow = ["default"]
-crate = "indexmap"
-
 # hyper-util needs its default features.
 [[bans.features]]
 allow = ["default"]
@@ -231,6 +242,11 @@ crate = "libc"
 [[bans.features]]
 allow = ["default"]
 crate = "memchr"
+
+# serde-saphyr needs its numeric conversion defaults.
+[[bans.features]]
+allow = ["default", "std"]
+crate = "num-traits"
 
 # tracing-core needs its default features.
 [[bans.features]]
@@ -285,11 +301,16 @@ crate = "rustls-pki-types"
 allow = ["default"]
 crate = "security-framework"
 
-# ev-grep-core, ev-grep-jev, reqwest, serde_urlencoded, serde_yaml, tenet-contracts and tenet-engine
+# ev-grep-core, ev-grep-jev, reqwest, serde_urlencoded, tenet-contracts and tenet-engine
 # need its default features.
 [[bans.features]]
 allow = ["default", "derive"]
 crate = "serde"
+
+# serde-saphyr needs its default Serde data model support.
+[[bans.features]]
+allow = ["default", "alloc", "result", "std"]
+crate = "serde_core"
 
 # serde needs its default features.
 [[bans.features]]
@@ -478,6 +499,8 @@ allow-build-scripts = [
   "crossbeam-epoch",
   # Needed by crossbeam-deque and crossbeam-epoch.
   "crossbeam-utils",
+  # Needed by encoding_rs_io.
+  "encoding_rs",
   # Needed by block-buffer and crypto-common.
   "generic-array",
   # Needed by quinn-proto, rand and tempfile.
@@ -492,6 +515,8 @@ allow-build-scripts = [
   # ring, rustix, security-framework, security-framework-sys, signal-hook-registry, socket2 and
   # tokio.
   "libc",
+  # Needed by serde-saphyr.
+  "num-traits",
   # Needed by clap_derive, displaydoc, futures-macro, quote, serde_derive, syn, synstructure,
   # thiserror-impl, tokio-macros, wasm-bindgen-macro-support, yoke-derive, zerofrom-derive and
   # zerovec-derive.
@@ -510,7 +535,7 @@ allow-build-scripts = [
   "rustls",
   # Needed by wasm-bindgen.
   "rustversion",
-  # Needed by ev-grep-core, ev-grep-jev, reqwest, serde_json, serde_urlencoded, serde_yaml,
+  # Needed by ev-grep-core, ev-grep-jev, reqwest, serde_json, serde_urlencoded,
   # tenet-contracts, tenet-engine and url.
   "serde",
   # Needed by bstr, serde and serde_json.
@@ -710,7 +735,7 @@ allow = [
   # globset, http-body, http-body-util, hyper, hyper-util, ignore, memchr, mio, pulldown-cmark,
   # pulldown-cmark-escape, same-file, schannel, slab, strsim, synstructure, tenet, tenet-contracts,
   # tenet-engine, tokio, tokio-macros, tower, tower-http, tower-layer, tower-service, tracing,
-  # tracing-core, try-lock, unsafe-libyaml, walkdir, want, winapi-util and zmij.
+  # tracing-core, try-lock, walkdir, want, winapi-util and zmij.
   "MIT",
   # Needed by icu_collections, icu_locale_core, icu_normalizer, icu_normalizer_data, icu_properties,
   # icu_properties_data, icu_provider, litemap, potential_utf, tinystr, unicode-ident, writeable,

@@ -3,6 +3,10 @@
 //!
 //! Records hold kinds, counts and identifiers, never a contract's text, a prompt, or file contents.
 
+use std::path::Path;
+
+use tracing::Span;
+
 /// The events the engine records. Each event names its member in an `event` field.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LogEvent {
@@ -50,4 +54,19 @@ pub(crate) fn record_budget_exhausted(request: Request, max_requests: usize) {
 /// Record that cached answers stood in for `request`.
 pub(crate) fn record_cache_hit(request: Request) {
     tracing::info!(event = LogEvent::CacheHit.name(), request = request.name());
+}
+
+/// Open a contract assessment span without recording its contents.
+pub(crate) fn open_contract(contract: &str) -> Span {
+    tracing::info_span!("tenet.contract", contract)
+}
+
+/// Open a file-pair span with the same scoped identities as its result.
+pub(crate) fn open_pair(contract: &str, path: &Path) -> Span {
+    tracing::info_span!("tenet.pair", contract, path = %path.display())
+}
+
+/// Measure the time a check waits for one shared request slot.
+pub(crate) fn open_wait() -> Span {
+    tracing::info_span!("tenet.wait")
 }
