@@ -3,9 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use tenet_contracts::{DocumentError, hash_contract, hash_file, hash_skill};
+use tenet_contracts::{DocumentError, hash_contract, hash_file, hash_skill, split_adaptations};
 
-use super::{AdoptionError, HashError, make_relative};
+use super::{AdoptionError, HashError, LocalState, make_relative};
 
 /// Which lock table a command manages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +55,40 @@ impl Kind {
         } else {
             Rule::ReadOnly
         }
+    }
+
+    /// The state of a present file of a copy, `path` relative to its folder, against its locked
+    /// hash.
+    pub(super) fn derive_state(
+        self,
+        path: &Path,
+        bytes: &[u8],
+        locked: &str,
+    ) -> Result<LocalState, HashError> {
+        if self.hash(path, bytes)? == locked {
+            return Ok(LocalState::Unchanged);
+        }
+        Ok(match self.find_adaptations(path, bytes, locked)? {
+            Some(_) => LocalState::Adapted,
+            None => LocalState::Edited,
+        })
+    }
+
+    /// The final `## Local adaptations` section of a contract's CONTRACT.md, `path` relative to its
+    /// folder, when the text above it hashes to `locked`. `None` for every other file.
+    pub(super) fn find_adaptations<'bytes>(
+        self,
+        path: &Path,
+        bytes: &'bytes [u8],
+        locked: &str,
+    ) -> Result<Option<&'bytes str>, HashError> {
+        if (self, self.derive_rule(path)) != (Self::Contracts, Rule::Named) {
+            return Ok(None);
+        }
+        let Some(adaptations) = split_adaptations(str::from_utf8(bytes)?)? else {
+            return Ok(None);
+        };
+        Ok((hash_contract(&adaptations.upstream)? == locked).then_some(adaptations.section))
     }
 
     /// Hash a file of a copy, `path` relative to its folder, as the lock records it.

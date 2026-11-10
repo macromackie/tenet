@@ -3,13 +3,14 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use tenet_contracts::with_name;
+use tenet_contracts::{append_adaptations, with_name};
 
 use super::{
     AdoptionError,
     File,
     Files,
     Kind,
+    Merge,
     Outcome,
     Planned,
     Revision,
@@ -24,8 +25,9 @@ use super::{
 
 impl Unit {
     /// Decide how each file takes the release `next`, without writing anything. `edited_paths`
-    /// holds the edited Markdown files, as [`Unit::ensure_updatable`] found them; every other
-    /// locked file matches its hash. An unedited file is replaced, edited Markdown merges three
+    /// holds the adapted or edited Markdown files, as [`Unit::ensure_updatable`] found them; every
+    /// other locked file matches its hash. An unedited file is replaced, an adapted CONTRACT.md
+    /// takes the new text with its local adaptations appended, other edited Markdown merges three
     /// ways against the locked commit, a new upstream file is added, and a file upstream removed
     /// stays in place and leaves the lock. Refuses a local file or symlink in the way of a new
     /// upstream file.
@@ -82,38 +84,50 @@ impl Unit {
                     planned.writes.push((installed, file));
                     Outcome::Replaced
                 },
-                Some(_) => {
+                Some(locked) => {
                     let local = read(root, &installed)?;
-                    if base.is_none() {
-                        base = Some(
-                            upstream
-                                .read_folder(&self.commit, kind, self.origin.name())?
-                                .ok_or_else(|| self.report_missing_at_lock())?,
-                        );
-                    }
-                    let base_file = base
-                        .as_ref()
-                        .and_then(|base_files| base_files.get(&path))
-                        .ok_or_else(|| {
-                            AdoptionError::MissingAtLock {
-                                commit: self.commit.clone(),
-                                name: path.display().to_string(),
-                            }
-                        })?;
-                    let mut base_text = decode_text(&base_file.bytes, &installed)?.to_owned();
-                    if rule == Rule::Named {
-                        base_text = with_name(&base_text, name)?;
-                    }
-                    let merge = merge(
-                        decode_text(&local, &installed)?,
-                        &base_text,
-                        decode_text(&file.bytes, &installed)?,
-                        [
-                            "local",
-                            &format!("base {}", self.reference),
-                            &format!("upstream {}", revision.reference),
-                        ],
-                    )?;
+                    let merge = if let Some(section) =
+                        kind.find_adaptations(&path, &local, locked)?
+                    {
+                        Merge {
+                            conflicts: 0,
+                            text: append_adaptations(
+                                decode_text(&file.bytes, &installed)?,
+                                section,
+                            ),
+                        }
+                    } else {
+                        if base.is_none() {
+                            base = Some(
+                                upstream
+                                    .read_folder(&self.commit, kind, self.origin.name())?
+                                    .ok_or_else(|| self.report_missing_at_lock())?,
+                            );
+                        }
+                        let base_file = base
+                            .as_ref()
+                            .and_then(|base_files| base_files.get(&path))
+                            .ok_or_else(|| {
+                                AdoptionError::MissingAtLock {
+                                    commit: self.commit.clone(),
+                                    name: path.display().to_string(),
+                                }
+                            })?;
+                        let mut base_text = decode_text(&base_file.bytes, &installed)?.to_owned();
+                        if rule == Rule::Named {
+                            base_text = with_name(&base_text, name)?;
+                        }
+                        merge(
+                            decode_text(&local, &installed)?,
+                            &base_text,
+                            decode_text(&file.bytes, &installed)?,
+                            [
+                                "local",
+                                &format!("base {}", self.reference),
+                                &format!("upstream {}", revision.reference),
+                            ],
+                        )?
+                    };
                     planned.writes.push((
                         installed,
                         File {

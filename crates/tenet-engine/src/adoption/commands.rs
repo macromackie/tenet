@@ -42,7 +42,7 @@ pub fn list_outdated(root: &Path, kind: Kind, offline: bool) -> Result<Vec<Statu
         files.retain(|_, file_state| *file_state != LocalState::Unchanged);
         let name = match state {
             LocalState::Missing => None,
-            LocalState::Unchanged | LocalState::Edited => {
+            LocalState::Unchanged | LocalState::Adapted | LocalState::Edited => {
                 Some(name_of(&read_text(root, &unit.name_document())?)?.to_owned())
             },
         };
@@ -238,21 +238,26 @@ pub fn remove(
 }
 
 /// Check the lock's format, that every locked file exists, that read-only files match their
-/// hashes, and that installed skills' Markdown is valid. Works offline.
+/// hashes, and that installed skills' Markdown is valid, and list the edited contracts. Works
+/// offline.
 #[inline]
 pub fn validate_lock(root: &Path) -> Result<Recorded, AdoptionError> {
     let lock = read_lock(root)?;
     let units = Unit::list_all(&lock, Kind::Contracts)?
         .into_iter()
         .chain(Unit::list_all(&lock, Kind::Skills)?);
+    let mut edited = Vec::new();
     for unit in units {
         let kind = unit.read_kind();
-        for path in unit.check_files(root)? {
+        for (path, state) in unit.check_files(root)? {
             let file = unit.folder.join(&path);
             if kind.derive_rule(&path) == Rule::Merged
                 && let Some(line) = find_conflict_marker(&read_text(root, &file)?)
             {
                 return Err(AdoptionError::ConflictMarker { file, line });
+            }
+            if kind == Kind::Contracts && state == LocalState::Edited {
+                edited.push(file);
             }
         }
         if kind == Kind::Skills {
@@ -262,6 +267,7 @@ pub fn validate_lock(root: &Path) -> Result<Recorded, AdoptionError> {
     }
     Ok(Recorded {
         contracts: lock.contracts.len(),
+        edited,
         skills: lock.skills.len(),
     })
 }

@@ -19,6 +19,7 @@ use super::{
     Files,
     Kind,
     LocalState,
+    Merge,
     Origin,
     Outcome,
     Revision,

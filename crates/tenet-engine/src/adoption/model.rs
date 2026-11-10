@@ -56,10 +56,13 @@ pub struct Added {
     pub written: bool,
 }
 
-/// Whether an installed copy is unchanged, edited, or missing locally.
+/// Whether an installed copy is unchanged, adapted, edited, or missing locally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalState {
+    /// A contract's CONTRACT.md that differs from its release only in its final `## Local
+    /// adaptations` section.
+    Adapted,
     Edited,
     Missing,
     Unchanged,
@@ -233,8 +236,11 @@ pub struct FileComparison {
 }
 
 /// What `validate` found recorded in the lock.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Recorded {
     pub contracts: usize,
+    /// Each installed CONTRACT.md whose text above its local adaptations differs from its release,
+    /// relative to the project root.
+    pub edited: Vec<PathBuf>,
     pub skills: usize,
 }

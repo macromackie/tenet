@@ -12,13 +12,13 @@ use super::{AdoptionError, LocalState, Rule, Unit, read};
 
 impl Unit {
     /// Refuse a missing locked file or an edited read-only one, as `validate` and `update` do, and
-    /// return the edited Markdown files, which merge.
+    /// return the adapted or edited Markdown files, which merge, with their states.
     pub(in crate::adoption) fn check_files(
         &self,
         root: &Path,
-    ) -> Result<BTreeSet<PathBuf>, AdoptionError> {
+    ) -> Result<BTreeMap<PathBuf, LocalState>, AdoptionError> {
         let kind = self.read_kind();
-        let mut edited_paths = BTreeSet::new();
+        let mut edited_paths = BTreeMap::new();
         for (path, state) in self.read_local_states(root)? {
             let file = self.folder.join(&path);
             match (state, kind.derive_rule(&path)) {
@@ -29,15 +29,15 @@ impl Unit {
                         key: self.key.clone(),
                     });
                 },
-                (LocalState::Edited, Rule::ReadOnly) => {
+                (LocalState::Adapted | LocalState::Edited, Rule::ReadOnly) => {
                     return Err(AdoptionError::EditedReadOnly {
                         file,
                         kind,
                         key: self.key.clone(),
                     });
                 },
-                (LocalState::Edited, Rule::Named | Rule::Merged) => {
-                    let _: bool = edited_paths.insert(path);
+                (LocalState::Adapted | LocalState::Edited, Rule::Named | Rule::Merged) => {
+                    let _: Option<LocalState> = edited_paths.insert(path, state);
                 },
                 (LocalState::Unchanged, _) => {},
             }
@@ -62,7 +62,7 @@ impl Unit {
     }
 
     /// Refuse an update, before anything is fetched or written, as [`Unit::check_files`] does,
-    /// and return the edited Markdown files.
+    /// and return the adapted or edited Markdown files.
     pub(in crate::adoption) fn ensure_updatable(
         &self,
         root: &Path,
@@ -75,7 +75,7 @@ impl Unit {
                 key: self.key.clone(),
             });
         }
-        self.check_files(root)
+        Ok(self.check_files(root)?.into_keys().collect())
     }
 
     /// Each locked file's local state.
@@ -88,19 +88,17 @@ impl Unit {
             .iter()
             .map(|(path, locked)| {
                 let file = self.folder.join(path);
-                let state = if !root.join(&file).exists() {
-                    LocalState::Missing
-                } else if kind.hash(path, &read(root, &file)?).map_err(|source| {
-                    AdoptionError::HashFile {
-                        path: file.clone(),
-                        source,
-                    }
-                })? == *locked
-                {
-                    LocalState::Unchanged
-                } else {
-                    LocalState::Edited
-                };
+                if !root.join(&file).exists() {
+                    return Ok((path.clone(), LocalState::Missing));
+                }
+                let state = kind
+                    .derive_state(path, &read(root, &file)?, locked)
+                    .map_err(|source| {
+                        AdoptionError::HashFile {
+                            path: file.clone(),
+                            source,
+                        }
+                    })?;
                 Ok((path.clone(), state))
             })
             .collect()
