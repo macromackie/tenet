@@ -9,7 +9,7 @@ tenet show --pending [--json]
 tenet record NAME [PATH ...] --conclusion CONCLUSION [--evidence PATH:START-END ...] -m MESSAGE
 tenet log [NAME] [--json]
 tenet export src/ --base origin/main > evidence.json
-tenet validate
+tenet validate [--strict-adaptations]
 tenet contracts list [--for FILE] [--base REF] [--json]
 tenet contracts show NAME
 tenet contracts add SOURCE/NAME[@REF] (--scope DIR | --path FILE)
@@ -151,18 +151,20 @@ size limits, and examples of preparing a focused question.
 at the project root. They are the only commands that write the lock or reach the network. They need `git`, and `add`,
 `update`, and `remove` need the project to be a Git checkout. `check`, `export`, and `contracts list` and `show` read
 only the lock's [`projects`](#discovery). `validate` checks offline that the lock is well formed, that each recorded
-file exists, and that each read-only file matches its hash. See [Guidance](./guidance.md) for the workflow.
+file exists, and that each read-only file matches its hash. With `--strict-adaptations`, it also exits 1 and prints
+`edited PATH` for each installed contract whose text above its local adaptations differs from its release. See
+[Guidance](./guidance.md) for the workflow.
 
-| Command                                       | Effect                                                                                                |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `contracts add SOURCE/NAME[@REF] --scope DIR` | Copy a library contract and its assets into the next numbered folder under `DIR/.contracts`           |
-| `contracts add SOURCE/NAME[@REF] --path FILE` | Record an existing copy; its differences count as local edits                                         |
-| `skills add SOURCE/NAME[@REF] [--dir DIR]`    | Copy a library skill's folder into `DIR/NAME`; `DIR` defaults to `.agents/skills`                     |
-| `skills add SOURCE/NAME[@REF] --path DIR`     | Record an existing copy; its Markdown differences count as local edits                                |
-| `outdated [--offline] [--json]`               | Show each copy's release, newest release, majors crossed, and local state, and each file that changed |
-| `update [PATH ...] [--ref REF] [--json]`      | Replace unedited files, merge edited Markdown, and move the lock, at most to the next major           |
-| `diff PATH [--json]`                          | Show upstream changes since the recorded release, then local edits, for each file that differs        |
-| `remove PATH [--keep-file]`                   | Delete a copy's locked files and its lock entry, or keep them as local files                          |
+| Command                                       | Effect                                                                                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `contracts add SOURCE/NAME[@REF] --scope DIR` | Copy a library contract and its assets into the next numbered folder under `DIR/.contracts`                         |
+| `contracts add SOURCE/NAME[@REF] --path FILE` | Record an existing copy; its differences count as local edits                                                       |
+| `skills add SOURCE/NAME[@REF] [--dir DIR]`    | Copy a library skill's folder into `DIR/NAME`; `DIR` defaults to `.agents/skills`                                   |
+| `skills add SOURCE/NAME[@REF] --path DIR`     | Record an existing copy; its Markdown differences count as local edits                                              |
+| `outdated [--offline] [--json]`               | Show each copy's release, newest release, majors crossed, and local state, and each file that changed               |
+| `update [PATH ...] [--ref REF] [--json]`      | Replace unedited files, keep local adaptations, merge edited Markdown, and move the lock, at most to the next major |
+| `diff PATH [--json]`                          | Show upstream changes since the recorded release, then local edits, for each file that differs                      |
+| `remove PATH [--keep-file]`                   | Delete a copy's locked files and its lock entry, or keep them as local files                                        |
 
 `SOURCE` is `tenet` for <https://github.com/macromackie/tenet-contracts>. Register another Git library, or a local
 clone of that one, under another alias with `--source ALIAS=URL` on `add`; Git uses your existing credentials.
@@ -180,6 +182,11 @@ selected copies, so every merge is a reviewable diff, and a local file in the wa
 upstream stays in place and leaves the lock. `remove` refuses uncommitted changes to the files it would delete. Tenet
 never touches files the lock does not list. Hashes ignore the `name` value of `CONTRACT.md` and `SKILL.md`. Hashes of
 assets and skill files read CRLF line endings as LF; a contract's own hash covers its exact bytes, as in version 1.
+
+A `CONTRACT.md` whose only local change is a final `## Local adaptations` section is `adapted`, not `edited`. `outdated`
+shows that state, and `update` writes the new release text with the section appended unchanged. Such an update never
+conflicts and reports `merged`. Tenet compares the text above the section with the lock's hash, so the lock format stays
+the same.
 
 | Exit | `add`, `diff`, `remove`          | `outdated`                                                                                           | `update`                                                       |
 | ---- | -------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |

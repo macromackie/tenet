@@ -11,7 +11,9 @@ use crate::{
     output,
 };
 
-pub(super) fn validate(root: &Path) -> Result<ExitStatus, CommandError> {
+/// Validate contracts and the lock; with `strict_adaptations`, also fail on each installed contract
+/// whose text above its local adaptations differs from its release.
+pub(super) fn validate(root: &Path, strict_adaptations: bool) -> Result<ExitStatus, CommandError> {
     let contracts = tenet_engine::discover_contracts(root)?;
     let recorded = adoption::validate_lock(root)?;
     // A project may install skills without having contracts of its own.
@@ -35,7 +37,13 @@ pub(super) fn validate(root: &Path) -> Result<ExitStatus, CommandError> {
             recorded.skills
         )?;
     }
-    Ok(ExitStatus::Passed)
+    if !strict_adaptations || recorded.edited.is_empty() {
+        return Ok(ExitStatus::Passed);
+    }
+    for path in &recorded.edited {
+        writeln!(output::open_stdout(), "edited {}", path.display())?;
+    }
+    Ok(ExitStatus::Failed)
 }
 
 #[expect(

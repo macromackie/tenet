@@ -9,7 +9,7 @@ license = "MIT"
 publish = false
 repository = "https://github.com/macromackie/tenet"
 rust-version = "1.98"
-version = "0.13.0"
+version = "0.14.0"
 
 [workspace.dependencies]
 annotate-snippets = "0.12"
@@ -24,14 +24,14 @@ ev-grep-jev = { git = "https://github.com/macromackie/ev-grep", rev = "c2bd87d6c
 futures-util = "0.3"
 globset = "0.4"
 ignore = "0.4"
-pulldown-cmark = "0.13.5"
+pulldown-cmark = "0.13.6"
 serde = { features = ["derive"], version = "1" }
 serde-saphyr = { default-features = false, features = ["deserialize"], version = "2" }
 serde_json = "1"
 similar = "2"
 tempfile = "3"
-tenet-contracts = { path = "crates/tenet-contracts", version = "0.13.0" }
-tenet-engine = { path = "crates/tenet-engine", version = "0.13.0" }
+tenet-contracts = { path = "crates/tenet-contracts", version = "0.14.0" }
+tenet-engine = { path = "crates/tenet-engine", version = "0.14.0" }
 thiserror = "2"
 tokio = { features = ["macros", "rt", "signal", "sync", "time"], version = "1.53.3" }
 # Only the tenet binary installs a subscriber; the libraries and Jev only emit spans and events.

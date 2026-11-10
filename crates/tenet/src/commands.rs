@@ -25,7 +25,7 @@ use crate::{
 )]
 pub(crate) async fn execute(cli: &Cli) -> Result<ExitStatus, CommandError> {
     match &cli.command {
-        Command::Validate => validate(&cli.root),
+        Command::Validate { strict_adaptations } => validate(&cli.root, *strict_adaptations),
         Command::Skills { command } => execute_skills(&cli.root, command),
         Command::Contracts { command } => execute_contracts(&cli.root, command),
         Command::Check(check) => evaluate(&cli.root, &cli.resolve_state(), check).await,

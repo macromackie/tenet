@@ -139,6 +139,7 @@ fn format_status_lines(status: &Status) -> String {
     let state = |state: LocalState| {
         match state {
             LocalState::Unchanged => "unchanged",
+            LocalState::Adapted => "adapted",
             LocalState::Edited => "edited",
             LocalState::Missing => "missing",
         }

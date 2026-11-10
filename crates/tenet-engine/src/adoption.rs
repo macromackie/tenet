@@ -45,7 +45,7 @@ pub use model::{
 };
 use tenet_contracts::Lock;
 use unit::{Unit, decode_text, find_obstruction, read, write};
-use upstream::{File, Files, Revision, Upstream, merge};
+use upstream::{File, Files, Merge, Revision, Upstream, merge};
 
 use crate::git;
 pub use crate::lock::LockFileError;

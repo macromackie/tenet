@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+mod adaptation;
 mod contract;
 mod document;
 mod lock;
@@ -10,6 +11,7 @@ mod parse;
 mod scope;
 mod skill;
 
+pub use adaptation::{Adaptations, append_adaptations, split_adaptations};
 pub use contract::Contract;
 pub use document::{DocumentError, DocumentProblem, FrontmatterError};
 pub use lock::{

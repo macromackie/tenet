@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.14.0
+
+- `contracts outdated` reports an installed `CONTRACT.md` as `adapted` when it differs from its release only in a final
+  `## Local adaptations` section. It reports `edited` only when the text above that section changed. The JSON `state`
+  gains the `adapted` value. The lock format and its hashes are unchanged.
+- `validate --strict-adaptations` exits 1 and prints `edited PATH` for each installed contract whose text above its
+  local adaptations differs from its release. Plain `validate` is unchanged.
+- `contracts update` writes the new release text of an adapted contract and appends its local adaptations unchanged, so
+  an upstream change to the last line no longer conflicts. It reports the copy as `merged`. Edited copies still merge
+  three ways.
+- The guidance documentation no longer claims that `tenet check` never reads `.tenet.lock`; it reads the lock's
+  `projects` list.
+- Update pulldown-cmark to 0.13.6 to resolve RUSTSEC-2026-0433 without an ignore. Tenet parses Markdown without
+  wikilinks, so the advisory's slow parse never applied to it.
+
 ## v0.13.0
 
 - Library check, prediction, and evidence errors retain their typed causes. `CheckError<RequestError>` carries

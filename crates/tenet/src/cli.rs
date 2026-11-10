@@ -96,7 +96,12 @@ pub(crate) enum Command {
     /// Export captured contracts and source as JSON without calling a model.
     Export(Export),
     /// Validate contract documents without calling a model.
-    Validate,
+    Validate {
+        /// Fail when an installed contract's text above its final `## Local adaptations` section
+        /// differs from its release.
+        #[arg(long)]
+        strict_adaptations: bool,
+    },
     /// Browse contract requirements and scope, and install shared contracts.
     Contracts {
         #[command(subcommand)]

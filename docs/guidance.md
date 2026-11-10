@@ -35,8 +35,8 @@ is edited or missing. Exclude `.contracts/**` and installed skill folders from f
 or script no longer matches its hash. `add` refuses an asset that Git ignores and names the ignore rule, because Git
 would never commit it. A contract with assets declares `requires-tenet: 0.11.0`, and older Tenet versions refuse it.
 
-The installed `CONTRACT.md` is yours. Put local exceptions and additions under a final heading so updates merge
-cleanly:
+The installed `CONTRACT.md` is yours. Put local exceptions and additions under a final heading, so updates keep them
+apart from the upstream text:
 
 ```markdown
 ## Local adaptations
@@ -47,6 +47,11 @@ Admin export routes may return raw database rows.
 Tenet reads the whole contract, so the checker sees the rule and its exception together. Edit an upstream sentence only
 when your requirement must replace it. Files you add to the contract folder are not in the lock, and Tenet never
 touches them.
+
+A copy that differs from its release only in that final section is `adapted`. A copy whose text above the section
+changed is `edited`. `tenet contracts outdated` shows each state, and `tenet validate --strict-adaptations` fails while
+any installed contract is `edited`. Tenet drops the section and the blank lines before it, then compares the rest with
+the hash in the lock. The heading must read exactly `## Local adaptations`, and no `#` or `##` heading may follow it.
 
 ## Updates
 
@@ -68,13 +73,17 @@ an earlier release rolls an update back and merges local edits onto the older te
 
 `update` needs committed contract files and lock. Each copy then takes one path:
 
-| Local copy | Upstream since your release | Result                                  |
-| ---------- | --------------------------- | --------------------------------------- |
-| Unedited   | Changed                     | Replaced with the new text              |
-| Edited     | Unchanged                   | Kept; the lock moves to the new release |
-| Edited     | Changed elsewhere           | Merged, keeping both changes            |
-| Edited     | Changed on the same lines   | Conflict markers; exit 1                |
-| Any        | Removed                     | Left in place; exit 1                   |
+| Local copy        | Upstream since your release | Result                                                 |
+| ----------------- | --------------------------- | ------------------------------------------------------ |
+| Unedited          | Changed                     | Replaced with the new text                             |
+| Adapted           | Changed                     | The new text, with your adaptations appended unchanged |
+| Adapted or edited | Unchanged                   | Kept; the lock moves to the new release                |
+| Edited            | Changed elsewhere           | Merged, keeping both changes                           |
+| Edited            | Changed on the same lines   | Conflict markers; exit 1                               |
+| Any               | Removed                     | Left in place; exit 1                                  |
+
+An adapted copy never conflicts, even when upstream changes the line above your section, and `update` reports it as
+`merged`. An edited copy merges three ways against the recorded release.
 
 A renamed copy still counts as unedited: the hash ignores the `name` value. Hashes of assets and skill files read CRLF
 line endings as LF, so Git's line-ending settings never fail `tenet validate`. A contract's own hash covers its exact
@@ -124,7 +133,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          curl -fsSL https://tenet-contracts.com/v0.13.0/install.sh | bash
+          curl -fsSL https://tenet-contracts.com/v0.14.0/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - id: update
         run: |
@@ -231,5 +240,5 @@ contract assets are. `tenet validate` also checks that each installed `SKILL.md`
 `description`. It keeps every other frontmatter key, so Claude Code fields such as `paths` keep working. Contract and
 skill updates share the lock, so commit one update before starting the other.
 
-Updates arrive as pull requests you review. Nothing updates in the background, and `tenet check` never reads
-`.tenet.lock`.
+Updates arrive as pull requests you review, and nothing updates in the background. `tenet check` reads only the lock's
+[`projects`](./cli.md#discovery) list, never its releases or hashes.
