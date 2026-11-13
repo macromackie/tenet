@@ -137,26 +137,33 @@ assessment, adds a `failure` object:
 
 `retryable` says whether rerunning the same check may answer the request:
 
-| Kind               | Cause                                                                                                 | Retryable |
-| ------------------ | ----------------------------------------------------------------------------------------------------- | --------- |
-| `timeout`          | The request used its 15-second budget, or the provider answered HTTP 408                              | yes       |
-| `connection`       | No connection was made, the TLS handshake failed (not retryable), or the exchange broke off           | yes       |
-| `rate_limited`     | HTTP 429, or a rate limit that outlasts the request's 15-second budget                                | yes       |
-| `server_error`     | HTTP 500, 502, 503, 504, 520, 522, or 524                                                             | yes       |
-| `invalid_response` | The answer failed validation on every attempt, or exceeded 64 KiB (not retryable)                     | yes       |
-| `moderation`       | HTTP 403 whose body names moderation reasons; only that request is refused                            | no        |
-| `interrupted`      | HTTP 499                                                                                              | no        |
-| `authentication`   | HTTP 401, 402, or a 403 that names no moderation reason: the credential was rejected or hit its limit | no        |
-| `configuration`    | HTTP 404, 405, a redirect, or an answer from another model: the endpoint or model is wrong            | no        |
-| `input_too_large`  | HTTP 413, or the encoded request exceeds 96 KiB                                                       | no        |
-| `invalid_request`  | Any other HTTP status                                                                                 | no        |
-| `unknown`          | A failure raised before any request was sent                                                          | no        |
+| Kind                       | Cause                                                                                       | Retryable |
+| -------------------------- | ------------------------------------------------------------------------------------------- | --------- |
+| `timeout`                  | The request used its 15-second budget, or the provider answered HTTP 408                    | yes       |
+| `connection`               | No connection was made, the TLS handshake failed (not retryable), or the exchange broke off | yes       |
+| `rate_limited`             | HTTP 429, or a rate limit that outlasts the request's 15-second budget                      | yes       |
+| `server_error`             | HTTP 500, 502, 503, 504, 520, 522, or 524                                                   | yes       |
+| `invalid_response`         | The answer failed validation on every attempt, or exceeded 64 KiB (not retryable)           | yes       |
+| `moderation`               | HTTP 403 whose body names moderation reasons; only that request is refused                  | no        |
+| `interrupted`              | HTTP 499                                                                                    | no        |
+| `authentication`           | HTTP 401 or an ordinary 403: the provider rejected the credential                           | no        |
+| `budget_busy`              | OpenRouter funds are temporarily committed to other requests                                | yes       |
+| `insufficient_credits`     | Available provider credits cannot cover this request                                        | no        |
+| `key_budget_exceeded`      | The child key exhausted its provider-enforced spending limit                                | no        |
+| `payment_required`         | HTTP 402 without a recognized budget source                                                 | no        |
+| `spending_budget_exceeded` | A configured workspace or guardrail spending budget is exhausted                            | no        |
+| `configuration`            | HTTP 404, 405, a redirect, or an answer from another model: the endpoint or model is wrong  | no        |
+| `input_too_large`          | HTTP 413, or the encoded request exceeds 96 KiB                                             | no        |
+| `invalid_request`          | Any other HTTP status                                                                       | no        |
+| `unknown`                  | A failure raised before any request was sent                                                | no        |
 
 The provider adapter's retry table decides `retryable`.
-An `authentication` or `configuration` failure stops the check at once, because every other request would fail too.
+An `authentication`, `configuration`, or permanent payment failure stops the check at once and explains the limiting budget.
 It exits 2 like other fatal errors and appends no revision. JSONL also writes one line to stderr for each failed request, naming the
 contract, the file or combined assessment, the kind, and whether it is retryable. A fatal error appears both as the
 `error` event and on stderr. A `moderation` failure fails only its own request, and the check goes on.
+Temporary `budget_busy` failures use the existing retry deadline. They never permanently reject the shared credential.
+Tenet never obtains a replacement key or repeats your command automatically after a payment refusal.
 
 Answers are cached when they arrive, and a failed request caches nothing. Rerunning the check therefore sends only the
 failed requests, plus any whose input changed; `check --dry-run` predicts them. A `--snapshot` check keeps no answers,

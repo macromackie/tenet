@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.15.0
+
+- OpenRouter payment and allowance failures now identify insufficient credits, a spent key, a configured spending limit,
+  and temporary budget contention. Authentication failures remain separate. The JSON failure kind names each cause,
+  and checks retain incomplete work for a later rerun. No command is automatically repeated after a permanent refusal.
+- Update rustix to 1.1.6 for RUSTSEC-2026-0486.
+- Library callers must handle the new `FailureKind` variants when matching exhaustively.
+
 ## v0.14.0
 
 - `contracts outdated` reports an installed `CONTRACT.md` as `adapted` when it differs from its release only in a final

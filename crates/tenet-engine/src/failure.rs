@@ -15,9 +15,11 @@ pub trait ClassifyRequest: Failure {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureKind {
-    /// HTTP 401, 402, or 403: the provider rejected the credential, or the key reached its limit,
+    /// HTTP 401 or ordinary 403: the provider rejected the credential,
     /// so every request would fail and the check stops.
     Authentication,
+    /// Provider funds are temporarily committed to other requests.
+    BudgetBusy,
     /// HTTP 404, 405, a redirect, or an answer from another model: the endpoint or model does not
     /// exist, so every request would fail and the check stops.
     Configuration,
@@ -25,18 +27,26 @@ pub enum FailureKind {
     Connection,
     /// HTTP 413, or a request larger than the provider's adapter sends.
     InputTooLarge,
+    /// Available credits cannot cover the attempted request.
+    InsufficientCredits,
     /// HTTP 499: the connection closed before the provider answered.
     Interrupted,
     /// Any other HTTP status the provider refused the request with.
     InvalidRequest,
     /// The provider's answer failed validation, or exceeded the size the adapter accepts.
     InvalidResponse,
+    /// The child credential has reached its spending limit.
+    KeyBudgetExceeded,
     /// HTTP 403 with a body that names moderation reasons: only this request is refused.
     Moderation,
+    /// The provider refused payment without a recognized budget source.
+    PaymentRequired,
     /// HTTP 429.
     RateLimited,
     /// HTTP 5xx.
     ServerError,
+    /// A configured provider spending budget blocks the credential.
+    SpendingBudgetExceeded,
     /// The request used its whole time budget, or the provider answered HTTP 408.
     Timeout,
     /// A failure the provider's adapter does not recognize.
@@ -55,6 +65,11 @@ impl FailureKind {
             Self::Interrupted => "interrupted",
             Self::ServerError => "server_error",
             Self::Authentication => "authentication",
+            Self::BudgetBusy => "budget_busy",
+            Self::InsufficientCredits => "insufficient_credits",
+            Self::KeyBudgetExceeded => "key_budget_exceeded",
+            Self::PaymentRequired => "payment_required",
+            Self::SpendingBudgetExceeded => "spending_budget_exceeded",
             Self::Configuration => "configuration",
             Self::InputTooLarge => "input_too_large",
             Self::InvalidRequest => "invalid_request",
@@ -84,7 +99,28 @@ impl RequestFailure {
     pub(crate) const fn explain_stop(self) -> Option<&'static str> {
         match self.kind {
             FailureKind::Authentication => {
-                Some("the provider refused the request: credential rejected or key limit reached")
+                Some("the provider refused the request: credential rejected")
+            },
+            FailureKind::KeyBudgetExceeded => {
+                Some(
+                    "the review key exhausted its budget; check its allowance and wait for a \
+                     reset or ask its owner to raise the limit",
+                )
+            },
+            FailureKind::InsufficientCredits => {
+                Some(
+                    "available provider credits cannot cover this request; reduce its size or \
+                     fund the account",
+                )
+            },
+            FailureKind::SpendingBudgetExceeded => {
+                Some(
+                    "a provider spending budget is exhausted; wait for reset or ask its \
+                     administrator",
+                )
+            },
+            FailureKind::PaymentRequired => {
+                Some("the provider refused payment without identifying the exhausted budget")
             },
             FailureKind::Configuration => {
                 Some("the provider has no such endpoint or model; check --endpoint and --model")

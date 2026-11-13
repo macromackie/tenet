@@ -69,6 +69,11 @@ const fn classify_request(error: &RequestError) -> RequestFailure {
         JevFailure::Unavailable => FailureKind::ServerError,
         JevFailure::Moderation => FailureKind::Moderation,
         JevFailure::CredentialRejected => FailureKind::Authentication,
+        JevFailure::BudgetBusy => FailureKind::BudgetBusy,
+        JevFailure::InsufficientCredits => FailureKind::InsufficientCredits,
+        JevFailure::KeyBudgetExceeded => FailureKind::KeyBudgetExceeded,
+        JevFailure::PaymentRequired => FailureKind::PaymentRequired,
+        JevFailure::SpendingBudgetExceeded => FailureKind::SpendingBudgetExceeded,
         JevFailure::ModelMismatch => FailureKind::Configuration,
         JevFailure::InvalidResponse | JevFailure::ResponseTooLarge => FailureKind::InvalidResponse,
         JevFailure::Rejected => {

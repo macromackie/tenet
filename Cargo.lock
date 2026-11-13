@@ -398,8 +398,8 @@ dependencies = [
 
 [[package]]
 name = "ev-grep-core"
-version = "0.8.2"
-source = "git+https://github.com/macromackie/ev-grep?rev=c2bd87d6c1681c8ff5a0cc27dbc46a7aea79c1e6#c2bd87d6c1681c8ff5a0cc27dbc46a7aea79c1e6"
+version = "0.9.0"
+source = "git+https://github.com/macromackie/ev-grep?rev=632d7245bf8deeb23f518a9aae1a79a1605fe694#632d7245bf8deeb23f518a9aae1a79a1605fe694"
 dependencies = [
  "futures-util",
  "ignore",
@@ -411,8 +411,8 @@ dependencies = [
 
 [[package]]
 name = "ev-grep-jev"
-version = "0.8.2"
-source = "git+https://github.com/macromackie/ev-grep?rev=c2bd87d6c1681c8ff5a0cc27dbc46a7aea79c1e6#c2bd87d6c1681c8ff5a0cc27dbc46a7aea79c1e6"
+version = "0.9.0"
+source = "git+https://github.com/macromackie/ev-grep?rev=632d7245bf8deeb23f518a9aae1a79a1605fe694#632d7245bf8deeb23f518a9aae1a79a1605fe694"
 dependencies = [
  "ev-grep-core",
  "fastrand",
@@ -1135,9 +1135,9 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rustix"
-version = "1.1.5"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags",
  "errno",
@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "tenet"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "annotate-snippets",
  "anyhow",
@@ -1476,7 +1476,7 @@ dependencies = [
 
 [[package]]
 name = "tenet-contracts"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "blake3",
  "globset",
@@ -1489,7 +1489,7 @@ dependencies = [
 
 [[package]]
 name = "tenet-engine"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "blake3",
