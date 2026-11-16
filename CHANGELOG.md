@@ -1,6 +1,8 @@
 # Changelog
 
-## v0.16.0
+## v0.16.1
+
+- Release automation runs version parsing with pinned Python 3.14.7 on native GitHub runners.
 
 - Checks default to Jev 1.14 for both providers. `--model` and `TENET_MODEL` can still select the supported Jev 1.13
   revision explicitly. Existing answers from a different model are reassessed.
