@@ -50,12 +50,13 @@ impl EvidencePacket<'_> {
         });
         let mut omitted = Vec::new();
         let patched = !change.patch.is_empty();
+        let limit_bytes = self.plan.read_input_limit_bytes();
         let excerpt = self.plan.excerpts.get(&change.path);
         for (part, present) in [
             (Omitted::Before, change.before.is_some() && patched),
             (Omitted::Contents, change.after.is_some() && patched),
         ] {
-            if !present || serde_json::to_vec(&state)?.len() <= crate::MAX_FILE_BYTES {
+            if !present || serde_json::to_vec(&state)?.len() <= limit_bytes {
                 continue;
             }
             let too_large = change::describe_omitted("too large; judge from the patch");
@@ -67,7 +68,7 @@ impl EvidencePacket<'_> {
                     if let Some(named) = excerpt {
                         let placeholder =
                             mem::replace(&mut state["files"][0]["contents"], named.contents()?);
-                        if serde_json::to_vec(&state)?.len() > crate::MAX_FILE_BYTES {
+                        if serde_json::to_vec(&state)?.len() > limit_bytes {
                             state["files"][0]["contents"] = placeholder;
                         }
                     }
@@ -76,8 +77,9 @@ impl EvidencePacket<'_> {
             omitted.push(part);
         }
         change::check_size(
-            "file input with only its patch",
+            "file assessment input",
             serde_json::to_vec(&state)?.len(),
+            limit_bytes,
         )?;
         Ok((state, omitted))
     }

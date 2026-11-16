@@ -6,7 +6,7 @@
 "jobs":
   "rust":
     "name": "Rust"
-    "runs-on": "namespace-profile-public-linux"
+    "runs-on": "ubuntu-22.04"
     "steps":
       - "uses": "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803" # v6.1.0
         "with":
@@ -35,9 +35,6 @@
           shasum -a 256 --check .checks/package-boundaries/SHA256SUMS
           uv run --locked --script .checks/package-boundaries/check-package-boundaries.py --root . --config package-boundaries.json
       - "run": "rustup show"
-      - "uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0" # v2.9.3
-        "with":
-          "cache-directories": "~/.cargo/advisory-dbs"
       - "uses": "jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c" # v4.3.0
         "with":
           "cache": false

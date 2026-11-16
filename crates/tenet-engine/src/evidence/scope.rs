@@ -53,7 +53,7 @@ impl<'plan> Scope<'plan> {
     pub(crate) fn summarize(&self, plan: &Plan, input_bytes: usize) -> ContextSummary {
         ContextSummary {
             input_bytes,
-            limit_bytes: ev_grep_core::MAX_FILE_BYTES,
+            limit_bytes: plan.read_input_limit_bytes(),
             included_files: self.selected.len() + self.support.len(),
             selected_files: self.selected.iter().map(|path| (*path).clone()).collect(),
             support_files: self.support.iter().map(|path| (*path).clone()).collect(),

@@ -214,6 +214,7 @@ pub fn plan(root: &Path, selection: &Selection) -> Result<Plan, DiscoveryError> 
         base: changes.map(|listed| listed.base),
         head,
         mode,
+        context_profile: crate::ContextProfile::default(),
         inventory: discovered,
         candidate_files: candidates,
         selected_paths: selectors,

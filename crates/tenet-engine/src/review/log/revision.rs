@@ -24,6 +24,12 @@ pub struct Revision {
     pub paths: Vec<PathBuf>,
     pub contract: Option<String>,
     pub context: Vec<crate::SpanRequest>,
+    /// Maximum contracts sharing a file request; older revisions used isolated requests.
+    #[serde(default = "read_standard_contract_batch_size")]
+    pub contract_batch_size: usize,
+    /// Admission policy used by the captured selection; older revisions used Standard.
+    #[serde(default)]
+    pub context_profile: crate::ContextProfile,
     pub mode: Mode,
     pub base_oid: Option<String>,
     pub head_oid: Option<String>,
@@ -37,6 +43,10 @@ pub struct Revision {
     /// assessment instead.
     #[serde(default)]
     pub files: Vec<CapturedFile>,
+}
+
+const fn read_standard_contract_batch_size() -> usize {
+    1
 }
 
 impl Revision {

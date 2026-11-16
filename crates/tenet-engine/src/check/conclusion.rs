@@ -13,6 +13,7 @@ use super::{
 use crate::{
     CheckResult,
     ClassifyRequest,
+    CombinedStatus,
     ConclusionReason,
     ContractResult,
     ContractStatus,
@@ -82,7 +83,11 @@ impl Completion<'_> {
             id: "match",
             query: &query,
         }];
-        let key = Answers::derive_key(&questions, &context.state);
+        let key = Answers::derive_profile_key(
+            self.evidence.plan.context_profile,
+            &questions,
+            &context.state,
+        );
         let cached = self
             .answers
             .read(&key)
@@ -207,6 +212,7 @@ impl Completion<'_> {
             },
         };
         let mut result = decision::decide(self, status, reason_code, &reason);
+        result.combined_status = Some(CombinedStatus::Answered);
         result.violation = Some(crate::estimate_violation(&assessment));
         result.evidence_hash = Some(context.hash);
         result.context = Some(context.summary);

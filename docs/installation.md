@@ -7,7 +7,7 @@ curl -fsSL https://tenet-contracts.com/install.sh | bash
 tenet --version
 ```
 
-To pin a release, use its path, such as `/v0.15.0/install.sh`.
+To pin a release, use its path, such as `/v0.16.0/install.sh`.
 Archives and SHA-256 checksums are also available on [GitHub Releases](https://github.com/macromackie/tenet/releases).
 
 To build from a source checkout:
@@ -32,13 +32,19 @@ tenet check --provider typesafe
 
 Tenet uses the same provider adapter as ev-grep. Supported model IDs are pinned:
 
-| Provider     | Model                        |
-| ------------ | ---------------------------- |
-| `openrouter` | `typesafe/jev-1.13-20260917` |
-| `typesafe`   | `jev-1.13.0`                 |
+| Provider     | Default model                | Other supported model        |
+| ------------ | ---------------------------- | ---------------------------- |
+| `openrouter` | `typesafe/jev-1.14-20261014` | `typesafe/jev-1.13-20260917` |
+| `typesafe`   | `jev-1.14.0`                 | `jev-1.13.0`                 |
 
 `--provider` and `--model` override `TENET_PROVIDER` and `TENET_MODEL`, then the defaults.
 Credentials come from the provider's environment variable. File contents are sent to that provider.
+
+Select a pinned model explicitly when a review or comparison needs it:
+
+```sh
+tenet check --model typesafe/jev-1.14-20261014
+```
 
 ## Provider proxy
 

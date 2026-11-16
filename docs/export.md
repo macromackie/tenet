@@ -8,7 +8,7 @@ tenet export src/storage/query.ts --contract database-failures \
   --context src/storage/caller.ts --base origin/main > evidence.json
 ```
 
-The command accepts the same paths, `--contract`, `--context`, `--base`, `--snapshot`, and `--patch` selection
+The command accepts the same paths, `--contract`, `--context`, `--context-profile`, `--base`, `--snapshot`, and `--patch` selection
 as [`tenet check`](./cli.md). Output is always JSON; it has no `--json`, provider, or model option.
 `--context` supplies supporting source without broadening the requested contract scope.
 A `--context PATH:START-END` range is recorded in `excerpts`; the packet still holds the file's complete source, so
@@ -19,16 +19,17 @@ its hashes identify the file.
 The packet has `version: 2`, `kind: "tenet_evidence"`, and `hash_algorithm: "blake3"`.
 Its main fields describe different parts of the review:
 
-| Fields                                              | Meaning                                                                                                     |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `mode`, `base`, `head`, `assumption`                | Full or diff mode, available Git revisions, and the compliant-base assumption for a diff                    |
-| `selected_paths`, `selected_files`, `support_files` | Requested selectors, selected subjects, and explicit context                                                |
-| `excerpts`                                          | Each support file named with [line ranges](./reviews.md#add-context), mapped to its merged inclusive ranges |
-| `inventory`                                         | Discovered paths that the exported contracts govern                                                         |
-| `contract_changes`                                  | Changed contract paths in a diff                                                                            |
-| `contracts`                                         | Complete documents, identities, scopes, and selection information                                           |
-| `sources`                                           | Captured before/after source, keyed by repository-relative path                                             |
-| `limits`                                            | `source_bytes`, `capture_bytes`, and `packet_bytes` bounds                                                  |
+| Fields                                              | Meaning                                                                                                                        |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `mode`, `base`, `head`, `assumption`                | Full or diff mode, available Git revisions, and the compliant-base assumption for a diff                                       |
+| `context_profile`                                   | Selected `standard` or `long` context profile                                                                                  |
+| `selected_paths`, `selected_files`, `support_files` | Requested selectors, selected subjects, and explicit context                                                                   |
+| `excerpts`                                          | Each support file named with [line ranges](./reviews.md#add-context), mapped to its merged inclusive ranges                    |
+| `inventory`                                         | Discovered paths that the exported contracts govern                                                                            |
+| `contract_changes`                                  | Changed contract paths in a diff                                                                                               |
+| `contracts`                                         | Complete documents, identities, scopes, and selection information                                                              |
+| `sources`                                           | Captured before/after source, keyed by repository-relative path                                                                |
+| `limits`                                            | `source_bytes`: selected assessment input bound; `capture_bytes`: retained capture bound; `packet_bytes`: encoded export bound |
 
 Each contract contains its `name`, `path`, `scope`, complete `document`, and document `hash`. The document preserves
 the original Markdown, including any legacy `tenet:` evaluation fences. Unlike model input prepared by `tenet check`,
@@ -58,8 +59,13 @@ its own inputs. Tenet does not import or replay evidence packets.
 ## Bounds and errors
 
 The default packet limit is 1 MiB. `--max-bytes N` accepts 1 through 67,108,864 bytes (64 MiB) and limits the
-complete encoded JSON plus its trailing newline. Existing supplementary-context limits also apply; raising the packet
-limit does not raise them.
+complete encoded JSON plus its trailing newline. Export retains complete supporting context within this bound, even
+when it exceeds the selected model evidence bound.
+Use `--context-profile long` to record the larger [evidence profile](./limits.md) for assessment planning.
+The packet records that choice. Its packet and capture bounds remain separate, and exporting does not establish
+that a later model request will fit or receive a reliable answer.
+The legacy field `limits.source_bytes` reports the selected assessment input bound. It is not the number of source
+bytes in the packet or a separate cap on an exported file's complete source.
 
 Capture has a separate fixed 64 MiB bound, shared by checks, dry runs, and exports. It counts serialized contract
 data and original documents, plus each distinct source record including its path, before/after contents, patch, or

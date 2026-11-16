@@ -1,11 +1,13 @@
+mod evidence;
+
 use alloc::collections::BTreeMap;
 
+pub(super) use evidence::{format_combined, format_hunks};
 use tenet_engine::{
     ContextSummary,
     ContractState,
     ContractStatus,
     Coverage,
-    MAX_FILE_BYTES,
     Omitted,
     Outcome,
     Pending,
@@ -192,8 +194,8 @@ pub(super) fn format_omitted(omitted: &[Omitted]) -> String {
 
 /// The combined input's size and what was left out to fit the limit.
 pub(super) fn format_context(context: &ContextSummary) -> String {
-    let mut text = format!("{} of {MAX_FILE_BYTES} bytes", context.input_bytes);
-    if context.input_bytes > MAX_FILE_BYTES {
+    let mut text = format!("{} of {} bytes", context.input_bytes, context.limit_bytes);
+    if !context.is_fitting() {
         text.push_str(", too large; file checks only");
     }
     let mut omitted = Vec::new();

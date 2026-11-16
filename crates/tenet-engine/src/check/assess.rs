@@ -1,11 +1,16 @@
+mod error;
+mod hunks;
+
 use core::cell::Cell;
 use std::{path::Path, time::Instant};
 
+use error::{FileError, Halt, set_file_error};
 use ev_grep_core::{Evaluator, Outcome};
 use tenet_contracts::Contract;
 
 use super::CheckError;
 use crate::{
+    Change,
     CheckResult,
     ClassifyRequest,
     Event,
@@ -13,36 +18,56 @@ use crate::{
     Stage,
     Status,
     evidence::{InputError, hash_content},
-    report::Causes,
-    review::{Answers, StoreError},
+    review::Answers,
     telemetry::{self, Request},
 };
 
-/// Why one file's check produced no answer; its result reports it.
-#[derive(Debug, thiserror::Error)]
-enum FileError<RequestError> {
-    #[error(transparent)]
-    Cache(#[from] StoreError),
-    #[error(transparent)]
-    Encode(#[from] serde_json::Error),
-    #[error(transparent)]
-    Input(#[from] InputError),
-    #[error("missing {0:?} answer")]
-    MissingAnswer(&'static str),
-    #[error(transparent)]
-    Request(RequestError),
-}
-
-/// Why judging a file ended early: a failure of the file's own check, or one that ends the check.
-enum Halt<Halted, RequestError> {
-    Check(Halted),
-    File(FileError<RequestError>),
-}
-
-impl<Halted, RequestError> From<FileError<RequestError>> for Halt<Halted, RequestError> {
-    fn from(error: FileError<RequestError>) -> Self {
-        Self::File(error)
+pub(super) fn build_result(
+    contract: &Contract,
+    path: &Path,
+    mode: crate::Mode,
+    input_limit_bytes: usize,
+) -> CheckResult {
+    CheckResult {
+        mode,
+        change_kind: None,
+        previous_path: None,
+        before_hash: None,
+        after_hash: None,
+        contract: contract.name.clone(),
+        contract_path: contract.path.display().to_string(),
+        contract_hash: contract.hash.clone(),
+        path: path.display().to_string(),
+        input_bytes: None,
+        input_limit_bytes,
+        evidence_hash: None,
+        omitted: Vec::new(),
+        hunks: Vec::new(),
+        hunk_summary: None,
+        status: Status::Error,
+        message: contract.message.clone(),
+        reason: None,
+        failure: None,
+        applicability: None,
+        applicability_routing: None,
+        verification: None,
+        verification_routing: None,
+        request: None,
+        shared_request: None,
+        requests: 0,
+        cached: false,
+        elapsed_ms: 0,
     }
+}
+
+pub(super) fn set_change(result: &mut CheckResult, change: &Change) {
+    result.change_kind = Some(change.kind);
+    result.previous_path = change
+        .previous_path
+        .as_ref()
+        .map(|previous| previous.display().to_string());
+    result.before_hash = change.before.as_deref().map(hash_content);
+    result.after_hash = change.after.as_deref().map(hash_content);
 }
 
 #[expect(
@@ -67,11 +92,6 @@ pub(super) struct Context<'plan, Assessor, Emit> {
     clippy::future_not_send,
     reason = "The checker drives this future on one task and never moves it across threads."
 )]
-#[expect(
-    clippy::too_many_lines,
-    reason = "The steps run in one order and share local state; splitting them would add \
-              forwarding functions."
-)]
 pub(super) async fn assess<Assessor, Emit, Halted>(
     context: &Context<'_, Assessor, Emit>,
     path: &Path,
@@ -84,43 +104,19 @@ where
     let started = Instant::now();
     let contract = context.contract;
     let mode = context.evidence.plan.mode;
-    let mut result = CheckResult {
+    let mut result = build_result(
+        contract,
+        path,
         mode,
-        change_kind: None,
-        previous_path: None,
-        before_hash: None,
-        after_hash: None,
-        contract: contract.name.clone(),
-        contract_path: contract.path.display().to_string(),
-        contract_hash: contract.hash.clone(),
-        path: path.display().to_string(),
-        input_bytes: None,
-        omitted: Vec::new(),
-        status: Status::Error,
-        message: contract.message.clone(),
-        reason: None,
-        failure: None,
-        applicability: None,
-        applicability_routing: None,
-        verification: None,
-        verification_routing: None,
-        request: None,
-        cached: false,
-        elapsed_ms: 0,
-    };
+        context.evidence.plan.read_input_limit_bytes(),
+    );
     (context.emit)(Event::CheckStarted {
         contract: contract.name.clone(),
         path: result.path.clone(),
     })?;
     let judged = match context.evidence.change(path) {
         Ok(change) => {
-            result.change_kind = Some(change.kind);
-            result.previous_path = change
-                .previous_path
-                .as_ref()
-                .map(|previous| previous.display().to_string());
-            result.before_hash = change.before.as_deref().map(hash_content);
-            result.after_hash = change.after.as_deref().map(hash_content);
+            set_change(&mut result, change);
             judge(context, change, &mut result).await
         },
         Err(error) => Err(Halt::File(FileError::Input(error.into()))),
@@ -128,42 +124,59 @@ where
     match judged {
         Ok(()) => {},
         Err(Halt::Check(error)) => return Err(error),
-        Err(Halt::File(FileError::Input(error))) => {
-            let (status, reason) = crate::classify_input_status(&error);
-            result.status = status;
-            result.reason = Some(reason);
-        },
-        Err(Halt::File(
-            error @ (FileError::Request(_)
-            | FileError::Encode(_)
-            | FileError::Cache(_)
-            | FileError::MissingAnswer(_)),
-        )) => {
-            result.status = Status::Error;
-            result.reason = Some(Causes(&error).to_string());
-        },
+        Err(Halt::File(error)) => set_file_error(error, &mut result),
     }
     result.elapsed_ms = started.elapsed().as_millis();
     Ok(result)
 }
 
 #[expect(
+    clippy::future_not_send,
+    reason = "The checker drives this future on one task."
+)]
+// jscpd:ignore-start -- duplication -- Rust bounds retain evaluator and cancellation errors.
+async fn judge<Assessor, Emit, Halted>(
+    context: &Context<'_, Assessor, Emit>,
+    change: &Change,
+    result: &mut CheckResult,
+) -> Result<(), Halt<Halted, Assessor::Error>>
+where
+    Assessor: Evaluator<Error: ClassifyRequest>,
+    Emit: Fn(Event) -> Result<(), Halted>,
+    Halted: From<CheckError<Assessor::Error>>,
+    // jscpd:ignore-end
+{
+    let (state, omitted) = match context
+        .evidence
+        .build_file_input(context.contract, &change.path)
+    {
+        Ok(input) => input,
+        Err(InputError::Limit(_))
+            if result.mode == crate::Mode::Diff && change.before != change.after =>
+        {
+            return hunks::assess(context, change, result).await;
+        },
+        Err(error) => return Err(FileError::Input(error).into()),
+    };
+    result.omitted = omitted;
+    judge_input(context, &state, result).await
+}
+
+#[expect(
     clippy::arithmetic_side_effects,
-    reason = "Counts of results, contracts and requests are bounded by the repository's files and \
-              the request budget, far below the integer's limit."
+    reason = "Request counts are bounded by the shared request budget."
 )]
 #[expect(
     clippy::future_not_send,
-    reason = "The checker drives this future on one task and never moves it across threads."
+    reason = "The checker drives this future on one task."
 )]
 #[expect(
     clippy::too_many_lines,
-    reason = "The steps run in one order and share local state; splitting them would add \
-              forwarding functions."
+    reason = "Cache lookup, bounded dispatch and answer routing share one request lifecycle."
 )]
-async fn judge<Assessor, Emit, Halted>(
+async fn judge_input<Assessor, Emit, Halted>(
     context: &Context<'_, Assessor, Emit>,
-    change: &crate::Change,
+    state: &serde_json::Value,
     result: &mut CheckResult,
 ) -> Result<(), Halt<Halted, Assessor::Error>>
 where
@@ -171,11 +184,7 @@ where
     Emit: Fn(Event) -> Result<(), Halted>,
     Halted: From<CheckError<Assessor::Error>>,
 {
-    let (state, omitted) = (context.evidence)
-        .build_file_input(context.contract, &change.path)
-        .map_err(FileError::Input)?;
-    result.input_bytes = Some(serde_json::to_vec(&state).map_err(FileError::Encode)?.len());
-    result.omitted = omitted;
+    result.input_bytes = Some(serde_json::to_vec(state).map_err(FileError::Encode)?.len());
     let relevance = super::prompt::query(Stage::Applicability, result.mode);
     let violation = super::prompt::query(Stage::Verification, result.mode);
     let questions = [
@@ -188,7 +197,8 @@ where
             query: &violation,
         },
     ];
-    let key = Answers::derive_key(&questions, &state);
+    let key = Answers::derive_profile_key(context.evidence.plan.context_profile, &questions, state);
+    result.evidence_hash = Some(key.clone());
     let mut answers = if let Some(answers) = context.answers.read(&key) {
         result.cached = true;
         telemetry::record_cache_hit(Request::File);
@@ -203,13 +213,14 @@ where
         }
         context.requests.set(context.requests.get() + 1);
         context.local_requests.set(context.local_requests.get() + 1);
+        result.requests = 1;
         (context.emit)(Event::StageStarted {
             contract: context.contract.name.clone(),
             path: result.path.clone(),
             stage: Stage::Applicability,
         })
         .map_err(Halt::Check)?;
-        let batch = match context.evaluator.assess_questions(&questions, &state).await {
+        let batch = match context.evaluator.assess_questions(&questions, state).await {
             Ok(batch) => batch,
             Err(error) => {
                 let failure = error.classify_request();
@@ -241,19 +252,38 @@ where
     let verification = answers
         .remove("violation")
         .ok_or(FileError::MissingAnswer("violation"))?;
-    let applicability_routing = applicability.route(context.min_confidence);
-    let verification_routing = verification.route(context.min_confidence);
+    apply_answers(
+        context.min_confidence,
+        context.emit,
+        applicability,
+        verification,
+        result,
+    )
+    .map_err(Halt::Check)
+}
+
+pub(super) fn apply_answers<Emit, Halted>(
+    min_confidence: f64,
+    emit: &Emit,
+    applicability: ev_grep_core::Assessment,
+    verification: ev_grep_core::Assessment,
+    result: &mut CheckResult,
+) -> Result<(), Halted>
+where
+    Emit: Fn(Event) -> Result<(), Halted>,
+{
+    let applicability_routing = applicability.route(min_confidence);
+    let verification_routing = verification.route(min_confidence);
     for (stage, routing) in [
         (Stage::Applicability, &applicability_routing),
         (Stage::Verification, &verification_routing),
     ] {
-        (context.emit)(Event::StageCompleted {
-            contract: context.contract.name.clone(),
+        emit(Event::StageCompleted {
+            contract: result.contract.clone(),
             path: result.path.clone(),
             stage,
             outcome: routing.outcome,
-        })
-        .map_err(Halt::Check)?;
+        })?;
     }
     result.status = match verification_routing.outcome {
         Outcome::Match => Status::Fail,

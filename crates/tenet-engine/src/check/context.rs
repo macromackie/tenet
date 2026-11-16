@@ -9,7 +9,6 @@ use crate::{
     ConclusionReason,
     ContextSummary,
     EvidencePacket,
-    MAX_FILE_BYTES,
     Mode,
     change::describe_omitted,
     evidence::{ChangeError, InputError, Scope},
@@ -48,8 +47,8 @@ pub(super) fn prepare(
         Ok(context) => {
             let reason = format!(
                 "Combined context is {} bytes after leaving out what each patch shows; limit is \
-                 {MAX_FILE_BYTES} bytes.",
-                context.summary.input_bytes
+                 {} bytes.",
+                context.summary.input_bytes, context.summary.limit_bytes,
             );
             Err(Unavailable {
                 context: Some(Box::new(context)),
@@ -161,7 +160,7 @@ fn capture(
                         .is_some_and(|path| patched_paths.contains(Path::new(path)))
             })
             .max_by_key(|file| file["contents"].as_str().map_or(0, str::len));
-        if encoded.len() <= MAX_FILE_BYTES {
+        if encoded.len() <= evidence.plan.read_input_limit_bytes() {
             // Fits as assembled.
         } else if !patched_before.is_empty() {
             for before in patched_before {

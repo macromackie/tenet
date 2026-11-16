@@ -15,6 +15,8 @@ pub struct Summary {
     pub not_applicable: usize,
     /// Execution errors, failed requests included.
     pub errors: usize,
+    /// Execution failures outside provider requests, including failures inside hunk checks.
+    pub execution_errors: usize,
     pub incomplete: usize,
     pub skipped: usize,
     pub requests: usize,
@@ -24,8 +26,8 @@ pub struct Summary {
     pub retryable_failures: usize,
     /// Requests not sent because `--max-requests` was spent; their checks are incomplete.
     pub over_budget: usize,
-    /// Request batches answered from the answer cache, and conclusions `check --no-model` reused,
-    /// instead of the provider.
+    /// Cached file pairs, hunk groups and combined conclusions, plus conclusions
+    /// `check --no-model` reused. Several entries may originate in one physical request.
     pub cached: usize,
     pub attempts: usize,
     pub hedges: usize,
@@ -49,9 +51,18 @@ impl Summary {
                   and the request budget, far below the integer's limit."
     )]
     pub(crate) fn add(&mut self, result: &CheckResult) {
-        self.record_request(result.request.as_ref());
-        self.record_failure(result.failure);
-        self.cached += usize::from(result.cached);
+        if let Some(hunks) = &result.hunk_summary {
+            self.record_work(hunks);
+        } else {
+            self.requests += result.requests;
+            if result.shared_request.is_none() {
+                self.record_request(result.request.as_ref());
+                self.record_failure(result.failure);
+            }
+            self.cached += usize::from(result.cached);
+            self.execution_errors +=
+                usize::from(result.status == Status::Error && result.failure.is_none());
+        }
         match result.status {
             Status::Pass => self.passed += 1,
             Status::Fail => self.failed += 1,
@@ -69,6 +80,7 @@ impl Summary {
                   and the request budget, far below the integer's limit."
     )]
     pub(crate) const fn merge(&mut self, other: &Self) {
+        self.record_work(other);
         self.passed += other.passed;
         self.failed += other.failed;
         self.uncertain += other.uncertain;
@@ -76,15 +88,7 @@ impl Summary {
         self.errors += other.errors;
         self.incomplete += other.incomplete;
         self.skipped += other.skipped;
-        self.requests += other.requests;
-        self.request_failures += other.request_failures;
-        self.retryable_failures += other.retryable_failures;
         self.over_budget += other.over_budget;
-        self.cached += other.cached;
-        self.attempts += other.attempts;
-        self.hedges += other.hedges;
-        self.input_tokens += other.input_tokens;
-        self.output_tokens += other.output_tokens;
         self.contracts_verified += other.contracts_verified;
         self.contracts_clear += other.contracts_clear;
         self.contracts_preserved += other.contracts_preserved;
@@ -112,6 +116,7 @@ impl Summary {
         }
         if conclusion.error.is_some() {
             self.errors += 1;
+            self.execution_errors += usize::from(conclusion.failure.is_none());
         }
     }
 
@@ -120,7 +125,7 @@ impl Summary {
         reason = "Counts of results, contracts and requests are bounded by the repository's files \
                   and the request budget, far below the integer's limit."
     )]
-    fn record_failure(&mut self, failure: Option<crate::RequestFailure>) {
+    pub(crate) fn record_failure(&mut self, failure: Option<crate::RequestFailure>) {
         if let Some(failed) = failure {
             self.request_failures += 1;
             self.retryable_failures += usize::from(failed.retryable());
@@ -132,12 +137,28 @@ impl Summary {
         reason = "The request, attempt and token counts are bounded by the run's request and \
                   token budgets."
     )]
-    const fn record_request(&mut self, request: Option<&ev_grep_core::RequestInfo>) {
+    pub(crate) const fn record_request(&mut self, request: Option<&ev_grep_core::RequestInfo>) {
         if let Some(info) = request {
             self.attempts += info.attempts;
             self.hedges += info.hedges;
             self.input_tokens += info.input_tokens;
             self.output_tokens += info.output_tokens;
         }
+    }
+
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "Request counts and token totals are bounded by the run's budgets."
+    )]
+    pub(crate) const fn record_work(&mut self, other: &Self) {
+        self.requests += other.requests;
+        self.execution_errors += other.execution_errors;
+        self.request_failures += other.request_failures;
+        self.retryable_failures += other.retryable_failures;
+        self.cached += other.cached;
+        self.attempts += other.attempts;
+        self.hedges += other.hedges;
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
     }
 }

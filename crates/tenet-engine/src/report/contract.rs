@@ -3,6 +3,18 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// Whether the combined assessment ran, independently of any file finding.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CombinedStatus {
+    Answered,
+    InputUnavailable,
+    NotNeeded,
+    RequestBudget,
+    RequestFailed,
+    TooLarge,
+}
+
 /// The conclusion a contract reaches for one review.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -84,6 +96,8 @@ pub struct ContractResult {
     pub reason: String,
     pub reason_code: ConclusionReason,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub combined_status: Option<CombinedStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<ContextSummary>,
     #[serde(rename = "model_assessment", skip_serializing_if = "Option::is_none")]
     pub assessment: Option<ev_grep_core::Assessment>,
@@ -128,7 +142,7 @@ pub enum ConclusionReason {
     clippy::arbitrary_source_item_ordering,
     reason = "Field order is the serialized key order."
 )]
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContextSummary {
     pub input_bytes: usize,
     pub limit_bytes: usize,
@@ -137,19 +151,19 @@ pub struct ContextSummary {
     pub support_files: Vec<PathBuf>,
     /// Support files supplied as excerpts, and selected files whose excerpt stood in for contents
     /// left out to fit the limit, with the inclusive line ranges supplied.
-    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub excerpts: BTreeMap<PathBuf, Vec<[usize; 2]>>,
     /// Scoped inventory files whose contents were not supplied.
     pub omitted_files: usize,
     /// Prior contents left out of every change to fit the limit; patches remain.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub before_omitted: bool,
     /// Inventory paths summarized as per-directory file counts to fit the limit.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub inventory_counted: bool,
     /// Changed files whose resulting contents were left out to fit the limit; patches and any
     /// excerpts remain.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contents_omitted: Vec<PathBuf>,
 }
 

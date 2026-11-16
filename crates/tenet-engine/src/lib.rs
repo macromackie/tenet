@@ -21,6 +21,7 @@ pub use change::{
     ChangeKind,
     Excerpt,
     ExcerptError,
+    HunkRange,
     InputLimit,
     MAX_CAPTURE_BYTES,
     Mode,
@@ -28,7 +29,16 @@ pub use change::{
     Unreadable,
     format_line_ranges,
 };
-pub use check::{CheckError, Options, Prediction, PredictionError, apply_review, estimate, run};
+pub use check::{
+    CheckError,
+    Options,
+    Prediction,
+    PredictionError,
+    apply_review,
+    estimate,
+    estimate_with_measure,
+    run,
+};
 pub use discovery::{
     Coverage,
     DiscoveryError,
@@ -42,6 +52,7 @@ pub use discovery::{
 pub use ev_grep_core::{
     Assessment,
     Candidate,
+    ContextProfile,
     DecisionBatch,
     Evaluator,
     MAX_FILE_BYTES,
@@ -54,6 +65,7 @@ pub use evidence::{
     ChangeError,
     EvidenceError,
     EvidencePacket,
+    HunkInput,
     InputError,
     classify_input_status,
 };
@@ -61,8 +73,10 @@ pub use failure::{ClassifyRequest, FailureKind, RequestFailure};
 pub use git::GitError;
 pub use plan::{ContextError, SpanError, SpanRequest};
 pub use report::{
+    Answer,
     Causes,
     CheckResult,
+    CombinedStatus,
     ConclusionReason,
     ContextSummary,
     ContractResult,
@@ -70,6 +84,7 @@ pub use report::{
     ContractStatus,
     EVENTS_VERSION,
     Event,
+    HunkResult,
     Omitted,
     Pending,
     RequestedScope,

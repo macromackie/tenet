@@ -104,6 +104,16 @@ impl<'check> Reporter<'check> {
     pub(crate) fn emit(&mut self, event: Event) -> Result<(), CommandError> {
         self.track(&event);
         let unanswered = match &event {
+            Event::HunkResult {
+                contract,
+                path,
+                result,
+                ..
+            } => {
+                result
+                    .failure
+                    .map(|failure| (contract, path.as_str(), failure, &result.reason))
+            },
             Event::Result { result } => {
                 result.failure.map(|failure| {
                     (
@@ -125,8 +135,19 @@ impl<'check> Reporter<'check> {
             },
             _ => None,
         };
-        if let Some((_, _, failure, _)) = unanswered {
+        let shared_result =
+            matches!(&event, Event::Result { result } if result.shared_request.is_some());
+        if let Some((_, _, failure, _)) = unanswered
+            && !shared_result
+        {
             telemetry::record_request_failed(failure);
+        }
+        if let Event::FileBatchCompleted {
+            failure: Some(failure),
+            ..
+        } = &event
+        {
+            telemetry::record_request_failed(*failure);
         }
         if self.kind == ReporterKind::Jsonl {
             let failed = unanswered.map(|(contract, subject, request, message)| {
@@ -156,6 +177,9 @@ impl<'check> Reporter<'check> {
             | Event::Error { .. } => true,
             Event::Begin { .. }
             | Event::CheckStarted { .. }
+            | Event::FileBatchStarted { .. }
+            | Event::FileBatchCompleted { .. }
+            | Event::HunkResult { .. }
             | Event::Result { .. }
             | Event::StageCompleted { .. }
             | Event::StageStarted { .. }
@@ -168,6 +192,9 @@ impl<'check> Reporter<'check> {
             | Event::Summary { .. }
             | Event::Error { .. } => true,
             Event::CheckStarted { .. }
+            | Event::FileBatchStarted { .. }
+            | Event::FileBatchCompleted { .. }
+            | Event::HunkResult { .. }
             | Event::ContractStarted { .. }
             | Event::Result { .. }
             | Event::StageCompleted { .. }

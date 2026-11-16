@@ -1,6 +1,7 @@
 mod capture;
 mod export;
 mod file;
+mod hunks;
 mod identity;
 mod record;
 mod scope;
@@ -8,6 +9,7 @@ mod scope;
 use alloc::{collections::BTreeMap, sync::Arc};
 use std::{io, path::PathBuf};
 
+pub use hunks::HunkInput;
 pub use record::{CapturedFile, Role, ScopedFile};
 pub(crate) use scope::Scope;
 

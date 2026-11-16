@@ -125,7 +125,7 @@ impl Checked {
     pub fn summarize_overall(&self) -> OverallStatus {
         if self.summary.cancelled {
             OverallStatus::Cancelled
-        } else if self.summary.errors > self.summary.request_failures {
+        } else if self.summary.execution_errors > 0 {
             OverallStatus::Error
         } else {
             summarize_overall(self.contracts.iter().map(|contract| &contract.state))
@@ -137,6 +137,8 @@ impl Checked {
 #[derive(Debug)]
 pub struct CheckRequest<'plan> {
     pub context: &'plan [crate::SpanRequest],
+    /// Maximum contracts sharing a file request, retained in suggested follow-up commands.
+    pub contract_batch_size: usize,
     /// The confidence below which answers were routed to unresolved; absent without a model.
     pub min_confidence: Option<f64>,
     /// The provider and model that answered; absent for `check --no-model`.

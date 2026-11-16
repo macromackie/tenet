@@ -2,6 +2,7 @@ use alloc::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tenet_engine::{
+    ContextProfile,
     ContractState,
     MIN_CONFIDENCE,
     Pending,
@@ -73,7 +74,7 @@ pub(super) fn format_row_name(current: &Current<'_>, entry: &CurrentContract<'_>
     if rows > 1 {
         for path in &entry.selection.paths {
             name.push(' ');
-            name.push_str(&path.display().to_string());
+            name.push_str(&quote_argument(&path.display().to_string()));
         }
     }
     name
@@ -130,23 +131,49 @@ pub(super) fn format_span_text(span: &review::Span) -> String {
 )]
 pub(super) fn check_command(revision: &Revision, contract: Option<&str>) -> String {
     let mut command = String::from("tenet check");
-    for path in &revision.paths {
-        command.push(' ');
-        command.push_str(&path.display().to_string());
+    if revision.contract_batch_size > 1 {
+        command.push_str(" --contract-batch-size ");
+        command.push_str(&revision.contract_batch_size.to_string());
+    }
+    if revision.context_profile == ContextProfile::Long {
+        command.push_str(" --context-profile long");
     }
     if let Some(base) = &revision.base_oid {
         command.push_str(" --base ");
-        command.push_str(base);
+        command.push_str(&quote_argument(base));
     }
     if let Some(contract) = contract {
         command.push_str(" --contract ");
-        command.push_str(contract);
+        command.push_str(&quote_argument(contract));
+    }
+    if let Some(threshold) = revision.min_confidence {
+        command.push_str(" --min-confidence ");
+        command.push_str(&threshold.to_string());
     }
     for request in &revision.context {
         command.push_str(" --context ");
-        command.push_str(&request.to_string());
+        command.push_str(&quote_argument(&request.to_string()));
+    }
+    if !revision.paths.is_empty() {
+        command.push_str(" --");
+        for path in &revision.paths {
+            command.push(' ');
+            command.push_str(&quote_argument(&path.display().to_string()));
+        }
     }
     command
+}
+
+fn quote_argument(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "_-./:".contains(character))
+    {
+        value.to_owned()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
 }
 
 #[expect(

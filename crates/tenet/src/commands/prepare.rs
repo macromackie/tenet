@@ -1,6 +1,6 @@
 use std::{io::Write as _, path::Path};
 
-use tenet_engine::{Exclusion, PreparedSnapshot, Selection};
+use tenet_engine::{ContextError, Exclusion, PreparedSnapshot, Selection};
 
 use crate::{cli::Input, error::CommandError, output};
 
@@ -27,8 +27,15 @@ pub(super) fn prepare(
         },
         contract: input.contract.clone(),
     };
-    let plan = tenet_engine::plan(root, &selection)?.with_context(&input.context)?;
-    plan.admit_context()?;
+    let plan = tenet_engine::plan(root, &selection)?
+        .with_context_profile(input.context_profile.read_profile())
+        .with_context(&input.context)?;
+    match plan.admit_context() {
+        // Size is an assessment coverage limit: retain complete context so the ordinary file
+        // and combined checks can leave it pending for manual review.
+        Ok(()) | Err(ContextError::TooLarge { .. }) => {},
+        Err(error) => return Err(error.into()),
+    }
     for excluded in &plan.excluded_paths {
         let reason = match excluded.reason {
             Exclusion::NotDiscovered => {

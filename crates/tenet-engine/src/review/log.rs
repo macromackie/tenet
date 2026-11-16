@@ -9,9 +9,13 @@ pub(super) use parsing::{add_files, parse};
 pub use revision::Revision;
 use serde::{Deserialize, Serialize};
 
+pub use crate::Answer;
 use crate::{
+    CombinedStatus,
     ConclusionReason,
+    ContextSummary,
     ContractStatus,
+    HunkResult,
     Omitted,
     RequestedScope,
     Status,
@@ -87,13 +91,14 @@ pub struct Conclusion {
     pub answer: Option<Answer>,
     pub error: Option<String>,
     pub conflicting_files: Vec<String>,
-}
-
-/// A model's raw choice and its confidence in it.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-pub struct Answer {
-    pub choice: ev_grep_core::Outcome,
-    pub confidence: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combined_status: Option<CombinedStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<crate::RequestFailure>,
 }
 
 /// One file's assessment in a recorded revision.
@@ -101,14 +106,22 @@ pub struct Answer {
     clippy::arbitrary_source_item_ordering,
     reason = "Field order is the serialized key order."
 )]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FileResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_request: Option<String>,
     pub path: String,
     pub status: Status,
     /// The model's probability that this file violates the contract.
     pub violation: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<crate::RequestFailure>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub omitted: Vec<Omitted>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hunks: Vec<HunkResult>,
 }
 
 #[expect(

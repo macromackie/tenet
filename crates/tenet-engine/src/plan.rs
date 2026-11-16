@@ -6,10 +6,30 @@ mod span;
 use std::{io, path::PathBuf};
 
 pub(crate) use context::is_source;
-use ev_grep_core::MAX_FILE_BYTES;
 pub use span::{SpanError, SpanRequest};
 
-use crate::change::{ExcerptError, SourceError};
+use crate::{
+    ContextProfile,
+    Plan,
+    change::{ExcerptError, SourceError},
+};
+
+impl Plan {
+    /// The largest encoded file or combined assessment input under this plan's profile.
+    #[must_use]
+    #[inline]
+    pub const fn read_input_limit_bytes(&self) -> usize {
+        self.context_profile.read_max_evidence_bytes()
+    }
+
+    /// Select the provider context profile before adding explicit context or capturing evidence.
+    #[must_use]
+    #[inline]
+    pub const fn with_context_profile(mut self, profile: ContextProfile) -> Self {
+        self.context_profile = profile;
+        self
+    }
+}
 
 /// Why `--context` cannot be supplied or sent.
 #[derive(Debug, thiserror::Error)]
@@ -27,8 +47,8 @@ pub enum ContextError {
     #[error(transparent)]
     Source(#[from] SourceError),
     #[error(
-        "supplementary context is {0:?} bytes as the model receives it; limit is \
-         {MAX_FILE_BYTES:?} bytes; supply only the lines needed with --context PATH:START-END"
+        "supplementary context is {bytes:?} bytes as the model receives it; limit is \
+         {limit_bytes:?} bytes; supply only the lines needed with --context PATH:START-END"
     )]
-    TooLarge(usize),
+    TooLarge { bytes: usize, limit_bytes: usize },
 }

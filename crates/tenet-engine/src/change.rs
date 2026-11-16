@@ -1,5 +1,6 @@
 mod base;
 mod excerpt;
+mod hunks;
 
 use alloc::string::FromUtf8Error;
 use core::num::ParseIntError;
@@ -10,8 +11,8 @@ use std::{
 };
 
 pub(crate) use base::read_before;
-use ev_grep_core::MAX_FILE_BYTES;
 pub use excerpt::{Excerpt, ExcerptError, format_line_ranges};
+pub use hunks::HunkRange;
 use serde::{Deserialize, Serialize};
 use similar::DiffOp;
 
@@ -215,21 +216,27 @@ pub(crate) fn check_capture_size(path: &Path, bytes: u64) -> Result<(), SourceEr
 
 /// A file a check left out because it exceeds the input size limit.
 #[derive(Clone, Copy, Debug, thiserror::Error)]
-#[error("{label:?} is {bytes:?} bytes; limit is {MAX_FILE_BYTES:?} bytes; input was not truncated")]
+#[error("{label:?} is {bytes:?} bytes; limit is {limit_bytes:?} bytes; input was not truncated")]
 pub struct InputLimit {
     bytes: u64,
     label: &'static str,
+    limit_bytes: usize,
 }
 
 #[expect(
     clippy::as_conversions,
     reason = "A usize fits in a u64 on every supported target."
 )]
-pub(crate) const fn check_size(label: &'static str, bytes: usize) -> Result<(), InputLimit> {
-    if bytes > MAX_FILE_BYTES {
+pub(crate) const fn check_size(
+    label: &'static str,
+    bytes: usize,
+    limit_bytes: usize,
+) -> Result<(), InputLimit> {
+    if bytes > limit_bytes {
         return Err(InputLimit {
             bytes: bytes as u64,
             label,
+            limit_bytes,
         });
     }
     Ok(())

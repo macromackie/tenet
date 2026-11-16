@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use tenet_engine::{Event, Stage, Status};
+use tenet_engine::{ContextProfile, Event, Stage, Status};
 
 use super::{ContractProgress, Reporter};
 use crate::{
@@ -37,6 +37,14 @@ impl Reporter<'_> {
                 self.term
                     .write_line(&format!("TENET {}  {}\n", run.version, run.root))?;
                 self.term.write_line(&format!("Mode: {}", run.mode))?;
+                let profile = match run.context_profile {
+                    ContextProfile::Standard => "standard",
+                    ContextProfile::Long => "long",
+                };
+                self.term.write_line(&format!(
+                    "Input limit: {} bytes ({profile} context)",
+                    run.input_limit_bytes
+                ))?;
                 self.diff = run.base.is_some();
                 self.deleted = run.deleted_contracts;
                 self.min_confidence = run.min_confidence;
@@ -60,7 +68,11 @@ impl Reporter<'_> {
                     },
                 ));
             },
-            Event::CheckStarted { .. } | Event::StageCompleted { .. } => {},
+            Event::CheckStarted { .. }
+            | Event::FileBatchStarted { .. }
+            | Event::FileBatchCompleted { .. }
+            | Event::StageCompleted { .. }
+            | Event::HunkResult { .. } => {},
             Event::StageStarted {
                 contract, stage, ..
             } => {

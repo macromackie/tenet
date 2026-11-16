@@ -123,7 +123,12 @@ pub async fn resolve_current<'review>(
     for assessment in standing_assessments.values().flatten() {
         let revision = family_revisions[&assessment.rev];
         let _: Option<&_> = groups
-            .entry((&revision.paths, &revision.contract, &revision.context))
+            .entry((
+                &revision.paths,
+                &revision.contract,
+                &revision.context,
+                revision.context_profile,
+            ))
             .or_insert_with(Group::default)
             .assessed_contracts
             .insert(&assessment.contract, assessment);
@@ -141,7 +146,12 @@ pub async fn resolve_current<'review>(
             .any(|later| later.is_covering(revision))
         {
             groups
-                .entry((&revision.paths, EVERY_CONTRACT, &revision.context))
+                .entry((
+                    &revision.paths,
+                    EVERY_CONTRACT,
+                    &revision.context,
+                    revision.context_profile,
+                ))
                 .or_insert_with(Group::default)
                 .open = Some(revision);
         }
@@ -154,12 +164,12 @@ pub async fn resolve_current<'review>(
             .is_some_and(|list| list.iter().any(|assessment| replaces(assessment, revision)))
     };
     // A contract checked by name leaves the review once no contract has that name.
-    if groups.keys().any(|(_, filter, _)| filter.is_some()) {
+    if groups.keys().any(|(_, filter, ..)| filter.is_some()) {
         let names: BTreeSet<String> = discover_contracts(root)?
             .into_iter()
             .map(|contract| contract.name)
             .collect();
-        groups.retain(|(_, filter, _), _| filter.as_ref().is_none_or(|name| names.contains(name)));
+        groups.retain(|(_, filter, ..), _| filter.as_ref().is_none_or(|name| names.contains(name)));
     }
     groups.retain(|_, group| {
         only.is_none_or(|name| {
@@ -171,13 +181,15 @@ pub async fn resolve_current<'review>(
     let mut contracts = Vec::new();
     let mut deleted_paths = BTreeSet::new();
     let mut unchanged = false;
-    for ((paths, filter, context), group) in groups {
+    for ((paths, filter, context, context_profile), group) in groups {
         let selection = Selection {
             base: latest.base_oid.clone(),
             contract: filter.clone(),
             paths: paths.clone(),
         };
-        let plan = plan(root, &selection)?.with_context(context)?;
+        let plan = plan(root, &selection)?
+            .with_context_profile(context_profile)
+            .with_context(context)?;
         // Every plan compares the same base commit with the same working tree.
         deleted_paths.extend(plan.list_deleted_contracts());
         unchanged = plan.mode == Mode::Diff

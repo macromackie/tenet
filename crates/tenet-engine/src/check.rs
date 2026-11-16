@@ -1,10 +1,12 @@
 mod assess;
+mod batch;
 mod conclusion;
 mod context;
 mod error;
 mod options;
 mod predict;
 mod prompt;
+mod record;
 mod reuse;
 
 use alloc::collections::BTreeMap;
@@ -15,7 +17,7 @@ pub use error::CheckError;
 use ev_grep_core::Evaluator;
 use futures_util::{StreamExt as _, stream};
 pub use options::Options;
-pub use predict::{Prediction, PredictionError, estimate};
+pub use predict::{Prediction, PredictionError, estimate, estimate_with_measure};
 pub use reuse::apply_review;
 use tenet_contracts::Contract;
 use tokio::sync::{Semaphore, SemaphorePermit};
@@ -29,7 +31,7 @@ use crate::{
     Event,
     EvidencePacket,
     Summary,
-    review::{Answer, Checked, Concluded, Conclusion, FileResult, Review},
+    review::{Checked, Review},
     telemetry,
 };
 
@@ -77,10 +79,14 @@ where
     {
         return Err(CheckError::InvalidConfidence.into());
     }
+    if !(1..=64).contains(&options.contract_batch_size) {
+        return Err(CheckError::InvalidBatchSize.into());
+    }
     let plan = evidence.plan;
     let requests = Cell::new(0);
     let slots = Semaphore::new(options.jobs);
-    let shared = Pool {
+    let pool = Pool {
+        batched: None,
         emit,
         evaluator,
         evidence,
@@ -88,6 +94,15 @@ where
         requests: &requests,
         review,
         slots: &slots,
+    };
+    let batched = if options.contract_batch_size > 1 {
+        Some(batch::prepare(&pool).await?)
+    } else {
+        None
+    };
+    let shared = Pool {
+        batched: batched.as_ref(),
+        ..pool
     };
     let borrowed = &shared;
     let mut running = stream::iter(plan.contracts.iter().enumerate())
@@ -99,7 +114,9 @@ where
         .buffer_unordered(options.jobs);
     let mut ready_contracts = BTreeMap::new();
     let mut next = 0;
-    let mut total = Summary::default();
+    let mut total = batched
+        .as_ref()
+        .map_or_else(Summary::default, batch::Prepared::read_work);
     let mut contracts = Vec::new();
     while let Some(result) = running.next().await {
         let (index, assessed) = result?;
@@ -107,43 +124,7 @@ where
         drop(ready_contracts.insert(index, assessed));
         while let Some(ordered) = ready_contracts.remove(&next) {
             let contract = &plan.contracts[next];
-            let settled = &ordered.conclusion;
-            contracts.push(Concluded {
-                carried_from: None,
-                conclusion: Some(Conclusion {
-                    status: settled.status,
-                    reason_code: settled.reason_code,
-                    reason: settled.reason.clone(),
-                    violation: settled.violation,
-                    answer: settled.assessment.as_ref().map(|answer| {
-                        Answer {
-                            choice: answer.choice,
-                            confidence: answer.confidence,
-                        }
-                    }),
-                    error: settled.error.clone(),
-                    conflicting_files: settled.conflicting_files.clone(),
-                }),
-                contract: contract.name.clone(),
-                input: settled.input.clone(),
-                results: ordered
-                    .results
-                    .iter()
-                    .map(|file_result| {
-                        FileResult {
-                            path: file_result.path.clone(),
-                            status: file_result.status,
-                            violation: file_result
-                                .verification
-                                .as_ref()
-                                .map(crate::estimate_violation),
-                            omitted: file_result.omitted.clone(),
-                        }
-                    })
-                    .collect(),
-                scope: settled.scope,
-                state: ordered.state.clone(),
-            });
+            contracts.push(record::build_concluded(&ordered, &contract.name));
             emit(Event::ContractFinished {
                 contract: contract.name.clone(),
                 summary: ordered.summary,
@@ -168,6 +149,7 @@ struct Assessed {
 }
 
 struct Pool<'plan, Assessor, Emit> {
+    batched: Option<&'plan batch::Prepared>,
     emit: &'plan Emit,
     evaluator: &'plan Assessor,
     evidence: &'plan EvidencePacket<'plan>,
@@ -177,11 +159,11 @@ struct Pool<'plan, Assessor, Emit> {
     slots: &'plan Semaphore,
 }
 
-impl<
+impl<Assessor, Emit, Halted> Pool<'_, Assessor, Emit>
+where
     Assessor: Evaluator<Error: ClassifyRequest>,
     Emit: Fn(Event) -> Result<(), Halted>,
     Halted: From<CheckError<Assessor::Error>>,
-> Pool<'_, Assessor, Emit>
 {
     /// Wait in a `tenet.wait` span for one of the check's parallel slots.
     #[expect(
@@ -202,8 +184,15 @@ impl<
         reason = "The steps run in one order and share local state; splitting them would add \
                   forwarding functions."
     )]
+    #[expect(
+        clippy::excessive_nesting,
+        reason = "The isolated and prefetched branches share finalization, while each file future \
+                  retains its permit."
+    )]
     async fn assess_contract(&self, contract: &Contract) -> Result<Assessed, Halted> {
-        let started = Instant::now();
+        let started = self
+            .batched
+            .map_or_else(Instant::now, batch::Prepared::read_started);
         let local_requests = Cell::new(0);
         let refused = Cell::new(0);
         let input = self.evidence.derive_input_key(contract);
@@ -214,11 +203,15 @@ impl<
             .iter()
             .filter(|path| self.evidence.plan.is_governing(contract, path))
             .collect();
-        (self.emit)(Event::ContractStarted {
-            contract: contract.name.clone(),
-            path: contract.path.display().to_string(),
-            total: subjects.len(),
-        })?;
+        if self.batched.is_none() {
+            (self.emit)(Event::ContractStarted {
+                contract: contract.name.clone(),
+                path: contract.path.display().to_string(),
+                total: subjects.len(),
+            })?;
+        }
+        // Source and inventory are already captured; retain serialized contexts only inside
+        // these jobs-bounded contract futures, including when an input exceeds its limit.
         let prepared = context::prepare(self.evidence, contract);
         let context = assess::Context {
             answers: &self.review.answers,
@@ -232,30 +225,40 @@ impl<
             refused: &refused,
             requests: self.requests,
         };
-        let mut running = stream::iter(subjects)
-            .map(async |path| {
-                let span = telemetry::open_pair(&contract.name, path);
-                async {
-                    let permit = self.acquire_slot().await?;
-                    // A buffered failure keeps its permit until the caller can stop queued work.
-                    Ok::<_, Halted>((permit, assess::assess(&context, path).await))
-                }
-                .instrument(span)
-                .await
-            })
-            .buffer_unordered(self.options.jobs);
         let mut summary = Summary::default();
         let mut results = Vec::new();
-        while let Some(completed) = running.next().await {
-            let (_permit, result) = completed?;
-            let outcome = result?;
-            summary.add(&outcome);
-            (self.emit)(Event::Result {
-                result: Box::new(outcome.clone()),
-            })?;
-            results.push(outcome);
+        if let Some(batch) = self.batched {
+            for outcome in batch.read_files(&contract.name) {
+                summary.add(outcome);
+                results.push(outcome.clone());
+            }
+            local_requests.set(summary.requests);
+        } else {
+            let mut running = stream::iter(subjects)
+                .map(async |path| {
+                    let span = telemetry::open_pair(&contract.name, path);
+                    async {
+                        let permit = self.acquire_slot().await?;
+                        // A buffered failure keeps its permit until the caller can stop queued
+                        // work.
+                        Ok::<_, Halted>((permit, assess::assess(&context, path).await))
+                    }
+                    .instrument(span)
+                    .await
+                })
+                .buffer_unordered(self.options.jobs);
+            while let Some(completed) = running.next().await {
+                let (_permit, result) = completed?;
+                let outcome = result?;
+                summary.add(&outcome);
+                (self.emit)(Event::Result {
+                    result: Box::new(outcome.clone()),
+                })?;
+                results.push(outcome);
+            }
         }
         let _permit = self.acquire_slot().await?;
+        results.sort_by(|left, right| left.path.cmp(&right.path));
         let conclusion = conclusion::Completion {
             answers: &self.review.answers,
             contract,

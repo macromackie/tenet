@@ -23,14 +23,17 @@ pub struct RunInfo {
     pub snapshot: Option<String>,
     pub patch_hash: Option<String>,
     pub jobs: usize,
+    pub contract_batch_size: usize,
     pub max_requests: usize,
     pub min_confidence: f64,
+    pub context_profile: crate::ContextProfile,
+    pub input_limit_bytes: usize,
     /// Contract documents the diff deletes; their requirements no longer apply.
     pub deleted_contracts: Vec<PathBuf>,
 }
 
 /// The schema version of `check`'s JSON Lines events, which each event line carries as `version`.
-pub const EVENTS_VERSION: u64 = 4;
+pub const EVENTS_VERSION: u64 = 5;
 
 /// A progress event that a check emits as it runs.
 #[derive(Debug, Serialize)]
@@ -56,6 +59,25 @@ pub enum Event {
     },
     Error {
         message: String,
+    },
+    FileBatchCompleted {
+        request_key: String,
+        request: Option<ev_grep_core::RequestInfo>,
+        failure: Option<crate::RequestFailure>,
+    },
+    FileBatchStarted {
+        request_key: String,
+        path: String,
+        contracts: Vec<String>,
+        questions: usize,
+        input_bytes: usize,
+    },
+    HunkResult {
+        cached: bool,
+        contract: String,
+        path: String,
+        request: Option<ev_grep_core::RequestInfo>,
+        result: Box<super::HunkResult>,
     },
     Result {
         result: Box<CheckResult>,

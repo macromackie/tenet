@@ -56,11 +56,12 @@ impl Serialize for Export<'_> {
         Writer: Serializer,
     {
         let plan = self.evidence.plan;
-        let mut state = serializer.serialize_struct("Evidence", 16)?;
+        let mut state = serializer.serialize_struct("Evidence", 17)?;
         state.serialize_field("version", &VERSION)?;
         state.serialize_field("kind", "tenet_evidence")?;
         state.serialize_field("hash_algorithm", "blake3")?;
         state.serialize_field("mode", &plan.mode)?;
+        state.serialize_field("context_profile", &plan.context_profile)?;
         state.serialize_field("base", &plan.base)?;
         state.serialize_field("head", &plan.head)?;
         state.serialize_field(
@@ -91,7 +92,7 @@ impl Serialize for Export<'_> {
         state.serialize_field(
             "limits",
             &Limits {
-                source_bytes: ev_grep_core::MAX_FILE_BYTES,
+                source_bytes: plan.read_input_limit_bytes(),
                 capture_bytes: MAX_CAPTURE_BYTES,
                 packet_bytes: self.max_bytes,
             },

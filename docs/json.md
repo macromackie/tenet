@@ -5,8 +5,8 @@ warnings go to stderr. Each format numbers its versions independently:
 
 | Command                                                     | Output                                                     | Version |
 | ----------------------------------------------------------- | ---------------------------------------------------------- | ------- |
-| `check --json`, `check --reporter jsonl`                    | One [event](./output.md#jsonl) per line                    | 4       |
-| `check --dry-run --json`                                    | One event per line: `selected`, `combined`, then `summary` | 4       |
+| `check --json`, `check --reporter jsonl`                    | One [event](./output.md#jsonl) per line                    | 5       |
+| `check --dry-run --json`                                    | One event per line: `selected`, `combined`, then `summary` | 5       |
 | `status --json`                                             | One object                                                 | 1       |
 | `show NAME --json`, `show --pending --json`                 | One object                                                 | 2       |
 | `log --json`                                                | One review log entry per line                              | 2       |
@@ -42,14 +42,14 @@ prints its earlier events first:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "error",
   "message": "logging is not part of the current review; see tenet status",
   "exit_code": 2
 }
 ```
 
-The event keeps `check`'s version 4 for every command. Look for `"type": "error"` before reading a `status` or `show`
+The event keeps `check`'s version 5 for every command. Look for `"type": "error"` before reading a `status` or `show`
 object, which has no `type`. Other commands report errors on stderr only.
 
 ## Check
@@ -58,11 +58,51 @@ object, which has no `type`. Other commands report errors on stderr only.
 
 - `selected` for each contract and file: `contract`, `scope`, `path`, a renamed file's `previous_path`,
   `contract_hash`, `input_bytes`, `input_limit_bytes`, `omitted` parts, and a `status` and `reason` for a file that
-  would be skipped, incomplete, or an error.
+  would be skipped, incomplete, or an error. An oversized individual diff also lists `hunks`, with each
+  planned group's `ranges` and encoded `input_bytes`.
 - `combined` for each contract: its repository `context`, or an `error`.
-- `summary` with `dry_run: true`, `files`, `mode`, `assume_base_valid`, `deleted`, `requests`, every request the
-  check needs, `cached`, how many of them earlier answers would answer, `max_requests`, `combined_over_limit`,
-  `errors`, the diff's [`coverage`](./output.md#coverage), and `exit_code`. A check sends `requests` minus `cached`.
+- `summary` with `dry_run: true`, `files`, `mode`, `assume_base_valid`, `deleted`, `max_requests`,
+  `combined_over_limit`, `errors`, the diff's [`coverage`](./output.md#coverage), and `exit_code`.
+  `requests_to_send` counts planned new dispatches, split into `file_requests_to_send` and
+  `combined_requests_to_send`. `cached` counts reused answer entries, not provider calls.
+  The existing `requests` planning total includes cached entries for compatibility; use `requests_to_send` for new work.
+  `file_pairs` counts selected file/contract checks, including skipped or incomplete checks, and `cached_file_pairs`
+  counts ordinary file-pair answers reused from the cache. Cached hunk groups contribute to `cached` separately.
+  `requests_by_contract` retains per-contract planning counts, including cached answers and hunk groups; a shared
+  dispatch is not a separate charge for each contract it serves. The summary also records `context_profile`,
+  `input_limit_bytes`, and `contract_batch_size`.
+
+Live conclusions and saved `show` conclusions include `combined_status`, independently of the contract's `reason_code`.
+Its values are `answered`, `too_large`, `request_budget`, `input_unavailable`, `request_failed`, and `not_needed`.
+Saved conclusions retain `context`, `evidence_hash`, and `failure` when available.
+Saved file results retain their `reason` and `failure`, so reopening a review explains input limits and failed requests.
+An absent field in an older log means that fact was not recorded.
+
+The `begin` event records the selected `context_profile` and `contract_batch_size`. File and hunk results retain the
+actual `input_limit_bytes` beside their measured `input_bytes`; a combined context retains its own `limit_bytes`.
+Do not infer a limit from the CLI default when reading a saved run.
+
+Contract grouping emits a `file_batch_started` event with `request_key`, `path`, `contracts`, `questions`, and
+`input_bytes`, followed by `file_batch_completed` with the same key and its provider `request` receipt or `failure`.
+Member file results carry `shared_request`, identifying the original shared request, without another copy of its
+usage receipt. Saved file results preserve that provenance. Count usage once per completed dispatch, not once per
+member result or question. See [request accounting](./output.md#request-accounting).
+
+An unchanged logical pair can be reused after other contracts join or leave a request group. Its original
+`shared_request` remains provenance; it does not mean the old group was dispatched again. Switching context profiles
+or between isolated and grouped question protocols requires new answers. `--fresh` bypasses existing answers.
+
+An oversized diff's file result retains `hunks` in live and saved output.
+Each group identifies supplied `ranges` with inclusive `old` and `new` line pairs, using `null` for an empty side.
+The group retains `input_bytes`, its encoded-input `evidence_hash` when prepared for assessment, its routed `status`, raw `applicability` and
+`verification` choices and confidence, the violation probability, and any `reason` or `failure`.
+These are advisory fragment results. The enclosing file remains incomplete or error.
+The live `hunk_summary` counts group outcomes and request activity separately from the run's file counts.
+Each group emits a `hunk_result` event with its contract, path, result, `cached` flag, and provider `request` receipt as soon as it completes,
+so completed evidence remains in JSONL even if a later group stops the run.
+The receipt is absent for cached answers and unsent or failed requests. Count a group's cost once from its event;
+the enclosing file repeats its evidence without another request receipt. Older hunk events lack this metadata.
+The run's `execution_errors` counts failures outside provider requests, including failures inside hunk checks.
 
 A `context` lists `excerpts` when [`--context`](./reviews.md#add-context) supplied only some lines of a file: each
 path maps to its supplied inclusive line ranges, as in `{"src/storage/query.ts": [[40, 75]]}`. A selected file is
@@ -108,6 +148,9 @@ and `changes`, the `path` and `patch` of each changed file once.
 `log --json` prints each entry of `.tenet/events.jsonl`, oldest first, with `version: 2` and a `type` of
 `revision`, `assessment`, or `record`. A revision's `context` repeats the `--context` arguments, including any line
 range, as in `src/storage/query.ts:40-75`.
+Its `context_profile` records the input bounds used to capture and assess the revision, and `contract_batch_size`
+records the request grouping. Missing settings in an older revision mean `standard` and batch size 1. Reopening the
+review and printing follow-up commands preserves its recorded settings.
 
 ## Contracts
 

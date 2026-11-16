@@ -63,13 +63,27 @@ changed since. Reverting the edit restores the earlier input, so its record sett
 `.tenet/blobs` keeps captured files up to 1 MiB for these diffs; for a larger file, `show` notes that its contents
 were not kept.
 
-Repeated checks answer identical requests from `.tenet/answers.jsonl`, so an unchanged contract costs no request and
-keeps its answer. An answer counts only for the Tenet version and provider that asked and the model revision the
-provider reported; `tenet status --prune-cache` removes the ones no check can reuse. A failed request caches nothing and leaves its contract pending, so rerunning the check sends only
-the failed requests; `check --dry-run` predicts how many. A record still settles an input whose request failed. Use `--fresh` to sample the model again. `tenet check --no-model` captures a revision without
-credentials; only conclusions for unchanged inputs carry over, and its rows mark them `unchanged`. `tenet log` lists
-every revision and record. Each revision keeps its `--min-confidence`, and `status`, `show`, and `log` print it when it
-differs from the default 0.8.
+Repeated checks answer unchanged file/contract inputs from `.tenet/answers.jsonl`. Adding another contract does not
+require asking the old file/contract questions again. Editing one source file leaves other file answers reusable,
+provided their contract rules and supplied context stay the same. A contract's combined assessment has a broader input:
+changing a file or inventory in that scope can require a new combined answer even when most file answers are cached.
+
+An answer counts only for the same questions and supplied evidence, the Tenet version and provider that asked, and
+the model revision the provider reported. The context profile and request protocol must also match; changing to
+larger inputs or a different question representation cannot silently reuse an earlier protocol's answers.
+Changing a supplied helper or its excerpt changes that evidence. The
+confidence threshold routes the raw answer; changing it does not itself require asking the model again.
+`tenet status --prune-cache` removes answers no check can reuse. A failed request caches nothing and leaves its contract
+pending, so a rerun sends unanswered or changed inputs; `check --dry-run` predicts how many. A record still settles an
+input whose request failed. Use `--fresh` to sample again; resampling does not verify an answer.
+
+`tenet check --no-model` captures a revision without credentials; only conclusions for unchanged inputs carry over,
+and its rows mark them `unchanged`. `tenet log` lists every revision and record. Each revision keeps its
+`--min-confidence`, and `status`, `show`, and `log` print it when it differs from the default 0.8.
+
+Revisions also keep the context profile, so reopening a long-context review does not apply the smaller standard bound.
+Follow-up commands preserve that profile and the selected contract batch size, so they can reuse the same answer
+protocol. Older revisions without those settings use `standard` and batch size 1.
 
 Checks against the same base commit form one review, whichever paths they select. A later check replaces an earlier
 assessment of a contract only when it selects every path the earlier check did, or the contract's whole scope.
@@ -152,6 +166,11 @@ believes what it reads there. Enforce contracts in CI, which starts without `.te
 
 ## Add context
 
+`show NAME` retains the file results and the separate combined-review outcome from the saved check.
+It lists flagged files first and gives a focused check command for a file needing attention.
+For an oversized diff, it also shows which complete hunks received answers and which ranges remain unexamined.
+Use the focused command with supporting implementation excerpts, then return to settle the broader review.
+
 If a helper owns the error handling, supply it and rerun the relevant contract:
 
 ```sh
@@ -185,10 +204,11 @@ The model receives those lines with their numbers and a note that the rest was l
 ```
 
 A path also named without a range is supplied whole. A range must lie within the file's current lines, so a file the
-change deletes cannot be excerpted. All context together, as the model receives it, is limited to 64 KiB. Different
-ranges are different inputs: they are new requests, and a record of one range does not settle another. If a context
-file later changes so that it no longer holds its lines, or no longer fits the limit, `status` shows the contract
-pending with changed inputs until the next check.
+change deletes cannot be excerpted. The selected [context profile](./limits.md) bounds the encoded evidence:
+64 KiB for `standard`, or 1 MiB for `long`. When context exceeds that bound, affected checks remain incomplete or
+unresolved for manual review. Different ranges are different inputs: they are new requests, and a record of one range
+does not settle another. Changes to supporting source can make an earlier conclusion outdated; supply valid ranges
+when checking again.
 
 Name a selected file's lines to supply them where Tenet [leaves its contents out](./limits.md) for size. The lines
 take the place of those contents, beside the patch, in the file's own check and in the combined assessment, when they
@@ -197,6 +217,30 @@ fit. A record can still cite any line of a selected file.
 Use [`tenet export`](./export.md) to export selected contracts and source without calling a model. A saved packet
 can supply a focused question or a description of the change, with references back to each before/after source.
 Descriptions help choose what to inspect; verify their claims against the source and the full English contracts.
+
+## Review large artifacts
+
+A filename or artifact kind can help choose where to investigate first. It does not establish that every adopted
+contract is irrelevant. A lockfile can determine dependency versions, integrity checks, or release behavior; generated
+source can be part of the shipped program. Read the actual requirement and the artifact's owner before narrowing a check.
+
+For an oversized file, inspect the reported limits and any advisory hunk results. Supply the implementation or a
+named excerpt that answers a concrete question, then retain the remaining whole-file gap. A sample of entries or
+unchanged ranges cannot establish compliance for entries it did not cover. Do not report a sampled negative answer
+as a complete `clear` or `verified` result.
+
+Use a focused selection when that is the claim you need. For example, check a caller together with the helper that
+defines its error behavior:
+
+```sh
+tenet check --contract database-failures src/caller.ts --context src/storage/query.ts --json
+tenet show database-failures src/caller.ts
+```
+
+Read the current source before recording a conclusion, cite its actual lines, and keep the broader review pending
+until its scope is covered. When it cannot be covered, record `unresolved` and explain the missing evidence.
+Exclude artifacts through a contract's `paths` only when that is the requirement's deliberate scope; do not introduce
+an automatic ignore rule merely because the artifact is large.
 
 ## Establish the baseline
 
@@ -224,6 +268,29 @@ requirement leaves the review with its contract.
 
 The outer agent owns baseline validity, follow-up, and concerns outside the contracts. Tenet has no internal agent loop
 or automatic escalation to a larger model.
+
+## Adopt requirements incrementally
+
+Add one requirement, check its complete scope, investigate the findings, and make the changes it needs before adding
+the next. A new contract needs a full check even when the code has no Git diff:
+
+```sh
+tenet contracts add tenet/code-ownership-and-boundaries --scope .
+tenet check --contract code-ownership-and-boundaries --dry-run --json
+tenet check --contract code-ownership-and-boundaries --json
+tenet status
+tenet show --pending
+```
+
+Read each complete contract, including its scope and exceptions. Confirm findings against the implementation and its
+callers, then run the project checks named in `Checks`; Tenet does not execute them. After editing the code, rerun the
+full check of that requirement and record any conclusion the model could not settle. Keep missing evidence unresolved.
+Do not weaken a requirement merely to obtain a favorable result.
+
+Reuse the same review state as you add requirements and repair source. Existing file answers remain reusable when
+their own inputs are unchanged. Before asking for a full review of all adopted contracts, run `check --dry-run` to see
+the new work and remaining input limits. Changing the contracts or files can make earlier conclusions outdated even
+when some raw file answers can be reused. [Limits](./limits.md) explains incomplete and oversized inputs.
 
 ## Target a question
 

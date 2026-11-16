@@ -16,6 +16,8 @@ pub enum CheckError<RequestError> {
         contract: String,
         source: Box<RequestError>,
     },
+    #[error(transparent)]
+    Encode(#[from] serde_json::Error),
     /// A file's request failed in a way every later request would; `failure` names its kind.
     #[error("{reason:?}, while checking {path:?} against {contract:?}")]
     FileRequest {
@@ -25,10 +27,16 @@ pub enum CheckError<RequestError> {
         contract: String,
         source: Box<RequestError>,
     },
+    #[error("a shared assessment returned an incomplete answer set")]
+    InvalidBatchAnswers,
+    #[error("contract-batch-size must be between 1 and 64")]
+    InvalidBatchSize,
     #[error("min-confidence must be between 0 and 1")]
     InvalidConfidence,
     #[error("jobs must be between 1 and 256 and max-requests must be positive")]
     InvalidJobs,
+    #[error("measuring the provider request failed: {0:#}")]
+    Measure(RequestError),
     #[error(transparent)]
     Slots(#[from] AcquireError),
 }

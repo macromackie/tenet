@@ -86,6 +86,8 @@ impl Review {
                     paths: selection.paths.clone(),
                     contract: selection.contract.clone(),
                     context: request.context.to_vec(),
+                    contract_batch_size: request.contract_batch_size,
+                    context_profile: plan.context_profile,
                     mode: plan.mode,
                     base_oid: plan.base.clone(),
                     head_oid: plan.head.clone(),
@@ -125,6 +127,8 @@ impl Review {
             && latest.is_selecting(&revision.paths)
             && latest.contract == revision.contract
             && latest.context == revision.context
+            && latest.contract_batch_size == revision.contract_batch_size
+            && latest.context_profile == revision.context_profile
             && latest.mode == revision.mode
             && latest.model == revision.model
             && latest.min_confidence == revision.min_confidence;
@@ -133,6 +137,7 @@ impl Review {
                 &assessment.contract,
                 &assessment.input,
                 &assessment.conclusion,
+                &assessment.results,
             )
         });
         same_selection
@@ -141,6 +146,7 @@ impl Review {
                     &assessment.contract,
                     &assessment.input,
                     &assessment.conclusion,
+                    &assessment.results,
                 )
             }))
     }

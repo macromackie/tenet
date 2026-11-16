@@ -70,6 +70,9 @@ pub(crate) struct Export {
 )]
 pub(crate) struct Input {
     pub paths: Vec<PathBuf>,
+    /// Bound assessment inputs for the standard or opt-in long context window.
+    #[arg(long, value_enum, default_value_t = ContextWindow::Standard)]
+    pub context_profile: ContextWindow,
     /// Supply a related repository file, or only some of its lines, without changing contract
     /// scope; repeat as needed.
     #[arg(long, value_name = "PATH[:START-END]")]
@@ -95,13 +98,21 @@ pub(crate) struct Input {
 pub(crate) struct Run {
     #[arg(long, env = "TENET_PROVIDER", default_value = "openrouter")]
     pub provider: Provider,
-    #[arg(long, env = "TENET_MODEL")]
+    #[arg(
+        long,
+        env = "TENET_MODEL",
+        default_value_if("provider", "openrouter", "typesafe/jev-1.14-20261014"),
+        default_value_if("provider", "typesafe", "jev-1.14.0")
+    )]
     pub model: Option<String>,
     /// Send requests and the provider credential to a trusted protocol-compatible proxy.
     #[arg(long, env = "TENET_ENDPOINT")]
     pub endpoint: Option<String>,
     #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u16).range(1..=256))]
     pub jobs: u16,
+    /// Share file context across at most this many contracts in one model request.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=64))]
+    pub contract_batch_size: u16,
     #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..))]
     pub max_requests: u32,
     /// Route lower-confidence answers to unresolved while preserving their raw values.
@@ -116,6 +127,25 @@ pub(crate) struct Run {
     /// Shorthand for --reporter jsonl.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "The declared order is the help and argument order."
+)]
+pub(crate) enum ContextWindow {
+    Standard,
+    Long,
+}
+
+impl ContextWindow {
+    pub(crate) const fn read_profile(self) -> tenet_engine::ContextProfile {
+        match self {
+            Self::Standard => tenet_engine::ContextProfile::Standard,
+            Self::Long => tenet_engine::ContextProfile::Long,
+        }
+    }
 }
 
 impl Run {

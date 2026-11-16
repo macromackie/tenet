@@ -42,6 +42,8 @@ pub struct Plan {
     pub base: Option<String>,
     pub head: Option<String>,
     pub mode: crate::Mode,
+    /// Provider context profile whose encoded evidence bound applies to this plan.
+    pub context_profile: crate::ContextProfile,
     /// Every discovered file, contract documents included; each contract governs part of it.
     pub inventory: Vec<PathBuf>,
     pub candidate_files: Vec<PathBuf>,

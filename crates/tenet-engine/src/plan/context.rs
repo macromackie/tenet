@@ -3,8 +3,6 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use ev_grep_core::MAX_FILE_BYTES;
-
 use super::ContextError;
 use crate::{
     Change,
@@ -28,8 +26,9 @@ impl Plan {
             inputs.push(self.build_context_input(change)?);
         }
         let bytes = serde_json::to_vec(&inputs)?.len();
-        if bytes > MAX_FILE_BYTES {
-            return Err(ContextError::TooLarge(bytes));
+        let limit_bytes = self.read_input_limit_bytes();
+        if bytes > limit_bytes {
+            return Err(ContextError::TooLarge { bytes, limit_bytes });
         }
         Ok(())
     }

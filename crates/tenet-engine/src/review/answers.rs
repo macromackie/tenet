@@ -1,54 +1,17 @@
-//! Raw model answers keyed by the exact request. A cache: deleting it costs only requests.
+//! Raw answers keyed by their versioned assessment inputs, retaining shared request provenance.
+//! Deleting this cache costs only requests.
+
+mod line;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use core::cell::RefCell;
 use std::{collections::HashMap, path::PathBuf};
 
-use ev_grep_core::{Assessment, Outcome, Question};
-use serde::{Deserialize, Serialize};
+use ev_grep_core::{Assessment, ContextProfile, Question};
+use line::{Answer, FORMAT, Line, TENET};
 use serde_json::Value;
 
 use super::store::{self, StoreError};
-
-const FORMAT: u64 = 2;
-/// The Tenet version that asks, which pins the provider adapter and its prompt.
-const TENET: &str = env!("CARGO_PKG_VERSION");
-
-#[expect(
-    clippy::arbitrary_source_item_ordering,
-    reason = "Field order is the serialized key order."
-)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct Answer {
-    choice: Outcome,
-    confidence: f64,
-    probabilities: BTreeMap<Outcome, f64>,
-    /// The model revision the provider reported for this answer.
-    model: String,
-}
-
-#[expect(
-    clippy::arbitrary_source_item_ordering,
-    reason = "Field order is the serialized key order."
-)]
-/// One request's answers, with the identity a later check must share to reuse them.
-#[derive(Deserialize, Serialize)]
-struct Line {
-    tenet: String,
-    provider: String,
-    key: String,
-    answers: BTreeMap<String, Answer>,
-}
-
-impl Line {
-    /// Whether a check by this Tenet that asks `provider` for `model` may reuse these answers:
-    /// the provider must have reported that model revision for each of them.
-    fn is_reusable(&self, provider: &str, model: &str) -> bool {
-        self.tenet == TENET
-            && self.provider == provider
-            && self.answers.values().all(|answer| answer.model == model)
-    }
-}
 
 /// How many cached requests a prune kept and removed.
 #[derive(Clone, Copy, Debug, Default)]
@@ -58,8 +21,14 @@ pub struct Pruned {
 }
 
 #[derive(Debug)]
+struct Cached {
+    answers: BTreeMap<String, Answer>,
+    request_key: Option<String>,
+}
+
+#[derive(Debug)]
 pub(crate) struct Answers {
-    entries: RefCell<HashMap<String, BTreeMap<String, Answer>>>,
+    entries: RefCell<HashMap<String, Cached>>,
     file: Option<PathBuf>,
     model: String,
     /// The provider and the model revision it must report for a cached answer to be reused.
@@ -82,6 +51,22 @@ impl Answers {
         blake3::hash(request.to_string().as_bytes())
             .to_hex()
             .to_string()
+    }
+
+    pub(crate) fn derive_profile_key(
+        profile: ContextProfile,
+        questions: &[Question<'_>],
+        state: &Value,
+    ) -> String {
+        let key = Self::derive_key(questions, state);
+        match profile {
+            ContextProfile::Standard => key,
+            ContextProfile::Long => {
+                blake3::hash(format!("long:{key}").as_bytes())
+                    .to_hex()
+                    .to_string()
+            },
+        }
     }
 
     pub(super) fn new(file: Option<PathBuf>) -> Self {
@@ -163,6 +148,15 @@ impl Answers {
         key: &str,
         answers: &BTreeMap<String, Assessment>,
     ) -> Result<(), StoreError> {
+        self.put_request(key, answers, None)
+    }
+
+    fn put_request(
+        &self,
+        key: &str,
+        answers: &BTreeMap<String, Assessment>,
+        request_key: Option<String>,
+    ) -> Result<(), StoreError> {
         let line = Line {
             tenet: TENET.into(),
             provider: self.provider.clone(),
@@ -181,14 +175,30 @@ impl Answers {
                     )
                 })
                 .collect(),
+            request_key,
         };
         if let Some(file) = &self.file {
             store::append(file, FORMAT, &[&line])?;
         }
         if line.is_reusable(&self.provider, &self.model) {
-            drop(self.entries.borrow_mut().insert(line.key, line.answers));
+            drop(self.entries.borrow_mut().insert(
+                line.key,
+                Cached {
+                    answers: line.answers,
+                    request_key: line.request_key,
+                },
+            ));
         }
         Ok(())
+    }
+
+    pub(crate) fn put_shared(
+        &self,
+        key: &str,
+        answers: &BTreeMap<String, Assessment>,
+        request_key: &str,
+    ) -> Result<(), StoreError> {
+        self.put_request(key, answers, Some(request_key.to_owned()))
     }
 
     pub(crate) fn read(&self, key: &str) -> Option<BTreeMap<String, Assessment>> {
@@ -196,7 +206,7 @@ impl Answers {
             return None;
         }
         let entries = self.entries.borrow();
-        let answers = entries.get(key)?;
+        let answers = &entries.get(key)?.answers;
         Some(
             answers
                 .iter()
@@ -214,6 +224,13 @@ impl Answers {
                 })
                 .collect(),
         )
+    }
+
+    pub(crate) fn read_request_key(&self, key: &str) -> Option<String> {
+        self.entries
+            .borrow()
+            .get(key)
+            .and_then(|cached| cached.request_key.clone())
     }
 
     /// Load earlier answers this provider gave as this model revision, or only record new ones
@@ -256,7 +273,13 @@ impl Answers {
                     }
                 })?;
                 if parsed.is_reusable(provider, model) {
-                    drop(entries.insert(parsed.key, parsed.answers));
+                    drop(entries.insert(
+                        parsed.key,
+                        Cached {
+                            answers: parsed.answers,
+                            request_key: parsed.request_key,
+                        },
+                    ));
                 }
             }
         }

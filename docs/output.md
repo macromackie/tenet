@@ -53,9 +53,15 @@ The verbose reporter shows uncertain file judgments as `UNCERTAIN`. A repository
 
 ## JSONL
 
-Each event has `version: 4` and a `type`. The `begin` event records `full` or `diff` mode, provider/model (`null` for `--no-model`), root, base and HEAD when available, the confidence threshold, the baseline assumption, and `deleted_contracts`, the contract documents a diff deletes. Snapshot runs include the original snapshot path and patch hash.
+Each event has `version: 5` and a `type`. The `begin` event records `full` or `diff` mode, provider/model (`null` for
+`--no-model`), root, base and HEAD when available, the confidence threshold, the baseline assumption, and
+`deleted_contracts`, the contract documents a diff deletes. It also records `context_profile` and
+`contract_batch_size`. Snapshot runs include the original snapshot path and patch hash.
 
-`result` contains file evidence: mode, change kind, previous path for renames, before/after hashes, contract hash, judgments, and timing. `omitted` lists `before` or `contents` when they were left out to fit the limit; the patch remains. `input_bytes` measures the encoded state including contract and explicit context, before provider instructions and question wrappers; it is not a token count.
+`result` contains file evidence: mode, change kind, previous path for renames, before/after hashes, contract hash,
+judgments, and timing. `omitted` lists `before` or `contents` when they were left out to fit the limit; the patch
+remains. `input_bytes` measures the encoded assessment state, before provider instructions and question wrappers;
+`input_limit_bytes` records its selected bound. These are byte counts, not token counts.
 
 `contract_finished` includes the contract's `state`, such as `{"state": "pending", "reason": "model_failed"}` or
 `{"state": "settled", "conclusion": "failed", "record": "d370e7dc32d8"}`, and the model's `conclusion`:
@@ -114,15 +120,41 @@ These fields describe the supplied state, not proof that it contains every neces
 The same diagnostics and evidence hash remain available if the provider fails. `input_bytes` and `evidence_hash`
 describe the actual encoded assessment input.
 
-Version 4 adds each contract's `state`, the summary's `revision` and `pending` contracts, and `cached` counts for
+Version 5 distinguishes dispatched requests from reused pair answers when grouping contracts. It adds shared-request
+events, pair provenance, explicit dry-run dispatch counts, and context profile bounds. Version 4 added each contract's
+`state`, the summary's `revision` and `pending` contracts, and `cached` counts for
 results answered from earlier identical requests. Version 3 replaced the run-wide `partial` flag with each conclusion's
 `scope` and separated raw answers from routing. Consumers should retain useful diagnostics and ignore unknown fields; see [JSON](./json.md#compatibility). A reason describes the evidence limit; it does not turn an unresolved assessment into a pass.
 
 Other events include `contract_started`, `check_started`, `stage_started`, `stage_completed`, `summary`, and `error`. Stages are `applicability`, `verification`, and `completeness`.
-The summary includes file counts, contract counts, request and cached counts, `over_budget` for requests that
+The summary includes file/contract result counts, contract conclusions, request and cached counts, `over_budget` for requests that
 `--max-requests` stopped, `request_failures` and `retryable_failures`, `elapsed_ms` for the whole check, the appended
 `revision` (`null` for a snapshot), the `pending` contract names, `coverage`, and the exit code. `errors` counts every
 execution error, failed requests included. Source contents and credentials are not printed.
+
+## Request accounting
+
+Count a shared provider request once even when it answers several file/contract pairs. With contract grouping enabled,
+`file_batch_started` identifies the dispatch by `request_key`, source `path`, `contracts`, `questions`, and encoded
+`input_bytes`. `file_batch_completed` keeps the same key and reports the provider `request` receipt or `failure`.
+Each member result identifies that shared request in `shared_request`; it does not repeat the provider receipt.
+The logical pair's evidence identity and the original shared request identity serve different purposes: one determines
+whether that pair can be reused, and the other identifies the request that produced it.
+
+The live summary's `requests` counts logical dispatches, including failed dispatches. A dispatch can answer one pair,
+several pairs, a hunk group, or one contract's combined assessment. The file statuses count file/contract results,
+not provider calls. `cached` counts reused answer entries, including combined answers and conclusions reused by
+`--no-model`; it is not a count of hypothetical provider calls saved by grouping.
+
+Provider receipts retain available `attempts`, `hedges`, `input_tokens`, and `output_tokens`. Sum a shared receipt
+once from its `file_batch_completed` event. Ordinary file, combined, and hunk receipts also count once at their owning
+event; enclosing results can repeat the evidence without another receipt. Retries or raced attempts can incur charges
+beyond the reported successful receipt, and a failed request may have no usage receipt. Missing usage is not zero spend.
+The [request budget](./limits.md) bounds logical dispatches, not HTTP attempts or provider charges.
+
+For oversized diffs, count the source file once in its enclosing file result and inspect its separate hunk results
+for examined ranges, skipped oversized groups, failures, and cached answers. A favorable answer for every submitted
+group does not settle the incomplete whole file. Keep the [combined outcome](./json.md#check) separate from fragment coverage.
 
 ## Failed requests
 

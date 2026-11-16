@@ -118,16 +118,16 @@
       "matrix":
         "include":
           - "machine": "arm64"
-            "runner": "namespace-profile-public-macos"
+            "runner": "macos-15"
             "target": "aarch64-apple-darwin"
           - "machine": "x86_64"
             "runner": "macos-15-intel"
             "target": "x86_64-apple-darwin"
           - "machine": "aarch64"
-            "runner": "namespace-profile-release-linux-arm64"
+            "runner": "ubuntu-22.04-arm"
             "target": "aarch64-unknown-linux-gnu"
           - "machine": "x86_64"
-            "runner": "namespace-profile-release-linux"
+            "runner": "ubuntu-22.04"
             "target": "x86_64-unknown-linux-gnu"
     "timeout-minutes": 5
 "name": "Release smoke tests"

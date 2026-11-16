@@ -1,3 +1,5 @@
+mod model;
+
 use std::io::Write;
 
 use serde_json::Value;
@@ -14,22 +16,16 @@ use super::{
     CITATIONS,
     HISTORY,
     History,
-    LISTED,
-    SETTLED_STATUSES,
     check_command,
     format_ago,
     format_paths_note,
     format_row_name,
     format_span_text,
     format_state_text,
-    format_tally,
     format_threshold_note,
     write_files,
 };
-use crate::{
-    error::CommandError,
-    report_format::{self, format_violation},
-};
+use crate::error::CommandError;
 
 /// What a reviewer needs to settle one contract, everything but the change itself: its state,
 /// the model's answer, the scoped files, history, the record command, and the contract.
@@ -114,57 +110,7 @@ pub(super) fn write_brief(
         )?;
     }
 
-    if let Some(assessment) = entry.assessment {
-        writeln!(out, "\nModel")?;
-        match &assessment.conclusion {
-            Some(conclusion) => {
-                writeln!(
-                    out,
-                    "  {}{}: {}",
-                    conclusion.status.as_str(),
-                    format_violation(conclusion.violation),
-                    conclusion.reason
-                )?;
-                if let Some(error) = &conclusion.error {
-                    writeln!(out, "  {error}")?;
-                }
-                if !conclusion.conflicting_files.is_empty() {
-                    writeln!(
-                        out,
-                        "  Disagrees with file checks: {}",
-                        conclusion.conflicting_files.join(", ")
-                    )?;
-                }
-            },
-            None => writeln!(out, "  not assessed")?,
-        }
-        let results = &assessment.results;
-        if results.len() > LISTED {
-            let statuses = results
-                .iter()
-                .map(|result| report_format::label_status(result.status));
-            writeln!(out, "  File checks: {}", format_tally(statuses))?;
-        }
-        let attention = |status: Status| !SETTLED_STATUSES.contains(&status);
-        for result in results
-            .iter()
-            .filter(|result| results.len() <= LISTED || attention(result.status))
-        {
-            let omitted = report_format::format_omitted(&result.omitted);
-            writeln!(
-                out,
-                "  {}  {}{}{}",
-                result.path,
-                report_format::label_status(result.status).to_lowercase(),
-                format_violation(result.violation),
-                if omitted.is_empty() {
-                    omitted
-                } else {
-                    format!(" · {omitted}")
-                }
-            )?;
-        }
-    }
+    model::write_model(out, entry)?;
 
     write_files(out, current, entry)?;
 

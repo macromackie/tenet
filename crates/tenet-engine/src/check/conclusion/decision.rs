@@ -1,5 +1,13 @@
 use super::{Completion, Unavailable};
-use crate::{ConclusionReason, ContractResult, ContractStatus, Mode, RequestedScope, Status};
+use crate::{
+    CombinedStatus,
+    ConclusionReason,
+    ContractResult,
+    ContractStatus,
+    Mode,
+    RequestedScope,
+    Status,
+};
 
 pub(super) fn clear_decision(
     completion: &Completion<'_>,
@@ -59,6 +67,7 @@ pub(super) fn decide(
         violation: None,
         reason: reason.into(),
         reason_code,
+        combined_status: Some(CombinedStatus::NotNeeded),
         context: None,
         assessment: None,
         routing: None,
@@ -99,6 +108,20 @@ pub(super) fn drop_combined(
     };
     result.error = unavailable.error;
     result.failure = unavailable.failure;
+    result.combined_status = Some(match unavailable.reason_code {
+        ConclusionReason::ContextTooLarge => CombinedStatus::TooLarge,
+        ConclusionReason::RequestBudget => CombinedStatus::RequestBudget,
+        ConclusionReason::AssessmentFailed => CombinedStatus::RequestFailed,
+        ConclusionReason::Compliance
+        | ConclusionReason::ConflictingAssessments
+        | ConclusionReason::ContextUnavailable
+        | ConclusionReason::FileChecksIncomplete
+        | ConclusionReason::FileViolation
+        | ConclusionReason::ModelUncertain
+        | ConclusionReason::NoRelevantChanges
+        | ConclusionReason::SelectedSubjectsClear
+        | ConclusionReason::Violation => CombinedStatus::InputUnavailable,
+    });
     if let Some(context) = unavailable.context {
         result.context = Some(context.summary);
         result.evidence_hash = Some(context.hash);

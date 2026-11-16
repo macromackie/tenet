@@ -53,6 +53,16 @@ Selected code and contract rules go to the configured provider, using your API k
 
 Use [`tenet export`](docs/export.md) to export selected contracts and source offline for a review or a focused question.
 
+For a larger review, `check --contract-batch-size 4` can ask about several contracts together while supplying a
+file's source once per request. The default remains one contract per request. `--context-profile long` raises the
+input byte limits for a check or export; it does not establish that a model can admit or accurately review that input.
+Preview the selected work with `check --dry-run --json`. See [request options](docs/cli.md#assessment-inputs) and
+[limits](docs/limits.md).
+
+Add requirements one at a time and run a full check of each new contract. Repeated checks reuse unchanged file/contract
+answers; a changed file or new contract adds work without requiring every pair to be asked again. Combined assessments
+also depend on the other files in their scope. See [incremental adoption](docs/reviews.md#adopt-requirements-incrementally).
+
 Read [commands](docs/cli.md), [output](docs/output.md), and [reviewing with an agent](docs/reviews.md).
 The same docs are at [tenet-contracts.com/docs](https://tenet-contracts.com/docs).
 

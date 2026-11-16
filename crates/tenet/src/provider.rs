@@ -108,4 +108,15 @@ impl Evaluator for Model {
             Self::Unneeded => Err(ModelError::Unneeded),
         }
     }
+
+    fn measure_questions(
+        &self,
+        questions: &[Question<'_>],
+        state: &serde_json::Value,
+    ) -> Result<usize, ModelError> {
+        match self {
+            Self::Jev(jev) => Ok(jev.measure_questions(questions, state)?),
+            Self::Unneeded => Err(ModelError::Unneeded),
+        }
+    }
 }

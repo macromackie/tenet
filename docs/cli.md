@@ -144,6 +144,8 @@ forget the review.
 `tenet export` exports selected source and complete contract documents without model requests. It accepts the same
 input selection as `check` and writes one JSON object. See [Export](./export.md) for source identities, scope,
 size limits, and examples of preparing a focused question.
+`--context-profile` selects the same evidence byte profile for a check or export; an export still has its separate
+`--max-bytes` packet limit and does not ask a model.
 
 ## Shared contracts and skills
 
@@ -203,6 +205,8 @@ as version 1 otherwise. A Tenet older than 0.11.0 cannot read a version 2 lock, 
 | ---------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--contract NAME`            | all contracts    | Select one requirement                                                                                                                                    |
 | `--context PATH[:START-END]` | none             | Add a repository file, or only its lines START through END, to check inputs; repeat for more files or ranges; see [Add context](./reviews.md#add-context) |
+| `--context-profile PROFILE`  | `standard`       | Select `standard` or `long` evidence and provider byte limits; also accepted by `export`                                                                  |
+| `--contract-batch-size N`    | 1                | Ask about up to N contracts for the same file together; accepts 1 through 64                                                                              |
 | `--jobs N`                   | 4                | Maximum simultaneous model requests                                                                                                                       |
 | `--max-requests N`           | 1000             | Request budget, including combined assessments                                                                                                            |
 | `--min-confidence N`         | 0.8              | Route lower-confidence answers to unresolved; accepts 0 through 1                                                                                         |
@@ -217,12 +221,45 @@ as version 1 otherwise. A Tenet older than 0.11.0 cannot read a version 2 lock, 
 without credentials or model requests. JSON `selected` records include encoded `input_bytes`, `input_limit_bytes`,
 `omitted` parts, a renamed file's `previous_path`, and a `status` and `reason` for files that would be skipped or
 incomplete. A `combined` record per contract gives its repository `context`, including its size and any reductions.
-The summary counts `requests`, the file and combined requests a check needs, and `cached`, how many of them earlier
-answers in `.tenet/answers.jsonl` would answer; a check sends the rest. With `--fresh`, it predicts as if nothing were
-cached. It also counts `combined_over_limit`, the contracts whose combined input exceeds the limit after reduction, and
+The summary's `requests_to_send` counts planned dispatches after answer reuse and grouping. It splits them into
+`file_requests_to_send` and `combined_requests_to_send`. `cached` counts reused answer entries; with grouping, those
+entries do not correspond one-for-one to provider calls. The existing `requests` planning total includes cached
+entries for compatibility; use `requests_to_send` to estimate new dispatches. With `--fresh`, the prediction ignores
+earlier answers. `file_pairs` counts selected file/contract checks, including checks that cannot complete;
+`cached_file_pairs` counts ordinary file-pair answers reused from the cache. Hunk groups have their own cache activity.
+The summary also counts `combined_over_limit`, the contracts whose combined input exceeds the limit after reduction, and
 reports the diff's `coverage`. When the requests to send exceed `--max-requests`, it prints a warning to stderr. A diff with no changes
 prints `No changes since BASE; nothing to check.` Only execution errors exit 2.
 `validate`, `contracts`, and `skills` also work without credentials.
+
+## Assessment inputs
+
+The default check uses the `standard` context profile and asks about one contract for each file request.
+Relevance and violation share that request. A separate combined assessment checks each contract's supplied files
+together when they fit.
+
+`--contract-batch-size 4` opts into grouping up to four contracts for the same file. The file's change and supporting
+source are supplied once in that request, with separate relevance and violation questions for each contract.
+Groups can contain fewer contracts when the encoded input or question limits require it. Results still identify
+each file/contract pair, and each contract retains its own combined assessment. Grouping does not narrow the selected
+files or remove a requirement.
+
+`--context-profile long` opts into larger byte bounds. It can admit source that exceeds the standard bounds, but a
+provider can still reject a request or fail to use its evidence. Bytes are not tokens, and a larger accepted request
+does not establish complete or accurate review. The profile affects input preparation and answer reuse; it is separate
+from how many requests `--jobs` allows at once.
+
+Preview a proposed configuration before sending it:
+
+```sh
+tenet check --contract-batch-size 4 --context-profile long --dry-run --json
+tenet check --contract-batch-size 4 --context-profile long --json
+tenet export src/ --context-profile long > evidence.json
+```
+
+The commands illustrate opt-in settings, not a measured speed or accuracy improvement. Use the same settings when
+comparing results and record provider failures and incomplete coverage. See [limits](./limits.md) for the byte bounds
+and [review reuse](./reviews.md#keep-reviews-current) for changes that require new answers.
 
 ## Discovery
 

@@ -1,5 +1,31 @@
 use serde::{Deserialize, Serialize};
 
+use crate::HunkRange;
+
+/// A model's raw choice and confidence before routing.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct Answer {
+    pub choice: ev_grep_core::Outcome,
+    pub confidence: f64,
+}
+
+/// Advisory evidence from one group of complete hunks of an oversized diff.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct HunkResult {
+    pub applicability: Option<Answer>,
+    pub evidence_hash: Option<String>,
+    pub failure: Option<crate::RequestFailure>,
+    pub input_bytes: usize,
+    /// Encoded input bound used when preparing this group; older records used the standard bound.
+    #[serde(default = "read_standard_input_limit")]
+    pub input_limit_bytes: usize,
+    pub ranges: Vec<HunkRange>,
+    pub reason: Option<String>,
+    pub status: Status,
+    pub verification: Option<Answer>,
+    pub violation: Option<f64>,
+}
+
 /// A stage of a check run, as progress events name it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -51,8 +77,14 @@ pub struct CheckResult {
     pub contract_hash: String,
     pub path: String,
     pub input_bytes: Option<usize>,
+    pub input_limit_bytes: usize,
+    pub evidence_hash: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub omitted: Vec<Omitted>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hunks: Vec<HunkResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hunk_summary: Option<super::Summary>,
     pub status: Status,
     pub message: String,
     pub reason: Option<String>,
@@ -63,9 +95,19 @@ pub struct CheckResult {
     pub verification: Option<ev_grep_core::Assessment>,
     pub verification_routing: Option<ev_grep_core::Routing>,
     pub request: Option<ev_grep_core::RequestInfo>,
+    /// Original shared request identity; its usage is counted once by the batch event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared_request: Option<String>,
+    /// Requests charged exclusively to this file, including failed hunk requests; shared usage
+    /// belongs to its batch event and the run summary.
+    pub requests: usize,
     /// The answers came from the review's answer cache; no request was sent.
     pub cached: bool,
     pub elapsed_ms: u128,
+}
+
+const fn read_standard_input_limit() -> usize {
+    crate::MAX_FILE_BYTES
 }
 
 /// The probability an answer assigns to a violation, whatever its routed outcome.

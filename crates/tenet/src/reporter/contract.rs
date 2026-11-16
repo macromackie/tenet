@@ -91,6 +91,18 @@ impl Reporter<'_> {
             format_painted(&label.to_lowercase()),
             summary.elapsed_ms as f64 / 1_000.0_f64
         ))?;
+        if let Some(verdict) = conclusion {
+            self.term.write_line(&format!(
+                "  {}",
+                report_format::format_combined(verdict.combined_status, verdict.context.as_ref())
+            ))?;
+        }
+        for issue in &progress.issues {
+            for line in report_format::format_hunks(&issue.hunks) {
+                self.term
+                    .write_line(&format!("  {} · {line}", issue.path))?;
+            }
+        }
         let failed = match state {
             ContractState::Pending { reason } => *reason == Pending::ModelFailed,
             ContractState::Settled {

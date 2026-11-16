@@ -71,6 +71,9 @@ pub(super) async fn evaluate(
             snapshot: snapshot.map(|saved| saved.snapshot.display().to_string()),
             patch_hash: snapshot.and_then(|saved| saved.patch_hash.clone()),
             jobs: run.jobs.into(),
+            contract_batch_size: usize::from(run.contract_batch_size),
+            context_profile: plan.context_profile,
+            input_limit_bytes: plan.read_input_limit_bytes(),
             max_requests: budget,
             min_confidence: run.min_confidence,
             deleted_contracts: plan.list_deleted_contracts(),
@@ -82,10 +85,11 @@ pub(super) async fn evaluate(
         })?;
         let checked = tenet_engine::apply_review(&evidence, &review, &emit)?;
         let request = CheckRequest {
-            selection: &selection,
             context: &check.input.context,
-            model: None,
+            contract_batch_size: usize::from(run.contract_batch_size),
             min_confidence: None,
+            model: None,
+            selection: &selection,
         };
         let revision = review.commit(&evidence, &request, &checked)?;
         return finish(&emit, &checked, revision, plan.coverage.clone(), started);
@@ -116,7 +120,8 @@ pub(super) async fn evaluate(
                     .as_deref()
                     .unwrap_or_else(|| run.provider.read_endpoint()),
             )?
-            .with_jobs(usize::from(run.jobs))?,
+            .with_jobs(usize::from(run.jobs))?
+            .with_context_profile(check.input.context_profile.read_profile()),
         ))
     };
     review.use_model(&run.provider.to_string(), &model, !check.fresh)?;
@@ -124,6 +129,7 @@ pub(super) async fn evaluate(
         run: begin(Some(run.provider.to_string()), Some(model)),
     })?;
     let options = Options {
+        contract_batch_size: usize::from(run.contract_batch_size),
         jobs: run.jobs.into(),
         max_requests: budget,
         min_confidence: run.min_confidence,
@@ -158,10 +164,11 @@ pub(super) async fn evaluate(
         }
     };
     let request = CheckRequest {
-        selection: &selection,
         context: &check.input.context,
-        model: Some(&identity),
+        contract_batch_size: usize::from(run.contract_batch_size),
         min_confidence: Some(run.min_confidence),
+        model: Some(&identity),
+        selection: &selection,
     };
     let revision = review.commit(&evidence, &request, &checked)?;
     finish(&emit, &checked, revision, plan.coverage.clone(), started)

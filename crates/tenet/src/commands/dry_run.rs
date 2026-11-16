@@ -55,12 +55,20 @@ pub(super) async fn report_dry_run(
     } else {
         Review::read(review_state)?
     };
-    review.use_model(
-        &run.provider.to_string(),
-        &run.provider.select_model(run.model.as_deref())?,
-        !check.fresh,
-    )?;
-    let prediction = tenet_engine::estimate(&evidence, &review, run.jobs.into()).await?;
+    let model = run.provider.select_model(run.model.as_deref())?;
+    review.use_model(&run.provider.to_string(), &model, !check.fresh)?;
+    let measure = |questions: &[tenet_engine::Question<'_>], state: &serde_json::Value| {
+        ev_grep_jev::count_context_request_bytes(&model, questions, state)
+            .map_err(|error| tenet_engine::PredictionError::Measurement(error.to_string()))
+    };
+    let prediction = tenet_engine::estimate_with_measure(
+        &evidence,
+        &review,
+        run.jobs.into(),
+        usize::from(run.contract_batch_size),
+        &measure,
+    )
+    .await?;
     let mut errors = 0;
     // Contracts whose combined input stays over the limit after reduction.
     let mut over_limit = 0_i32;
@@ -73,6 +81,15 @@ pub(super) async fn report_dry_run(
         {
             let previous_path = plan.previous_paths.get(path);
             let input = evidence.build_file_input(contract, path);
+            let hunks = if matches!(&input, Err(tenet_engine::InputError::Limit(_)))
+                && plan.mode == Mode::Diff
+            {
+                evidence
+                    .build_hunk_inputs(contract, path)
+                    .context("prepare hunk inputs")?
+            } else {
+                Vec::new()
+            };
             let (input_bytes, omitted, note) = match input {
                 Ok((state, omitted)) => (Some(serde_json::to_vec(&state)?.len()), omitted, None),
                 Err(error) => {
@@ -94,8 +111,9 @@ pub(super) async fn report_dry_run(
                         "previous_path": previous_path,
                         "contract_hash": contract.hash,
                         "input_bytes": input_bytes,
-                        "input_limit_bytes": tenet_engine::MAX_FILE_BYTES,
+                        "input_limit_bytes": plan.read_input_limit_bytes(),
                         "omitted": omitted,
+                        "hunks": hunks,
                         "status": status,
                         "reason": reason,
                     }),
@@ -120,6 +138,14 @@ pub(super) async fn report_dry_run(
                     contract.name,
                     path.display()
                 )?;
+                if !hunks.is_empty() {
+                    let ready = hunks.iter().filter(|group| group.is_fitting()).count();
+                    writeln!(
+                        output::open_stdout(),
+                        "  Hunk groups  {ready} admissible · {} too large",
+                        hunks.len() - ready
+                    )?;
+                }
             }
         }
         let context = evidence.summarize_combined(contract);
@@ -179,7 +205,16 @@ pub(super) async fn report_dry_run(
                 "assume_base_valid": plan.mode == Mode::Diff,
                 "deleted": plan.deleted,
                 "requests": unsent + prediction.cached,
+                "requests_to_send": unsent,
+                "file_requests_to_send": prediction.file_requests,
+                "file_pairs": prediction.file_pairs,
+                "cached_file_pairs": prediction.cached_file_pairs,
+                "combined_requests_to_send": prediction.combined_requests,
                 "cached": prediction.cached,
+                "context_profile": plan.context_profile,
+                "input_limit_bytes": plan.read_input_limit_bytes(),
+                "contract_batch_size": run.contract_batch_size,
+                "requests_by_contract": prediction.contract_requests,
                 "max_requests": budget,
                 "combined_over_limit": over_limit,
                 "coverage": plan.coverage,

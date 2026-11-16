@@ -1,7 +1,7 @@
 //! Why a model request returned no answer, and whether sending it again may succeed.
 
 use ev_grep_core::Failure;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// An evaluator error that names its failure. The provider's adapter knows its errors and its
 /// retry table; the engine decides what each kind means for the review.
@@ -12,7 +12,7 @@ pub trait ClassifyRequest: Failure {
 
 /// The kind of failure a model request met. The provider's adapter names it from the provider's
 /// error; the names are stable in JSON output.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureKind {
     /// HTTP 401 or ordinary 403: the provider rejected the credential,
@@ -81,7 +81,7 @@ impl FailureKind {
 }
 
 /// A failed model request: its kind, and whether rerunning the check unchanged may succeed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RequestFailure {
     kind: FailureKind,
     /// Taken from the provider adapter's retry table.

@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.16.0
+
+- Checks default to Jev 1.14 for both providers. `--model` and `TENET_MODEL` can still select the supported Jev 1.13
+  revision explicitly. Existing answers from a different model are reassessed.
+- `check --contract-batch-size N` can assess several contracts for one file in a shared request. The default remains
+  1. Reports retain each pair's result and shared request identity, and provider usage counts once per dispatch.
+- Check JSON events use version 5. Dry-run output separates file/contract pairs, cached answers, and planned provider
+  dispatches. Consumers must not count one shared request's usage again for each pair it answers.
+- `check` and `export` accept `--context-profile long` for evidence up to 1 MiB. The default remains `standard`,
+  with its 64 KiB evidence limit. Larger byte bounds do not guarantee provider token admission or review quality.
+- Oversized supporting context leaves affected assessments incomplete or unresolved for manual review. Other
+  admissible checks continue, and exports can retain the complete context within their packet bound.
+- Unchanged file/contract answers remain reusable as contracts are added or unrelated files change. Grouped questions
+  use a separate cache protocol, and changing the context profile requires new answers. Combined assessments still
+  refresh when the evidence in their scope changes.
+
+- Oversized individual diffs automatically receive advisory checks of complete hunk groups within the existing input,
+  concurrency, and request limits. Saved results identify examined ranges and oversized or unsent groups. The file
+  stays incomplete for whole-file review, and completed answers are cached for reruns.
+- Saved reviews retain the combined assessment's outcome, input size, limit, and evidence identity alongside file
+  findings. `show` lists flagged files first and supplies a quoted follow-up command.
+- Dry-run JSON includes hunk plans and request counts per contract. Each completed group emits a `hunk_result` event.
+- Saved file results retain failure reasons and retryability. Follow-up commands preserve the confidence threshold,
+  and `show` prioritizes files with advisory hunk findings after complete-file findings.
+- Hunk events include cache status and provider request receipts for cost and usage accounting without duplicating
+  requests on their parent file results.
+
 ## v0.15.0
 
 - OpenRouter payment and allowance failures now identify insufficient credits, a spent key, a configured spending limit,
