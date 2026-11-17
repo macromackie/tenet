@@ -24,7 +24,7 @@ impl Serialize for Sources<'_> {
     {
         let mut sources = serializer.serialize_map(Some(self.0.changes.len()))?;
         for (path, change) in &self.0.changes {
-            let captured = match change {
+            let captured = match &change.change {
                 Ok(captured) => captured,
                 Err(error) => {
                     match &**error {
@@ -35,7 +35,9 @@ impl Serialize for Sources<'_> {
                             )?;
                             continue;
                         },
-                        CaptureError::Source(_) | CaptureError::Excerpt(_) => {
+                        CaptureError::Source(_)
+                        | CaptureError::Excerpt(_)
+                        | CaptureError::Limit(_) => {
                             return Err(Writer::Error::custom(format!(
                                 "cannot export {:?}: {:#}",
                                 path.display(),

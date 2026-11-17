@@ -1,16 +1,13 @@
-mod base;
 mod excerpt;
 mod hunks;
 
 use alloc::string::FromUtf8Error;
 use core::num::ParseIntError;
 use std::{
-    fs,
     io,
-    path::{Path, PathBuf, StripPrefixError},
+    path::{PathBuf, StripPrefixError},
 };
 
-pub(crate) use base::read_before;
 pub use excerpt::{Excerpt, ExcerptError, format_line_ranges};
 pub use hunks::HunkRange;
 use serde::{Deserialize, Serialize};
@@ -18,7 +15,7 @@ use similar::DiffOp;
 
 use crate::git::GitError;
 
-/// The most bytes a check captures from the files it reads.
+/// The most source bytes one check retains for assessments.
 pub const MAX_CAPTURE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Whether a check reads whole files or a diff against a base.
@@ -173,6 +170,8 @@ pub enum SourceError {
         .path.display()
     )]
     CaptureLimit { path: PathBuf, bytes: u64 },
+    #[error("source changed while being captured: {:?}", .0.display())]
+    ChangedDuringRead(PathBuf),
     #[error(transparent)]
     Git(#[from] GitError),
     #[error("cannot inspect {:?}", .path.display())]
@@ -200,20 +199,6 @@ pub(crate) fn decode(bytes: Vec<u8>) -> Result<String, Unreadable> {
     String::from_utf8(bytes).map_err(|_| Unreadable::NotUtf8)
 }
 
-#[expect(
-    clippy::as_conversions,
-    reason = "A usize fits in a u64 on every supported target."
-)]
-pub(crate) fn check_capture_size(path: &Path, bytes: u64) -> Result<(), SourceError> {
-    if bytes > MAX_CAPTURE_BYTES as u64 {
-        return Err(SourceError::CaptureLimit {
-            path: path.to_owned(),
-            bytes,
-        });
-    }
-    Ok(())
-}
-
 /// A file a check left out because it exceeds the input size limit.
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 #[error("{label:?} is {bytes:?} bytes; limit is {limit_bytes:?} bytes; input was not truncated")]
@@ -221,6 +206,16 @@ pub struct InputLimit {
     bytes: u64,
     label: &'static str,
     limit_bytes: usize,
+}
+
+impl InputLimit {
+    pub(crate) const fn new(label: &'static str, bytes: u64, limit_bytes: usize) -> Self {
+        Self {
+            bytes,
+            label,
+            limit_bytes,
+        }
+    }
 }
 
 #[expect(
@@ -240,28 +235,4 @@ pub(crate) const fn check_size(
         });
     }
     Ok(())
-}
-
-pub(crate) fn read_text(root: &Path, path: &Path) -> Result<String, SourceError> {
-    let full = root.join(path);
-    let metadata = full.symlink_metadata().map_err(|source| {
-        SourceError::Inspect {
-            path: path.to_owned(),
-            source,
-        }
-    })?;
-    if metadata.file_type().is_symlink() {
-        return Err(Unreadable::SymbolicLink.into());
-    }
-    if !metadata.is_file() {
-        return Err(SourceError::NotRegularFile(path.to_owned()));
-    }
-    check_capture_size(path, metadata.len())?;
-    let bytes = fs::read(&full).map_err(|source| {
-        SourceError::Read {
-            path: path.to_owned(),
-            source,
-        }
-    })?;
-    Ok(decode(bytes)?)
 }

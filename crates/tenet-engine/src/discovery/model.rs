@@ -4,8 +4,6 @@ use std::path::{Component, Path, PathBuf};
 use serde::Serialize;
 use tenet_contracts::Contract;
 
-use crate::change::Excerpt;
-
 /// The paths, contracts, and base that a command asks to check.
 #[derive(Debug, Default)]
 pub struct Selection {
@@ -51,9 +49,9 @@ pub struct Plan {
     /// Selected paths that yield no subject for any planned contract.
     pub excluded_paths: Vec<ExcludedPath>,
     pub previous_paths: BTreeMap<PathBuf, PathBuf>,
-    pub context: Vec<crate::Change>,
-    /// `context` files supplied as line ranges instead of whole; the rest are supplied whole.
-    pub excerpts: BTreeMap<PathBuf, Excerpt>,
+    pub context: Vec<PathBuf>,
+    /// Requested supporting line ranges; source and rendered excerpts are captured together.
+    pub excerpts: BTreeMap<PathBuf, Vec<[usize; 2]>>,
     /// The contract documents a diff changes, directly or through another file in their folder,
     /// such as an installed asset.
     pub contract_changes: Vec<PathBuf>,

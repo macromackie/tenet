@@ -13,6 +13,7 @@ blake3.workspace = true
 ev-grep-core.workspace = true
 futures-util.workspace = true
 ignore.workspace = true
+memchr.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 similar.workspace = true

@@ -14,6 +14,8 @@ use crate::{ContractStatus, Mode, RequestedScope, SpanRequest};
 
 /// The longest message a record keeps, in bytes.
 pub(super) const MAX_MESSAGE_BYTES: usize = 4096;
+/// Conclusions that do not claim the assessed source complies.
+const UNFAVORABLE: [ContractStatus; 2] = [ContractStatus::Failed, ContractStatus::Unresolved];
 
 /// What `tenet record` asks to record for one contract.
 #[derive(Debug)]

@@ -238,7 +238,7 @@ crate = "js-sys"
 allow = ["default"]
 crate = "libc"
 
-# ignore and pulldown-cmark need its default features.
+# ignore, pulldown-cmark and tenet-engine need its default features.
 [[bans.features]]
 allow = ["default"]
 crate = "memchr"
@@ -360,7 +360,7 @@ allow = ["default"]
 crate = "thiserror"
 
 # ev-grep-jev, hyper, hyper-rustls, tenet, tenet-engine, tokio-rustls and tower need its default
-# features.
+# features. tenet-engine also uses process for owned streaming Git readers.
 [[bans.features]]
 allow = [
   "default",
@@ -370,6 +370,7 @@ allow = [
   "macros",
   "mio",
   "net",
+  "process",
   "rt",
   "signal",
   "sync",

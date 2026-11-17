@@ -40,6 +40,8 @@ pub enum ContextError {
     Excerpt(#[from] ExcerptError),
     #[error(transparent)]
     Inspect(io::Error),
+    #[error(transparent)]
+    Limit(#[from] crate::InputLimit),
     #[error("context file does not exist: {:?}", .0.display())]
     Missing(PathBuf),
     #[error("context paths must be repository source files: {:?}", .0.display())]
@@ -51,4 +53,24 @@ pub enum ContextError {
          {limit_bytes:?} bytes; supply only the lines needed with --context PATH:START-END"
     )]
     TooLarge { bytes: usize, limit_bytes: usize },
+    #[error("context source unavailable: {0:#}")]
+    Unavailable(String),
+}
+
+impl ContextError {
+    /// Whether complete evidence was excluded by a declared input or capture size limit.
+    #[must_use]
+    #[inline]
+    pub const fn is_size_limit(&self) -> bool {
+        match self {
+            Self::TooLarge { .. } | Self::Limit(_) => true,
+            Self::Encode(_)
+            | Self::Excerpt(_)
+            | Self::Inspect(_)
+            | Self::Missing(_)
+            | Self::NotSource(_)
+            | Self::Source(_)
+            | Self::Unavailable(_) => false,
+        }
+    }
 }

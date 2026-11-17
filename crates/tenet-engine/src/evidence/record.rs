@@ -58,8 +58,10 @@ impl CapturedFile {
     /// Whether the change touched this file: wrote lines in it or deleted it.
     #[must_use]
     #[inline]
-    pub const fn is_changed(&self) -> bool {
-        !self.changed.is_empty() || self.is_deleted()
+    pub fn is_changed(&self) -> bool {
+        !self.changed.is_empty()
+            || self.is_deleted()
+            || (self.error.is_some() && self.before != self.after)
     }
 
     /// Whether a citation of this file, with `lines` or whole, overlaps or adjoins a line the

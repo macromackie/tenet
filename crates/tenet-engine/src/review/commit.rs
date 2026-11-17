@@ -66,7 +66,9 @@ impl Review {
             });
         }
         for file in files.iter().filter(|file| file.after.is_some()) {
-            if let Some(after) = &evidence.change(&file.path)?.after {
+            if let Ok(change) = evidence.change(&file.path)
+                && let Some(after) = &change.after
+            {
                 drop(store.write_blob(after)?);
             }
         }

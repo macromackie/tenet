@@ -49,6 +49,10 @@ pub(super) async fn report_dry_run(
     let run = &check.run;
     let budget = run.request_budget().context("convert request budget")?;
     let evidence = plan.capture().await?;
+    match evidence.admit_context() {
+        Err(error) if error.is_size_limit() => {},
+        result => result?,
+    }
     // Answers a check would reuse; reading the review writes nothing.
     let mut review = if snapshot.is_some() {
         Review::new_ephemeral()

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.16.2
+
+- Oversized selected or supporting source leaves affected checks incomplete and pending for review, while unrelated
+  admissible checks continue. The captured-source retention bound remains in place.
+- Reviews track exact source content even when large-file text cannot be retained. Same-size edits invalidate earlier
+  conclusions, and unreadable source cannot keep a favorable conclusion current.
+- A full named check without explicit paths includes unchecked adopted contracts in `status` and `show --pending` as
+  `not_checked`. Explicit path selections retain their existing scope.
+
 ## v0.16.1
 
 - Release automation runs version parsing with pinned Python 3.14.7 on native GitHub runners.

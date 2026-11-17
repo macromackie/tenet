@@ -119,12 +119,17 @@ fn compute_file_interdiff(
         },
         None => String::new(),
     };
-    let after = entry
-        .changes
-        .iter()
-        .find(|change| change.path == file.path)
-        .and_then(|change| change.after.clone())
-        .unwrap_or_default();
+    let after = match entry.changes.iter().find(|change| change.path == file.path) {
+        Some(change) => change.after.clone().unwrap_or_default(),
+        None if file.after.is_some() || file.error.is_some() => {
+            return Ok(Some(json!({
+                "path": path,
+                "note": "current source was not retained; inspect the complete file",
+                "error": file.error,
+            })));
+        },
+        None => String::new(),
+    };
     let lines = TextDiff::from_lines(&before, &after);
     let count = |tag| {
         lines

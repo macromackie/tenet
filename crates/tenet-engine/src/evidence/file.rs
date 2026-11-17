@@ -39,8 +39,8 @@ impl EvidencePacket<'_> {
             .plan
             .context
             .iter()
-            .filter(|support| support.path != change.path)
-            .map(|support| self.plan.build_context_input(support))
+            .filter(|support| **support != change.path)
+            .map(|support| self.build_context_input(support))
             .collect::<Result<_, _>>()?;
         let mut state = serde_json::json!({
             "contract": contract.body,
@@ -51,7 +51,7 @@ impl EvidencePacket<'_> {
         let mut omitted = Vec::new();
         let patched = !change.patch.is_empty();
         let limit_bytes = self.plan.read_input_limit_bytes();
-        let excerpt = self.plan.excerpts.get(&change.path);
+        let excerpt = self.excerpts.get(&change.path);
         for (part, present) in [
             (Omitted::Before, change.before.is_some() && patched),
             (Omitted::Contents, change.after.is_some() && patched),
@@ -85,7 +85,7 @@ impl EvidencePacket<'_> {
     }
 
     pub(crate) fn change(&self, path: &Path) -> Result<&Change, ChangeError> {
-        match self.changes.get(path) {
+        match self.changes.get(path).map(|source| &source.change) {
             Some(Ok(change)) => Ok(change),
             Some(Err(error)) => {
                 Err(match &**error {
@@ -95,7 +95,7 @@ impl EvidencePacket<'_> {
                             reason: *reason,
                         }
                     },
-                    CaptureError::Source(_) | CaptureError::Excerpt(_) => {
+                    CaptureError::Source(_) | CaptureError::Excerpt(_) | CaptureError::Limit(_) => {
                         ChangeError::Uncaptured {
                             path: path.to_owned(),
                             error: Arc::clone(error),

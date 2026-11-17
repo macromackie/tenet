@@ -29,6 +29,10 @@ impl Plan {
         let evidence = self
             .capture_with_limits(max_bytes, MAX_CAPTURE_BYTES)
             .await?;
+        match evidence.admit_context() {
+            Err(error) if error.is_size_limit() => {},
+            result => result?,
+        }
         let mut output = LimitedOutput::new(max_bytes);
         serde_json::to_writer(
             &mut output,
@@ -70,11 +74,8 @@ impl Serialize for Export<'_> {
         )?;
         state.serialize_field("selected_paths", &plan.selected_paths)?;
         state.serialize_field("selected_files", &plan.files)?;
-        state.serialize_field(
-            "support_files",
-            &Sequence(plan.context.iter().map(|change| &change.path)),
-        )?;
-        let excerpts: BTreeMap<_, _> = (plan.excerpts.iter())
+        state.serialize_field("support_files", &Sequence(plan.context.iter()))?;
+        let excerpts: BTreeMap<_, _> = (self.evidence.excerpts.iter())
             .map(|(path, excerpt)| (path, &excerpt.lines))
             .collect();
         state.serialize_field("excerpts", &excerpts)?;

@@ -14,7 +14,7 @@ pub struct Unchecked {
     pub base: String,
 }
 
-/// The current state of every contract that a review has checked.
+/// The current state of every contract the review covers, including unchecked contracts.
 #[derive(Debug)]
 pub struct Current<'review> {
     /// One row per contract and standing path selection, in contract order.
@@ -35,6 +35,8 @@ pub struct CurrentContract<'review> {
     pub changes: Vec<Change>,
     pub contract: Contract,
     pub files: Vec<ScopedFile>,
+    /// False when any source bytes could not be read exactly and stably.
+    pub has_complete_identity: bool,
     pub input: String,
     /// The confidence threshold that routed the model's conclusion for this input.
     pub min_confidence: Option<f64>,

@@ -1,51 +1,92 @@
-use alloc::collections::BTreeMap;
-use std::path::PathBuf;
-
-use super::{ContextError, SpanRequest, is_source};
-use crate::{Plan, change::Excerpt};
+use super::{ContextError, is_source};
+use crate::{Plan, SpanRequest};
 
 impl Plan {
-    /// Supply repository files as context, each once. A file named without lines is supplied
-    /// whole; otherwise only every range named for it. Lines the file no longer holds make it a
-    /// capture error, so recapturing an earlier check shows its input changed; a new check or
-    /// export refuses them with [`Plan::admit_context`].
+    /// Declare supporting paths and ranges without reading source before bounded capture.
     #[inline]
     pub fn with_context(mut self, requests: &[SpanRequest]) -> Result<Self, ContextError> {
-        let mut ranges: BTreeMap<PathBuf, Vec<[usize; 2]>> = (self.excerpts.iter())
-            .map(|(path, excerpt)| (path.clone(), excerpt.lines.clone()))
-            .collect();
         for request in requests {
             let path = &request.path;
+            if let Some((start, end)) = request.lines
+                && !(1 <= start && start <= end)
+            {
+                return Err(crate::ExcerptError::OutsideFile {
+                    path: path.clone(),
+                    start,
+                    end,
+                    lines: 0,
+                }
+                .into());
+            }
             if !is_source(&self.root, path).map_err(ContextError::Inspect)? {
                 return Err(ContextError::NotSource(path.clone()));
             }
-            let known = self.context.iter().any(|change| &change.path == path);
+            let known = self.context.contains(path);
             match request.lines {
                 None => {
-                    drop(ranges.remove(path));
+                    drop(self.excerpts.remove(path));
                 },
-                // A file already supplied whole stays whole.
-                Some(_) if known && !ranges.contains_key(path) => {},
+                Some(_) if known && !self.excerpts.contains_key(path) => {},
                 Some((start, end)) => {
-                    ranges
+                    self.excerpts
                         .entry(path.clone())
                         .or_default()
                         .push((start, end).into());
                 },
             }
-            if known {
-                continue;
+            if !known {
+                self.context.push(path.clone());
             }
-            self.context.push(self.read_change(path)?);
         }
-        self.excerpts = (self.context.iter())
-            .filter_map(|change| {
-                let lines = ranges.remove(&change.path)?;
-                let excerpt = Excerpt::new(change, lines.clone())
-                    .unwrap_or_else(|error| Excerpt::new_unavailable(lines, error));
-                Some((change.path.clone(), excerpt))
-            })
-            .collect();
+        for ranges in self.excerpts.values_mut() {
+            ranges.sort_unstable();
+            let mut merged: Vec<[usize; 2]> = Vec::new();
+            for &[start, end] in &*ranges {
+                match merged.last_mut() {
+                    Some(last) if start <= last[1].saturating_add(1) => last[1] = last[1].max(end),
+                    _ => merged.push([start, end]),
+                }
+            }
+            *ranges = merged;
+        }
         Ok(self)
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::inline_modules,
+    reason = "Raw range normalization is tested beside its owner."
+)]
+mod tests {
+    use std::fs;
+
+    use anyhow::Result;
+
+    use crate::{Selection, SpanRequest, plan};
+
+    #[test]
+    fn overlapping_valid_range_cannot_hide_a_reversed_public_request() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let document = root.path().join(".contracts/001-ranges");
+        fs::create_dir_all(&document)?;
+        fs::write(
+            document.join("CONTRACT.md"),
+            "---\nname: ranges\nmessage: Preserve source.\n---\n## Rules\nPreserve source.\n",
+        )?;
+        fs::write(root.path().join("file.rs"), "line\n".repeat(10))?;
+        let selected = plan(root.path(), &Selection::default())?;
+        let requests = [
+            SpanRequest {
+                path: "file.rs".into(),
+                lines: Some((1, 10)),
+            },
+            SpanRequest {
+                path: "file.rs".into(),
+                lines: Some((5, 4)),
+            },
+        ];
+        drop(selected.with_context(&requests).unwrap_err());
+        Ok(())
     }
 }

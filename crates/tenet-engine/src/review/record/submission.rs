@@ -1,16 +1,25 @@
 //! Bind an agent's conclusion to captured input before appending it to the log.
 
-use std::{
-    fs,
-    path::{Component, Path, PathBuf},
-};
+use std::path::{Component, Path, PathBuf};
 
-use super::{RecordRequest, Recorded, compute_id, select_scoped, validate};
+use super::{RecordRequest, Recorded, UNFAVORABLE, compute_id, select_scoped, validate};
 use crate::{
     ContractState,
+    ContractStatus,
     Pending,
+    evidence::read_record_source,
     plan,
-    review::{Entry, Record, Review, ReviewError, Span, read_clock, resolve_current},
+    review::{
+        Entry,
+        MAX_BLOB_BYTES,
+        Record,
+        Review,
+        ReviewError,
+        Role,
+        Span,
+        read_clock,
+        resolve_current,
+    },
 };
 
 /// Bind a conclusion to the input the latest check assessed. Refuse it when the contract's scoped
@@ -51,7 +60,23 @@ pub async fn record(
         }
     };
 
+    if !entry.has_complete_identity && request.conclusion != ContractStatus::Unresolved {
+        return Err(ReviewError::IdentityUnavailable(request.contract.clone()));
+    }
     let revision = review.find_revision(assessment.rev)?;
+    // Without retained diff text there are no exact changed-line citations. A favorable record
+    // must wait for an admissible diff or a full check, rather than cite an unrelated line.
+    if entry.mode == crate::Mode::Diff
+        && !UNFAVORABLE.contains(&request.conclusion)
+        && let Some(scoped) = entry.files.iter().find(|scoped| {
+            scoped.role == Role::Selected
+                && scoped.file.error.is_some()
+                && scoped.file.after.is_some()
+                && scoped.file.before != scoped.file.after
+        })
+    {
+        return Err(ReviewError::NoContents(scoped.file.path.clone()));
+    }
     let canonical = root.canonicalize().map_err(ReviewError::InvalidRoot)?;
     let mut evidence = Vec::new();
     for span in &request.evidence {
@@ -77,13 +102,14 @@ pub async fn record(
             });
             continue;
         }
-        let text = fs::read_to_string(&full).map_err(|source| {
-            ReviewError::ReadEvidence {
-                path: path.clone(),
-                source,
-            }
-        })?;
-        let count = text.lines().count();
+        let source = read_record_source(&canonical, &path, MAX_BLOB_BYTES).await?;
+        if file.after.as_deref() != Some(source.hash.as_str()) {
+            return Err(ReviewError::Stale {
+                contract: request.contract.clone(),
+                rev: entry.selection.rev,
+            });
+        }
+        let count = source.lines;
         if let Some((start, end)) = span.lines
             && end > count
         {
@@ -94,10 +120,14 @@ pub async fn record(
                 count,
             });
         }
+        let blob = match source.text {
+            Some(text) => review.keep(&text)?,
+            None => source.hash,
+        };
         evidence.push(Span {
             path,
             lines: span.lines.map(Into::into),
-            blob: review.keep(&text)?,
+            blob,
         });
     }
 

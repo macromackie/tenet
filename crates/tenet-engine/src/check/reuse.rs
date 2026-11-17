@@ -45,13 +45,15 @@ pub fn apply_review<Halted>(
         let scope = plan.find_requested_scope(contract);
         let earlier = review
             .find_assessment(&contract.name, &input)
-            .filter(|assessment| assessment.conclusion.is_some());
+            .filter(|assessment| assessment.conclusion.is_some())
+            .filter(|_| evidence.has_complete_identity(contract));
         let conclusion = earlier.and_then(|assessment| assessment.conclusion.clone());
         let state = review.compute_state(
             plan,
             contract,
             &input,
             conclusion.as_ref().map(|concluded| concluded.status),
+            evidence.has_complete_identity(contract),
         );
         let result = conclusion.as_ref().map(|concluded| {
             ContractResult {

@@ -101,6 +101,10 @@ impl Excerpt {
             contents: Err(error),
         }
     }
+
+    pub(crate) fn read_retained_contents(&self) -> Option<&serde_json::Value> {
+        self.contents.as_ref().ok()
+    }
 }
 
 /// Inclusive line ranges as text, such as `3, 10-12`.

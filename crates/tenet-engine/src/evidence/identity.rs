@@ -18,6 +18,17 @@ impl EvidencePacket<'_> {
         let mut files = self.list_scoped_files(contract);
         for scoped in &mut files {
             scoped.file.changed.clear();
+            // Retention pressure changes availability, never exact source identity.
+            if self.changes.get(&scoped.file.path).is_some_and(|source| {
+                source.has_complete_identity
+                    && source
+                        .change
+                        .as_ref()
+                        .err()
+                        .is_some_and(|error| error.is_size_limit())
+            }) {
+                scoped.file.error = None;
+            }
         }
         let facts = serde_json::json!({
             "contract": contract.hash,
@@ -30,6 +41,18 @@ impl EvidencePacket<'_> {
         hash_content(&facts.to_string())
     }
 
+    /// Whether every selected and supporting source was read exactly and remained stable.
+    #[must_use]
+    #[inline]
+    pub fn has_complete_identity(&self, contract: &tenet_contracts::Contract) -> bool {
+        let scope = Scope::new(self.plan, contract);
+        scope.selected.iter().chain(&scope.support).all(|path| {
+            self.changes
+                .get(*path)
+                .is_some_and(|source| source.has_complete_identity)
+        })
+    }
+
     /// Identities of the selected and supporting files one contract's assessment covers.
     #[must_use]
     #[inline]
@@ -40,36 +63,23 @@ impl EvidencePacket<'_> {
         selected
             .chain(support)
             .map(|(path, role)| {
+                let captured = self.changes.get(path);
+                let change = captured.and_then(|source| source.change.as_ref().ok());
                 ScopedFile {
                     role,
-                    file: match self.change(path) {
-                        Ok(change) => {
-                            CapturedFile {
-                                path: path.clone(),
-                                previous_path: change.previous_path.clone(),
-                                before: change.before.as_deref().map(hash_content),
-                                after: change.after.as_deref().map(hash_content),
-                                error: None,
-                                changed: match self.plan.mode {
-                                    Mode::Diff => change.changed.clone(),
-                                    Mode::Full => Vec::new(),
-                                },
-                                excerpt: (self.plan.excerpts.get(path))
-                                    .map(|excerpt| excerpt.lines.clone())
-                                    .unwrap_or_default(),
-                            }
+                    file: CapturedFile {
+                        path: path.clone(),
+                        previous_path: self.plan.previous_paths.get(path).cloned(),
+                        before: captured.and_then(|source| source.before.clone()),
+                        after: captured.and_then(|source| source.after.clone()),
+                        error: self.change(path).err().map(|error| error.to_string()),
+                        changed: match self.plan.mode {
+                            Mode::Diff => {
+                                change.map_or_else(Vec::new, |value| value.changed.clone())
+                            },
+                            Mode::Full => Vec::new(),
                         },
-                        Err(error) => {
-                            CapturedFile {
-                                path: path.clone(),
-                                previous_path: self.plan.previous_paths.get(path).cloned(),
-                                before: None,
-                                after: None,
-                                error: Some(error.to_string()),
-                                changed: Vec::new(),
-                                excerpt: Vec::new(),
-                            }
-                        },
+                        excerpt: self.plan.excerpts.get(path).cloned().unwrap_or_default(),
                     },
                 }
             })

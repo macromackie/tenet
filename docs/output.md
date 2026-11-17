@@ -38,7 +38,7 @@ unrelated files keeps its conclusions. A record from `tenet record` settles its 
 | `model_unresolved` | The model could not decide, or its evidence or execution was incomplete, such as a [failed request](#failed-requests); `status` and `show` print its lean, as in `leans no violation · confidence 0.56 < 0.8` |
 | `not_assessed`     | `check --no-model` captured the input without asking the model                                                                                                                                                |
 | `inputs_changed`   | A scoped file or the contract changed after the latest check (`status` only)                                                                                                                                  |
-| `not_checked`      | No check assessed the contract: it joined the review later, or a diff check named another contract (`status` only)                                                                                            |
+| `not_checked`      | No check assessed the contract in an open review scope, including a sibling or newly added requirement after a repository-wide named check (`status` only)                                                    |
 | `contract_changed` | The diff adds or edits the contract, so a favorable diff answer cannot settle it                                                                                                                              |
 
 A record or conclusion never carries to a different input. `tenet show` lists outdated ones with the changes since.
@@ -222,7 +222,7 @@ contracts govern the rest. A check that no contract governs still exits 0 and ne
 
 | Code | Meaning                                                                                                                                                      |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0    | Every contract is settled without a violation                                                                                                                |
+| 0    | Every contract in the check selection or current review is settled without a violation                                                                       |
 | 1    | A settled violation: a recorded failure                                                                                                                      |
 | 2    | Invalid arguments or configuration, credentials or an endpoint the provider rejected, unreadable review state, a capture failure, or another execution error |
 | 3    | A recorded `unresolved` conclusion                                                                                                                           |
@@ -233,6 +233,11 @@ Cancellation takes precedence, then execution errors, pending contracts, violati
 conclusions. A model's `failed` exits 4 until a record confirms it. A [failed request](#failed-requests) leaves its
 contract pending, so the check exits 4, unless a record settles the contract or the failure stopped the check. Exit 0 can include `clear` results for selected
 subjects, so it does not imply full contract verification. Findings remain available whatever decides the exit code.
+
+A named `check` reports the contracts it assessed. After a full check with no positional paths, `status` covers the
+repository's current contract inventory, including requirements that no check has assessed. Those rows are
+`not_checked` and keep the review at exit 4. A full named check with explicit positional paths does not open
+unrelated contracts. Earlier broader selections remain part of the review; see [review coverage](./reviews.md#keep-reviews-current).
 
 File diagnostics highlight the contract requirement; Tenet does not invent an exact source span for a file-level judgment. The reviewing agent locates actionable code.
 

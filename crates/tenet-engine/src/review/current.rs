@@ -4,8 +4,9 @@
 //! selection: a revision's assessment of a contract stands until a later revision assesses that
 //! contract with paths that cover it, or assesses the contract's whole scope. A contract is
 //! settled only when every assessment still standing is settled, so a narrower check never hides
-//! pending work from a broader one. In a diff review, every contract a checked selection governs
-//! takes part, so checking one contract by name leaves the others unchecked, not gone.
+//! pending work from a broader one. A repository-wide full check opens the current contract
+//! inventory, and a diff review opens every contract its checked selection governs. Naming one
+//! contract leaves the others unchecked, not gone.
 
 mod state;
 
@@ -133,12 +134,14 @@ pub async fn resolve_current<'review>(
             .assessed_contracts
             .insert(&assessment.contract, assessment);
     }
-    // A selection is open to every contract in its scope when its check ran them all, or in a
-    // diff review, where the change's contracts belong to the review whichever one a check named.
+    // Unfiltered checks and diff selections open their scopes. A full check without positional
+    // paths also opens the repository inventory, whichever single contract it assessed.
     let open: Vec<&Revision> = family_revisions
         .values()
         .copied()
-        .filter(|revision| revision.contract.is_none() || revision.base_oid.is_some())
+        .filter(|revision| {
+            revision.contract.is_none() || revision.base_oid.is_some() || revision.paths.is_empty()
+        })
         .collect();
     for (index, revision) in open.iter().enumerate() {
         if !open[index + 1..]
@@ -209,6 +212,7 @@ pub async fn resolve_current<'review>(
             };
             let input = evidence.derive_input_key(contract);
             let assessment = review.find_assessment(name, &input);
+            let has_complete_identity = evidence.has_complete_identity(contract);
             let state = match (assessment, latest_assessment) {
                 (Some(found), _) => {
                     review.compute_state(
@@ -219,6 +223,7 @@ pub async fn resolve_current<'review>(
                             .conclusion
                             .as_ref()
                             .map(|conclusion| conclusion.status),
+                        has_complete_identity,
                     )
                 },
                 (None, Some(_)) => {
@@ -248,6 +253,7 @@ pub async fn resolve_current<'review>(
                 changes,
                 contract: contract.clone(),
                 files,
+                has_complete_identity,
                 input,
                 min_confidence,
                 mode: plan.mode,

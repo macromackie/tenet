@@ -55,10 +55,22 @@ If the reduced repository context still exceeds the limit, the file checks run a
 Large scopes may therefore need a reviewing agent to complete the assessment. Narrowing positional paths or explicit
 context changes the supplied evidence; record the remaining scope instead of treating a smaller check as full coverage.
 
-Checks, dry runs, and exports also have a fixed 64 MiB aggregate capture limit. It counts serialized contract data
-and original documents, plus distinct source records including paths, patches, and read errors. This bounds the
-captured payload, not total process memory. Capture overflow exits 2 before any model requests. Increasing the
-request budget does not raise this bound.
+Checks and dry runs retain at most 64 MiB of source and 64 MiB of encoded capture data, including contract documents,
+paths, patches, excerpts, and read errors. A source file or aggregate payload that exceeds these bounds stays in scope
+as incomplete evidence. Tenet defers complete larger payloads so other admissible checks can continue; it never samples
+or silently truncates a file. A combined assessment that needs deferred source remains unresolved. Increasing the request
+budget does not raise these bounds.
+
+Tenet streams readable deferred files to retain their exact content hashes. A same-size edit still invalidates a recorded
+conclusion. A file that cannot be read stably has no complete identity: substantive approvals and failures cannot stay current,
+and only an unresolved conclusion can be recorded until the source is available. Large readable files can still support
+manual records; citation reads retain at most the review's 1 MiB blob bound. A favorable diff record also needs captured
+changed-line evidence, or a whole deleted file; inspect a full check when the diff cannot supply that evidence.
+
+The capture bounds apply to retained data, not total process memory or hashing work. Contract documents and source metadata
+must themselves fit the fixed capture bound. If documents or path and error records alone exhaust it, preparation exits 2
+before model requests. This resource refusal is separate from an oversized source file's incomplete assessment.
+Exports have the same bounded source capture and refuse a packet whose complete source cannot be retained.
 
 The offline [`export` command](./export.md#bounds-and-errors) has a separate packet limit; it does not enlarge model inputs.
 

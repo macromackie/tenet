@@ -58,6 +58,15 @@ pub(super) fn prepare(
                 reason_code: ConclusionReason::ContextTooLarge,
             })
         },
+        Err(error) if error.is_size_limit() => {
+            Err(Unavailable {
+                context: None,
+                error: None,
+                failure: None,
+                reason: format!("Combined context exceeds capture limit: {error:#}"),
+                reason_code: ConclusionReason::ContextTooLarge,
+            })
+        },
         Err(error) => {
             Err(Unavailable {
                 context: None,
@@ -105,7 +114,7 @@ fn capture(
                 files.push(if selected {
                     change.describe_current_input()
                 } else {
-                    evidence.plan.build_context_input(change)?
+                    evidence.build_context_input(&change.path)?
                 });
                 if evidence.plan.mode == Mode::Diff && selected {
                     changes.push(serde_json::to_value(change)?);
@@ -175,7 +184,7 @@ fn capture(
             continue;
         } else if let Some(file) = largest {
             let path: PathBuf = serde_json::from_value(file["path"].clone())?;
-            file["contents"] = match evidence.plan.excerpts.get(&path) {
+            file["contents"] = match evidence.excerpts.get(&path) {
                 Some(excerpt) => {
                     drop(summary.excerpts.insert(path.clone(), excerpt.lines.clone()));
                     excerpt.contents()?

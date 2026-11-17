@@ -88,9 +88,16 @@ protocol. Older revisions without those settings use `standard` and batch size 1
 Checks against the same base commit form one review, whichever paths they select. A later check replaces an earlier
 assessment of a contract only when it selects every path the earlier check did, or the contract's whole scope.
 Otherwise both stand, and the contract is settled only when each is. A check of one file therefore cannot hide a
-failure that a check of the whole change found. In a diff review, a check that names one contract with `--contract`
-leaves the change's other contracts `not_checked` rather than dropping them. `status` lists such a contract once per standing check and notes the
-earlier check's paths; `tenet show NAME PATH...` and `tenet record NAME PATH...` name the one you mean.
+failure that a check of the whole change found.
+
+A full check without positional paths opens the repository's current contract inventory, even when `--contract NAME`
+assesses only one requirement. `status` and `show --pending` keep its unchecked siblings visible as `not_checked`;
+newly added contracts join that pending inventory. Each assessed contract retains its own source, supporting context,
+and recorded conclusion. Checking another contract with different context does not replace those inputs.
+In a diff review, a named check similarly leaves the change's other contracts `not_checked` rather than dropping them.
+A full named check with explicit positional paths does not open unrelated contracts; an earlier broader review still stands.
+`status` lists each contract once per standing selection and notes the earlier check's paths;
+`tenet show NAME PATH...` and `tenet record NAME PATH...` name the one you mean.
 
 An agent can split the work: give one subagent each pending contract with `tenet show NAME`, and have it record a
 conclusion. Records for different contracts do not conflict.

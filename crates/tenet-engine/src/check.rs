@@ -283,6 +283,7 @@ where
             contract,
             &input,
             Some(conclusion.status),
+            self.evidence.has_complete_identity(contract),
         );
         Ok(Assessed {
             conclusion,

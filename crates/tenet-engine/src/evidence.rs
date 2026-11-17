@@ -1,10 +1,12 @@
 mod capture;
+mod context;
 mod export;
 mod file;
 mod hunks;
 mod identity;
 mod record;
 mod scope;
+mod source;
 
 use alloc::{collections::BTreeMap, sync::Arc};
 use std::{io, path::PathBuf};
@@ -12,9 +14,9 @@ use std::{io, path::PathBuf};
 pub use hunks::HunkInput;
 pub use record::{CapturedFile, Role, ScopedFile};
 pub(crate) use scope::Scope;
+pub(crate) use source::read_record_source;
 
 use crate::{
-    Change,
     Plan,
     change::{ExcerptError, InputLimit, SourceError, Unreadable},
     report::Causes,
@@ -28,6 +30,8 @@ pub enum EvidenceError {
          not truncated"
     )]
     CaptureTooLarge(usize),
+    #[error(transparent)]
+    Context(#[from] crate::ContextError),
     #[error("contract documents exceed evidence limit of {0:?} bytes; input was not truncated")]
     ContractsTooLarge(usize),
     #[error(transparent)]
@@ -47,7 +51,19 @@ pub enum CaptureError {
     #[error(transparent)]
     Excerpt(#[from] ExcerptError),
     #[error(transparent)]
+    Limit(#[from] InputLimit),
+    #[error(transparent)]
     Source(#[from] SourceError),
+}
+
+impl CaptureError {
+    pub(crate) const fn is_size_limit(&self) -> bool {
+        match self {
+            Self::Limit(_) => true,
+            Self::Source(source) => matches!(source, SourceError::CaptureLimit { .. }),
+            Self::Excerpt(_) => false,
+        }
+    }
 }
 
 /// Why a file's captured change cannot be judged, naming the file.
@@ -82,6 +98,20 @@ pub enum InputError {
     Unreadable(#[from] Unreadable),
 }
 
+impl InputError {
+    pub(crate) fn is_size_limit(&self) -> bool {
+        match self {
+            Self::Limit(_) => true,
+            Self::Change(ChangeError::Uncaptured { error, .. }) => error.is_size_limit(),
+            Self::Change(ChangeError::NotCaptured(_) | ChangeError::Unreadable { .. })
+            | Self::Encode(_)
+            | Self::Excerpt(_)
+            | Self::NotUtf8Path
+            | Self::Unreadable(_) => false,
+        }
+    }
+}
+
 /// Source captured before assessment, shared by every request in one run.
 #[derive(Debug)]
 #[expect(
@@ -90,7 +120,8 @@ pub enum InputError {
               module."
 )]
 pub struct EvidencePacket<'plan> {
-    changes: BTreeMap<PathBuf, Result<Change, Arc<CaptureError>>>,
+    changes: BTreeMap<PathBuf, source::CapturedSource>,
+    pub(crate) excerpts: BTreeMap<PathBuf, crate::Excerpt>,
     pub(crate) plan: &'plan Plan,
 }
 
@@ -105,6 +136,9 @@ pub fn classify_input_status(error: &InputError) -> (crate::Status, String) {
             (crate::Status::Skipped, reason.to_string())
         },
         InputError::Limit(_) => (crate::Status::Incomplete, error.to_string()),
+        InputError::Change(ChangeError::Uncaptured {
+            error: captured, ..
+        }) if captured.is_size_limit() => (crate::Status::Incomplete, error.to_string()),
         InputError::Change(ChangeError::Uncaptured { .. } | ChangeError::NotCaptured(_))
         | InputError::Excerpt(_)
         | InputError::Encode(_)

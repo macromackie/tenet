@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use super::{MAX_MESSAGE_BYTES, list_conclusions};
+use super::{MAX_MESSAGE_BYTES, UNFAVORABLE, list_conclusions};
 use crate::{
     ContractStatus,
     Mode,
@@ -16,8 +16,6 @@ use crate::{
 const LISTED_CHANGES: usize = 10;
 /// The control characters a record message may hold.
 const MESSAGE_CONTROLS: [char; 2] = ['\n', '\t'];
-/// The conclusions a record cannot reach while a check still fails.
-const UNFAVORABLE: [ContractStatus; 2] = [ContractStatus::Failed, ContractStatus::Unresolved];
 
 /// What every record must satisfy against the assessment it settles, one of `revision`'s, whether
 /// `record` is making it or the log is being read; `review` holds the entries before it.

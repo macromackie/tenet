@@ -25,7 +25,7 @@ impl<'plan> Scope<'plan> {
         let support = plan
             .context
             .iter()
-            .filter_map(|change| supplied_paths.insert(&change.path).then_some(&change.path))
+            .filter(|path| supplied_paths.insert(path))
             .collect();
         let inventory: Vec<_> = plan
             .inventory
@@ -58,7 +58,7 @@ impl<'plan> Scope<'plan> {
             selected_files: self.selected.iter().map(|path| (*path).clone()).collect(),
             support_files: self.support.iter().map(|path| (*path).clone()).collect(),
             excerpts: (self.support.iter())
-                .filter_map(|path| Some(((*path).clone(), plan.excerpts.get(*path)?.lines.clone())))
+                .filter_map(|path| Some(((*path).clone(), plan.excerpts.get(*path)?.clone())))
                 .collect(),
             omitted_files: self.omitted.len(),
             before_omitted: false,

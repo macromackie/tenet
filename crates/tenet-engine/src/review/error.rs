@@ -41,6 +41,11 @@ pub enum ReviewError {
     Git(#[from] GitError),
     #[error("its id does not match its contents")]
     IdMismatch,
+    #[error(
+        "{0:?}: source identity is unavailable; only unresolved can be recorded until every \
+         scoped source can be read stably"
+    )]
+    IdentityUnavailable(String),
     #[error(transparent)]
     Inspect(io::Error),
 
@@ -148,6 +153,8 @@ pub enum ReviewError {
         start: usize,
         end: usize,
     },
+    #[error(transparent)]
+    Source(#[from] crate::SourceError),
     #[error("{contract:?}: scoped files changed after r{rev:?}; run tenet check before recording")]
     Stale { contract: String, rev: u64 },
     #[error(transparent)]

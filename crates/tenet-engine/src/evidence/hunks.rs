@@ -147,10 +147,10 @@ impl EvidencePacket<'_> {
             .plan
             .context
             .iter()
-            .filter(|support| support.path != change.path)
-            .map(|support| self.plan.build_context_input(support))
+            .filter(|support| **support != change.path)
+            .map(|support| self.build_context_input(support))
             .collect::<Result<Vec<_>, _>>()?;
-        let contents = if let Some(excerpt) = self.plan.excerpts.get(&change.path) {
+        let contents = if let Some(excerpt) = self.excerpts.get(&change.path) {
             excerpt.contents()?
         } else {
             change::describe_omitted("only named hunks supplied")

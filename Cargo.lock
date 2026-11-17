@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "tenet"
-version = "0.16.1"
+version = "0.16.2"
 dependencies = [
  "annotate-snippets",
  "anyhow",
@@ -1476,7 +1476,7 @@ dependencies = [
 
 [[package]]
 name = "tenet-contracts"
-version = "0.16.1"
+version = "0.16.2"
 dependencies = [
  "blake3",
  "globset",
@@ -1489,13 +1489,14 @@ dependencies = [
 
 [[package]]
 name = "tenet-engine"
-version = "0.16.1"
+version = "0.16.2"
 dependencies = [
  "anyhow",
  "blake3",
  "ev-grep-core",
  "futures-util",
  "ignore",
+ "memchr",
  "serde",
  "serde_json",
  "similar",

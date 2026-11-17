@@ -49,13 +49,17 @@ pub(super) async fn evaluate(
         return report_dry_run(&plan, &selection, snapshot, state, check, kind).await;
     }
 
+    let evidence = plan.capture().await?;
+    match evidence.admit_context() {
+        Err(error) if error.is_size_limit() => {},
+        result => result?,
+    }
     // A snapshot is a temporary copy, so its review is discarded with it.
     let mut review = if snapshot.is_some() {
         Review::new_ephemeral()
     } else {
         Review::open(state)?
     };
-    let evidence = plan.capture().await?;
     let emit = |event| reporter.borrow_mut().emit(event);
     let begin = |provider: Option<String>, model: Option<String>| {
         RunInfo {
