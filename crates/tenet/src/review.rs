@@ -25,7 +25,7 @@ use files::write_files;
 pub(crate) use mutations::{log, record};
 use serde_json::Value;
 pub(crate) use show::{show, show_pending};
-pub(crate) use status::report_status;
+pub(crate) use status::{report_status, write_mechanical};
 use tenet_engine::{
     Status,
     review::{Assessment, Record},

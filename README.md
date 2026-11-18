@@ -6,10 +6,9 @@ Check code against requirements written in Markdown.
 
 ```sh
 curl -fsSL https://tenet-contracts.com/install.sh | bash
-export OPENROUTER_API_KEY='your-key'
 ```
 
-Binaries support macOS and Linux on ARM64 and x86-64. [Provider setup](docs/installation.md) also covers TypeSafe.
+Binaries support macOS and Linux on ARM64 and x86-64. Local checks run with the tools installed in your project. For model review, set `OPENROUTER_API_KEY` or configure TypeSafe. See [Provider setup](docs/installation.md).
 
 ## Check code
 
@@ -17,9 +16,12 @@ Write numbered [contracts](docs/contracts.md) under `.contracts/`, then run:
 
 ```sh
 tenet validate                     # Check contract documents offline
+tenet check --local                # Run declared project tests and linters
 tenet check                        # Assess the current repository
 tenet check --base origin/main     # Assess changes, assuming a valid base
 ```
+
+To attach a test to a contract, replay one failure, and inspect saved results, see [Local checks](docs/local-checks.md).
 
 For example, a contract can require database failures to reach the caller rather than become empty results.
 Tenet checks relevant files and their combined context, then reports one conclusion per contract.

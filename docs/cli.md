@@ -3,7 +3,9 @@
 ```sh
 tenet check
 tenet check --base origin/main
-tenet status [--base REF] [--json] [--prune-cache]
+tenet check --local [CONTRACT/NAME] [--fresh] [--json]
+tenet status --local [CONTRACT/NAME] [--json]
+tenet status [--base REF] [--evidence PATH] [--json] [--prune-cache]
 tenet show NAME [PATH ...] [--json]
 tenet show --pending [--json]
 tenet record NAME [PATH ...] --conclusion CONCLUSION [--evidence PATH:START-END ...] -m MESSAGE
@@ -103,15 +105,16 @@ the working tree with that commit, not with what `--base` names today.
 The directory ignores itself; if Git tracks a file in it anyway, every command below exits 2 until it is untracked.
 Each contract is settled or pending; see [Reviews](./reviews.md).
 
-| Command                | Effect                                                                                                       | Exit                                               |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
-| `status`               | Recompute inputs from the working tree and list each contract's state; never writes or calls a model         | As `check`                                         |
-| `status --base REF`    | The same for the review against `REF`                                                                        | As `check`, or 4 when no check compares with `REF` |
-| `status --prune-cache` | First remove the cached answers this Tenet cannot reuse, and say how many on stderr; the log stays unchanged | As `status`                                        |
-| `show NAME`            | Show the model's answer, records, changes since an outdated result, the contract, and the change             | 0                                                  |
-| `show --pending`       | Show every pending contract and their shared change once                                                     | 0                                                  |
-| `record NAME`          | Settle the contract's current input with a conclusion, evidence, and a message                               | 0, or 2 if refused                                 |
-| `log [NAME]`           | List revisions, assessments, and records, newest first; `--json` prints each entry in order                  | 0                                                  |
+| Command                  | Effect                                                                                                       | Exit                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `status`                 | Recompute inputs from the working tree and list each contract's state; never writes or calls a model         | As `check`                                         |
+| `status --base REF`      | The same for the review against `REF`                                                                        | As `check`, or 4 when no check compares with `REF` |
+| `status --prune-cache`   | First remove the cached answers this Tenet cannot reuse, and say how many on stderr; the log stays unchanged | As `status`                                        |
+| `status --evidence PATH` | Compare [local mechanical evidence](#mechanical-evidence) with the working tree                              | As `status`, or 2 for invalid evidence             |
+| `show NAME`              | Show the model's answer, records, changes since an outdated result, the contract, and the change             | 0                                                  |
+| `show --pending`         | Show every pending contract and their shared change once                                                     | 0                                                  |
+| `record NAME`            | Settle the contract's current input with a conclusion, evidence, and a message                               | 0, or 2 if refused                                 |
+| `log [NAME]`             | List revisions, assessments, and records, newest first; `--json` prints each entry in order                  | 0                                                  |
 
 `record` refuses a contract whose scoped files changed after its latest check: run `check` again first. The conclusion
 must fit the check: `verified` for a full check of the full contract, `preserved` or `unaffected` for a diff, and `clear`
@@ -138,6 +141,38 @@ answers repeated identical requests from `.tenet/answers.jsonl`; `--fresh` asks 
 only by the same Tenet version and provider, for the model revision the provider reported. `status --prune-cache`
 removes the answers an earlier Tenet wrote and those a later answer to the same request replaced. Delete `.tenet/` to
 forget the review.
+
+## Mechanical evidence
+
+Use [local checks](./local-checks.md) to bind and replay a project checker with Tenet.
+
+Run `tenet status --evidence /path/to/receipt.json --json` with a receipt from your trusted local checker.
+Tenet reads the receipt and the project. The checker runs separately. Use receipts written outside the assessed
+checkout when evaluating changes made by an agent.
+
+A version 1 receipt document contains a `receipts` array. Supply one entry per tool result and obligation.
+Each entry has these fields.
+
+| Field             | Value                                                                                                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `contract`        | The contract's unique name.                                                                                                                                                    |
+| `obligation`      | An ID declared under `checks` in that contract.                                                                                                                                |
+| `contract_sha256` | The lowercase SHA-256 hex digest of the exact contract document bytes.                                                                                                         |
+| `checker`         | The runner identity as reported by the trusted producer.                                                                                                                       |
+| `files`           | An object mapping each project-relative subject and dependency path to its lowercase SHA-256 hex digest. Include checker code and configuration when they live in the project. |
+| `discover`        | Project-relative glob patterns whose matching inventory must agree with `files`. Use an empty array for a fixed input set. Discovery uses Tenet's ordinary project inventory.  |
+| `outcome`         | `pass`, `fail`, or `unresolved`. Use `unresolved` for timeout, incomplete coverage, or tool failure.                                                                           |
+| `message`         | The checker's evidence summary or reason for an unresolved outcome.                                                                                                            |
+
+The producer should capture the hashed inputs around the checker run and emit an unresolved result if they change
+during execution. Tenet checks contract and dependency bytes again during status. It also checks for any file added
+to or removed from a discovery pattern. Outdated evidence retains the original outcome. An empty receipt array
+reports all declared checks as missing.
+
+`mechanical_evidence` lists these rows alongside the semantic review. The standard status exit code still describes
+that review, or is 2 if Tenet rejects the receipt. To use mechanical results as a gate, require both
+`freshness: current` and `observed_outcome: pass` for each required obligation. Status accepts at most 2 MiB
+of receipt JSON and hashes at most 64 MiB of distinct dependencies per invocation.
 
 ## Export
 

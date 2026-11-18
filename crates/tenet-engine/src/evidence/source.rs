@@ -5,6 +5,7 @@ mod reader;
 use alloc::sync::Arc;
 use std::{io, path::Path};
 
+pub(crate) use current::is_stable_metadata;
 use reader::ReadSource;
 
 use super::CaptureError;

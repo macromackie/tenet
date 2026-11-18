@@ -1,5 +1,10 @@
 //! Scoped file selection and ordered, bounded contract evaluation.
 
+#![expect(
+    clippy::multiple_crate_versions,
+    reason = "SHA-256 and BLAKE3 pin different cpufeatures versions listed in deny.toml."
+)]
+
 extern crate alloc;
 
 pub mod adoption;
@@ -10,6 +15,7 @@ mod evidence;
 mod failure;
 mod git;
 mod lock;
+pub mod mechanical;
 mod plan;
 mod report;
 pub mod review;

@@ -24,6 +24,8 @@ pub struct Contract {
     pub message: String,
     pub name: String,
     pub number: u32,
+    #[serde(rename = "checks", skip_serializing_if = "Vec::is_empty")]
+    pub obligations: Vec<String>,
     pub path: PathBuf,
     /// The front matter's `paths` patterns; every file in scope when absent. See
     /// [`Contract::is_governing`].

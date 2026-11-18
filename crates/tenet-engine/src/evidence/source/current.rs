@@ -50,7 +50,7 @@ impl MetadataIdentity {
     }
 }
 
-fn is_stable(before: &Metadata, after: &Metadata) -> bool {
+pub(crate) fn is_stable_metadata(before: &Metadata, after: &Metadata) -> bool {
     let (Ok(before_identity), Ok(after_identity)) = (
         MetadataIdentity::read(before),
         MetadataIdentity::read(after),
@@ -77,7 +77,7 @@ async fn capture_link(
             source: cause,
         }
     })?;
-    if !is_stable(metadata, &after) {
+    if !is_stable_metadata(metadata, &after) {
         return Err(SourceError::ChangedDuringRead(path.to_owned()));
     }
     let bytes = target.as_os_str().as_encoded_bytes();
@@ -109,7 +109,7 @@ async fn capture_file(
             source: cause,
         }
     })?;
-    if !is_stable(metadata, &opened) {
+    if !is_stable_metadata(metadata, &opened) {
         return Err(SourceError::ChangedDuringRead(path.to_owned()));
     }
     let captured = read_stream(path, &mut file, metadata.len(), retain_bytes).await?;
@@ -125,7 +125,7 @@ async fn capture_file(
             source: cause,
         }
     })?;
-    if !is_stable(metadata, &after) || !is_stable(metadata, &named) {
+    if !is_stable_metadata(metadata, &after) || !is_stable_metadata(metadata, &named) {
         return Err(SourceError::ChangedDuringRead(path.to_owned()));
     }
     Ok(captured)

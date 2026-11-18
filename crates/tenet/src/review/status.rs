@@ -1,10 +1,17 @@
-use std::{io::Write as _, path::Path};
+mod checks;
 
+use std::{
+    io::{self, Write as _},
+    path::Path,
+};
+
+pub(crate) use checks::write_mechanical;
 use serde_json::json;
 use tenet_engine::{
     ContractState,
     Pending,
     Review,
+    mechanical,
     review::{self, CurrentContract, ReviewError},
 };
 
@@ -49,10 +56,6 @@ use crate::{
     reason = "Each step rebinds the value it converts under the same name."
 )]
 #[expect(
-    clippy::shadow_unrelated,
-    reason = "Each block binds its own result under the name the following lines read."
-)]
-#[expect(
     clippy::too_many_lines,
     reason = "The steps run in one order and share local state; splitting them would add \
               forwarding functions."
@@ -65,10 +68,22 @@ pub(crate) async fn report_status(
     root: &Path,
     state: &Path,
     base: Option<&str>,
+    evidence: Option<&Path>,
     json: bool,
     prune_cache: bool,
 ) -> Result<ExitStatus, CommandError> {
-    let review = Review::open_existing(state)?;
+    let mechanical = if let Some(path) = evidence {
+        Some(mechanical::verify(root, path)?)
+    } else if mechanical::has_local_results(state) {
+        Some(mechanical::inspect_local(root, state, None)?)
+    } else {
+        None
+    };
+    let review = if mechanical.is_some() {
+        Review::read(state)?
+    } else {
+        Review::open_existing(state)?
+    };
     if prune_cache {
         let pruned = review.prune_answers()?;
         writeln!(
@@ -82,25 +97,22 @@ pub(crate) async fn report_status(
     let current = match review::resolve_current(root, &review, base, None).await {
         Ok(current) => current,
         Err(ReviewError::Unchecked(unchecked)) => {
-            // The review against this commit has not begun, so nothing in it is settled.
-            if json {
-                let message = unchecked.to_string();
-                let base = &unchecked.base;
-                output::write_document(
-                    &mut out,
-                    STATUS_VERSION,
-                    json!({
-                        "base": base,
-                        "revision": null,
-                        "contracts": [],
-                        "exit_code": u8::from(ExitStatus::Pending),
-                        "message": message,
-                    }),
-                )?;
-            } else {
-                writeln!(out, "{unchecked}")?;
-            }
-            return Ok(ExitStatus::Pending);
+            return write_unchecked(
+                &mut out,
+                Some(&unchecked.base),
+                &unchecked.to_string(),
+                mechanical.as_deref(),
+                json,
+            );
+        },
+        Err(error @ ReviewError::NoChecks) if mechanical.is_some() => {
+            return write_unchecked(
+                &mut out,
+                None,
+                &error.to_string(),
+                mechanical.as_deref(),
+                json,
+            );
         },
         Err(error) => return Err(error.into()),
     };
@@ -127,10 +139,7 @@ pub(crate) async fn report_status(
                 Ok(value)
             })
             .collect::<Result<Vec<_>, CommandError>>()?;
-        output::write_document(
-            &mut out,
-            STATUS_VERSION,
-            json!({
+        let mut document = json!({
                 "review": current.latest.review,
                 "base": current.latest.base_oid,
                 "revision": current.latest.rev,
@@ -138,8 +147,11 @@ pub(crate) async fn report_status(
                 "contracts": contracts,
                 "deleted_contracts": current.deleted,
                 "exit_code": u8::from(status),
-            }),
-        )?;
+        });
+        if let Some(rows) = &mechanical {
+            document["mechanical_evidence"] = json!(rows);
+        }
+        output::write_document(&mut out, STATUS_VERSION, document)?;
         return Ok(status);
     }
     writeln!(
@@ -186,6 +198,9 @@ pub(crate) async fn report_status(
             format_marker("DELETED"),
             path.display()
         )?;
+    }
+    if let Some(rows) = &mechanical {
+        write_mechanical(&mut out, rows)?;
     }
     let pending: Vec<_> = current
         .contracts
@@ -249,4 +264,36 @@ pub(crate) async fn report_status(
         )?;
     }
     Ok(status)
+}
+
+#[expect(
+    clippy::indexing_slicing,
+    reason = "The document is built as an object before adding optional mechanical evidence."
+)]
+fn write_unchecked(
+    out: &mut impl io::Write,
+    base: Option<&str>,
+    message: &str,
+    mechanical: Option<&[mechanical::Evidence]>,
+    json: bool,
+) -> Result<ExitStatus, CommandError> {
+    if json {
+        let mut document = json!({
+            "base": base,
+            "revision": null,
+            "contracts": [],
+            "exit_code": u8::from(ExitStatus::Pending),
+            "message": message,
+        });
+        if let Some(rows) = mechanical {
+            document["mechanical_evidence"] = json!(rows);
+        }
+        output::write_document(out, STATUS_VERSION, document)?;
+    } else {
+        writeln!(out, "{message}")?;
+        if let Some(rows) = mechanical {
+            write_mechanical(out, rows)?;
+        }
+    }
+    Ok(ExitStatus::Pending)
 }

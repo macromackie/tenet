@@ -14,7 +14,7 @@ use std::{io, path::PathBuf};
 pub use hunks::HunkInput;
 pub use record::{CapturedFile, Role, ScopedFile};
 pub(crate) use scope::Scope;
-pub(crate) use source::read_record_source;
+pub(crate) use source::{is_stable_metadata, read_record_source};
 
 use crate::{
     Plan,

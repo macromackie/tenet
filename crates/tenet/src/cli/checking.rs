@@ -14,6 +14,12 @@ use tenet_engine::SpanRequest;
 pub(crate) struct Check {
     #[command(flatten)]
     pub input: Input,
+    /// Run trusted project checks without a model. Optionally select CONTRACT/NAME.
+    #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "CONTRACT/NAME",
+          conflicts_with_all = ["paths", "base", "snapshot", "patch", "contract", "context",
+                                "dry_run", "no_model", "context_profile", "max_requests", "jobs",
+                                "contract_batch_size", "min_confidence", "reporter"])]
+    pub local: Option<String>,
     /// Show candidate pairs and predict requests without calling a model or updating the review.
     #[arg(long, conflicts_with = "no_model")]
     pub dry_run: bool,
@@ -21,7 +27,7 @@ pub(crate) struct Check {
     /// pending.
     #[arg(long, conflicts_with = "fresh")]
     pub no_model: bool,
-    /// Ask the model again instead of reusing answers to identical earlier requests.
+    /// Rerun the selected checks even when their saved results can be reused.
     #[arg(long)]
     pub fresh: bool,
     #[command(flatten)]

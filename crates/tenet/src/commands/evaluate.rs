@@ -33,6 +33,9 @@ pub(super) async fn evaluate(
     state: &Path,
     check: &Check,
 ) -> Result<ExitStatus, CommandError> {
+    if let Some(name) = &check.local {
+        return super::local::run(root, state, name, check.fresh, check.run.json).await;
+    }
     // The summary's duration covers the whole check, from discovery to the review update.
     let started = Instant::now();
     let (plan, selection, prepared) = prepare(root, &check.input)?;

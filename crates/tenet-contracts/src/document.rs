@@ -53,6 +53,8 @@ pub enum DocumentProblem {
     NoPaths,
     #[error(transparent)]
     Number(ParseIntError),
+    #[error("check name {name:?} must be unique and lowercase kebab-case")]
+    ObligationName { name: String },
     #[error("invalid paths pattern `{pattern:?}`: {source:#}")]
     PathGlob {
         pattern: String,

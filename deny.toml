@@ -286,9 +286,9 @@ crate = "quote"
 allow = ["default", "wasm32_unknown_unknown_js"]
 crate = "ring"
 
-# tempfile needs its default features.
+# tempfile needs filesystem support and the Unix checker runner terminates its process group.
 [[bans.features]]
-allow = ["default", "fs"]
+allow = ["default", "fs", "process"]
 crate = "rustix"
 
 # reqwest, rustls and rustls-native-certs need its default features.

@@ -3,6 +3,7 @@ mod documents;
 mod dry_run;
 mod evaluate;
 mod finish;
+mod local;
 mod prepare;
 
 use administration::{execute_contracts, execute_skills};
@@ -30,7 +31,14 @@ pub(crate) async fn execute(cli: &Cli) -> Result<ExitStatus, CommandError> {
         Command::Contracts { command } => execute_contracts(&cli.root, command),
         Command::Check(check) => evaluate(&cli.root, &cli.resolve_state(), check).await,
         Command::Status {
+            local: Some(name),
+            json,
+            ..
+        } => local::inspect(&cli.root, &cli.resolve_state(), name, *json),
+        Command::Status {
+            local: None,
             base,
+            evidence,
             json,
             prune_cache,
         } => {
@@ -38,6 +46,7 @@ pub(crate) async fn execute(cli: &Cli) -> Result<ExitStatus, CommandError> {
                 &cli.root,
                 &cli.resolve_state(),
                 base.as_deref(),
+                evidence.as_deref(),
                 *json,
                 *prune_cache,
             )

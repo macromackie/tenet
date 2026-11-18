@@ -1,6 +1,7 @@
 mod frontmatter;
 mod version;
 
+use alloc::collections::BTreeSet;
 use core::ops::Range;
 use std::path::Path;
 
@@ -34,6 +35,8 @@ struct Metadata {
     _requires_tenet: Option<IgnoredAny>,
     message: String,
     name: String,
+    #[serde(default, rename = "checks", alias = "obligations")]
+    obligations: Vec<String>,
     paths: Option<Vec<String>>,
 }
 
@@ -108,6 +111,17 @@ fn parse_metadata(path: &Path, yaml: &str) -> Result<Metadata, Refusal> {
     if metadata.message.trim().is_empty() {
         return Err(DocumentProblem::NoMessage.into());
     }
+    let mut names = BTreeSet::new();
+    for name in &metadata.obligations {
+        if !is_kebab(name) || !names.insert(name) {
+            return Err(DocumentError {
+                line: find_key_line(yaml, "checks:").max(find_key_line(yaml, "obligations:")),
+                path: path.to_owned(),
+                problem: DocumentProblem::ObligationName { name: name.clone() },
+            }
+            .into());
+        }
+    }
     Ok(metadata)
 }
 
@@ -131,6 +145,20 @@ fn extract_rules(document: &str, span: Range<usize>) -> (String, usize, Range<us
     (rules, line, start..end)
 }
 
+fn compile_paths(
+    path: &Path,
+    yaml: &str,
+    patterns: Option<&[String]>,
+) -> Result<Option<Patterns>, DocumentError> {
+    patterns.map(Patterns::new).transpose().map_err(|problem| {
+        DocumentError {
+            line: find_key_line(yaml, "paths:"),
+            path: path.to_owned(),
+            problem,
+        }
+    })
+}
+
 #[expect(
     clippy::string_slice,
     reason = "frontmatter returns a body offset at a line start of the document"
@@ -150,18 +178,7 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract, Refusal> {
     let (scope, number) = parse_location(path)?;
     let (yaml, offset) = split_frontmatter(document).map_err(DocumentProblem::Frontmatter)?;
     let metadata = parse_metadata(path, yaml)?;
-    let paths = metadata
-        .paths
-        .as_deref()
-        .map(Patterns::new)
-        .transpose()
-        .map_err(|problem| {
-            DocumentError {
-                line: find_key_line(yaml, "paths:"),
-                path: path.to_owned(),
-                problem,
-            }
-        })?;
+    let paths = compile_paths(path, yaml, metadata.paths.as_deref())?;
     let markdown = markdown::parse(&document[offset..], offset)?;
     if markdown.body.is_empty() {
         return Err(DocumentProblem::NoBody.into());
@@ -179,6 +196,7 @@ fn parse_inner(path: &Path, document: &str) -> Result<Contract, Refusal> {
         message: metadata.message,
         name: metadata.name,
         number,
+        obligations: metadata.obligations,
         path: path.to_owned(),
         paths,
         rules,

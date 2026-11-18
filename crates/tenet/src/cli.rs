@@ -62,9 +62,16 @@ pub(crate) enum Command {
     Check(Check),
     /// Show which contracts are settled and which are pending, without calling a model.
     Status {
+        /// Inspect project check evidence only. Optionally select CONTRACT/NAME.
+        #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "CONTRACT/NAME",
+              conflicts_with_all = ["base", "evidence", "prune_cache"])]
+        local: Option<String>,
         /// Report the diff review against this commit instead of the latest check's review.
         #[arg(long)]
         base: Option<String>,
+        /// Compare a trusted local checker receipt with the current working tree.
+        #[arg(long, value_name = "PATH")]
+        evidence: Option<PathBuf>,
         #[arg(long)]
         json: bool,
         /// First remove cached answers this Tenet cannot reuse: those an earlier Tenet wrote and

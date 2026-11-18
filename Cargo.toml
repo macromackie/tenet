@@ -9,7 +9,7 @@ license = "MIT"
 publish = false
 repository = "https://github.com/macromackie/tenet"
 rust-version = "1.98"
-version = "0.16.2"
+version = "0.17.0"
 
 [workspace.dependencies]
 annotate-snippets = "0.12"
@@ -26,13 +26,15 @@ globset = "0.4"
 ignore = "0.4"
 memchr = "2"
 pulldown-cmark = "0.13.6"
+rustix = { features = ["process"], version = "1" }
 serde = { features = ["derive"], version = "1" }
 serde-saphyr = { default-features = false, features = ["deserialize"], version = "2" }
 serde_json = "1"
+sha2 = "0.10"
 similar = "2"
 tempfile = "3"
-tenet-contracts = { path = "crates/tenet-contracts", version = "0.16.2" }
-tenet-engine = { path = "crates/tenet-engine", version = "0.16.2" }
+tenet-contracts = { path = "crates/tenet-contracts", version = "0.17.0" }
+tenet-engine = { path = "crates/tenet-engine", version = "0.17.0" }
 thiserror = "2"
 tokio = { features = [
   "fs",

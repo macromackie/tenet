@@ -7,6 +7,7 @@ warnings go to stderr. Each format numbers its versions independently:
 | ----------------------------------------------------------- | ---------------------------------------------------------- | ------- |
 | `check --json`, `check --reporter jsonl`                    | One [event](./output.md#jsonl) per line                    | 5       |
 | `check --dry-run --json`                                    | One event per line: `selected`, `combined`, then `summary` | 5       |
+| `check --local --json`, `status --local --json`             | One object with `checks` and `exit_code`                   | 1       |
 | `status --json`                                             | One object                                                 | 1       |
 | `show NAME --json`, `show --pending --json`                 | One object                                                 | 2       |
 | `log --json`                                                | One review log entry per line                              | 2       |
@@ -51,6 +52,10 @@ prints its earlier events first:
 
 The event keeps `check`'s version 5 for every command. Look for `"type": "error"` before reading a `status` or `show`
 object, which has no `type`. Other commands report errors on stderr only.
+
+## Local checks
+
+Each row in `checks` names the `contract` and `check`. Read `freshness` alongside `observed_outcome`. A stale pass describes an earlier observation. `message` holds the diagnostic and `replay` gives the command to run from the project root. A structured checker can also return a `finding` with its case, expected and actual values, and location. A reused result has `reused: true`. See [Local checks](./local-checks.md) for binding and exit semantics.
 
 ## Check
 

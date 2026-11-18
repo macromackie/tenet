@@ -49,7 +49,10 @@ async function listUsers() {
 `name`, `message`, and a nonempty body are required. Names are unique throughout the project.
 Numbers have at least three digits, start at 001, and are unique within a scope. `paths` is optional; see
 [Scope](#scope). `requires-tenet: X.Y.Z` is optional and names the oldest Tenet that reads the contract; an older
-Tenet refuses it. Other frontmatter fields are errors.
+Tenet refuses it. Use the optional `checks` list to name properties that local checkers can report on.
+Each ID is unique within its contract and uses lowercase kebab case.
+For example, `checks: [first-present-wins, no-eager-fallback]` names two properties for
+[`tenet status --evidence`](./cli.md#mechanical-evidence). Other frontmatter fields are errors.
 
 Use `Rules` and `Checks` for ordinary contracts. Other headings are welcome; Tenet reads the whole body,
 including rationale, exceptions, and ordinary code examples. Keep these inline where possible.
@@ -126,3 +129,5 @@ Examples are documentation; evaluate real project snapshots and patches through 
 See [evaluation](./evaluation.md). Legacy `tenet:` fences are withheld from check inputs to avoid leaking
 old expected-answer labels; convert them to ordinary examples when editing a contract. The offline
 [export](./export.md) preserves the original document, including those fences.
+
+To run a project checker for a named claim, see [Local checks](./local-checks.md).

@@ -10,6 +10,7 @@ use tenet_engine::{
     PredictionError,
     SnapshotError,
     adoption::AdoptionError,
+    mechanical,
     review::{ReviewError, StoreError},
 };
 
@@ -40,6 +41,8 @@ pub(crate) enum CommandError {
     Context(#[from] ContextError),
     #[error(transparent)]
     Evidence(#[from] EvidenceError),
+    #[error(transparent)]
+    Mechanical(#[from] mechanical::ReceiptError),
     /// The provider's model, endpoint, key, or job count is invalid.
     #[error(transparent)]
     Provider(#[from] ev_grep_jev::JevError),

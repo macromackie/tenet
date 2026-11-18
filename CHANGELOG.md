@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.17.0
+
+- Run trusted project tests and linters with `tenet check --local`. Replay individual failures, inspect dependency changes, and opt reproducible checkers into reuse. `status` can also compare independent checker receipts using `--evidence`.
+
 ## v0.16.2
 
 - Oversized selected or supporting source leaves affected checks incomplete and pending for review, while unrelated
