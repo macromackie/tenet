@@ -76,9 +76,9 @@ impl PreparedSnapshot {
             )?;
         }
         let root = directory.path();
-        drop(git::run_git(root, &["init", "-q"])?);
-        drop(git::run_git(root, &["add", "-A"])?);
-        drop(git::run_git(
+        drop(git::run_checkout_git(root, &["init", "-q"])?);
+        drop(git::run_checkout_git(root, &["add", "-A"])?);
+        drop(git::run_checkout_git(
             root,
             &[
                 "-c",
@@ -99,7 +99,7 @@ impl PreparedSnapshot {
             // Apply the bytes we hashed, even if the original patch changes during preparation.
             let captured = tempfile::NamedTempFile::new().map_err(SnapshotError::Prepare)?;
             fs::write(captured.path(), bytes).map_err(SnapshotError::Prepare)?;
-            drop(git::run_git(
+            drop(git::run_checkout_git(
                 root,
                 &[
                     "apply",

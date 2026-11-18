@@ -1,6 +1,7 @@
 use alloc::{collections::BTreeMap, string::FromUtf8Error};
 use core::{str, str::Utf8Error};
 use std::{
+    env,
     io,
     io::{Seek as _, Write as _},
     path::{Path, PathBuf},
@@ -40,7 +41,31 @@ pub enum GitError {
 }
 
 pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
-    let result = Command::new("git")
+    execute_git(Command::new("git"), root, args)
+}
+
+/// A checkout owns its index, objects, config and work tree even when the caller is in a Git hook.
+pub(crate) fn configure_checkout(command: &mut Command) {
+    for (name, _) in env::vars_os() {
+        if name.as_encoded_bytes().starts_with(b"GIT_") {
+            let _command = command.env_remove(name);
+        }
+    }
+    let empty = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let _command = command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", empty)
+        .env("GIT_ATTR_NOSYSTEM", "1");
+}
+
+pub(crate) fn run_checkout_git(root: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+    let mut command = Command::new("git");
+    configure_checkout(&mut command);
+    execute_git(command, root, args)
+}
+
+fn execute_git(mut command: Command, root: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+    let result = command
         .arg("-C")
         .arg(root)
         .args(args)

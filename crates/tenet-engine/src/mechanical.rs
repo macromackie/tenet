@@ -10,12 +10,23 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub use local::{LocalMode, has_local_results, inspect_local, run_local};
+pub use local::{
+    LocalMode,
+    Qualification,
+    QualificationCase,
+    has_local_results,
+    inspect_local,
+    inspect_selected_local,
+    qualify,
+    run_local,
+    run_selected_local,
+};
+pub use receipt::ReceiptSet;
 use serde::Serialize;
 use tenet_contracts::Contract;
 
-use self::{inputs::Inputs, receipt::ReceiptSet};
-use crate::{Selection, plan};
+use self::inputs::Inputs;
+use crate::{Plan, Selection, plan};
 
 /// What a trusted checker observed when it ran.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, serde::Deserialize)]
@@ -91,20 +102,42 @@ pub enum Freshness {
 pub fn verify(root: &Path, receipt_path: &Path) -> Result<Vec<Evidence>, ReceiptError> {
     let receipts = ReceiptSet::read(receipt_path)?;
     let plan = plan(root, &Selection::default())?;
-    let contracts: BTreeMap<&str, &Contract> = plan
-        .contracts
-        .iter()
-        .map(|contract| (contract.name.as_str(), contract))
-        .collect();
-    receipts.verify_names(&contracts)?;
-    let mut inputs = Inputs::new(&plan.root, &plan.inventory);
-    let mut evidence = Vec::new();
-    for contract in &plan.contracts {
-        for obligation in &contract.obligations {
-            evidence.push(receipts.report(contract, obligation, &mut inputs));
-        }
+    receipts.validate_contracts(&plan)?;
+    Ok(receipts.verify_plan(&plan))
+}
+
+impl ReceiptSet {
+    /// Load the trusted runner's bytes and validate its named checks against the whole project.
+    /// Call before a paid run so an invalid receipt file cannot incur model spend.
+    #[inline]
+    pub fn open(root: &Path, path: &Path) -> Result<Self, ReceiptError> {
+        let receipts = Self::read(path)?;
+        receipts.validate_contracts(&plan(root, &Selection::default())?)?;
+        Ok(receipts)
     }
-    Ok(evidence)
+
+    fn validate_contracts(&self, plan: &Plan) -> Result<(), ReceiptError> {
+        let contracts: BTreeMap<&str, &Contract> = plan
+            .contracts
+            .iter()
+            .map(|contract| (contract.name.as_str(), contract))
+            .collect();
+        self.verify_names(&contracts)
+    }
+
+    /// Compare the loaded observations against just the selected declarations and current inputs.
+    #[must_use]
+    #[inline]
+    pub fn verify_plan(&self, plan: &Plan) -> Vec<Evidence> {
+        let mut inputs = Inputs::new(&plan.root, &plan.inventory);
+        let mut evidence = Vec::new();
+        for contract in &plan.contracts {
+            for obligation in &contract.obligations {
+                evidence.push(self.report(contract, obligation, &mut inputs));
+            }
+        }
+        evidence
+    }
 }
 
 /// Why Tenet could not read the supplied evidence as a receipt set.

@@ -11,6 +11,10 @@ use tenet_engine::SpanRequest;
     reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
               codes."
 )]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "These are independent user-facing CLI flags parsed by clap."
+)]
 pub(crate) struct Check {
     #[command(flatten)]
     pub input: Input,
@@ -20,6 +24,19 @@ pub(crate) struct Check {
                                 "dry_run", "no_model", "context_profile", "max_requests", "jobs",
                                 "contract_batch_size", "min_confidence", "reporter"])]
     pub local: Option<String>,
+    /// Exercise a project checker against declared good, defective and refactored controls.
+    #[arg(long, value_name = "CONTRACT/NAME", conflicts_with = "final_check",
+          conflicts_with_all = ["local", "paths", "base", "snapshot", "patch", "contract",
+                                "context", "dry_run", "no_model", "fresh", "context_profile",
+                                "max_requests", "jobs", "contract_batch_size", "min_confidence",
+                                "reporter"])]
+    pub qualify: Option<String>,
+    /// Verify the final selected source with both semantic review and trusted project checks.
+    #[arg(long = "final", conflicts_with_all = ["local", "dry_run", "snapshot", "patch"])]
+    pub final_check: bool,
+    /// Verify receipts from a trusted external checker runner instead of executing project code.
+    #[arg(long, value_name = "FILE", requires = "final_check")]
+    pub evidence: Option<PathBuf>,
     /// Show candidate pairs and predict requests without calling a model or updating the review.
     #[arg(long, conflicts_with = "no_model")]
     pub dry_run: bool,
@@ -119,7 +136,8 @@ pub(crate) struct Run {
     /// Share file context across at most this many contracts in one model request.
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=64))]
     pub contract_batch_size: u16,
-    #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..))]
+    /// Maximum model requests. Zero reuses cached answers and leaves unaffordable work pending.
+    #[arg(long, default_value_t = 1000)]
     pub max_requests: u32,
     /// Route lower-confidence answers to unresolved while preserving their raw values.
     #[arg(
@@ -130,7 +148,7 @@ pub(crate) struct Run {
     pub min_confidence: f64,
     #[arg(long, value_enum, default_value_t = ReporterKind::Default)]
     pub reporter: ReporterKind,
-    /// Shorthand for --reporter jsonl.
+    /// Write JSON Lines for ordinary checks, or one JSON document for a final check.
     #[arg(long)]
     pub json: bool,
 }

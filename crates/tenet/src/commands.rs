@@ -2,9 +2,11 @@ mod administration;
 mod documents;
 mod dry_run;
 mod evaluate;
+mod final_review;
 mod finish;
 mod local;
 mod prepare;
+mod qualification;
 
 use administration::{execute_contracts, execute_skills};
 use documents::{export, validate};

@@ -164,7 +164,7 @@ pub(super) fn check_command(revision: &Revision, contract: Option<&str>) -> Stri
     command
 }
 
-fn quote_argument(value: &str) -> String {
+pub(crate) fn quote_argument(value: &str) -> String {
     if !value.is_empty()
         && value
             .chars()

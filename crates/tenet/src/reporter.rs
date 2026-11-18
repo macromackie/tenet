@@ -102,7 +102,7 @@ impl<'check> Reporter<'check> {
         reason = "One event's tracking, tracing, output channel and progress redraw stay ordered."
     )]
     pub(crate) fn emit(&mut self, event: Event) -> Result<(), CommandError> {
-        self.track(&event);
+        self.observe(&event);
         let unanswered = match &event {
             Event::HunkResult {
                 contract,

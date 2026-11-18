@@ -6,7 +6,7 @@ use ev_grep_jev::Jev;
 use tenet_engine::{Event, Mode, Options, Review, RunInfo, review::CheckRequest};
 use tokio::{signal, time, time::MissedTickBehavior};
 
-use super::{finish, prepare, report_dry_run};
+use super::{final_review::FinalReview, finish, prepare, report_dry_run};
 use crate::{
     cli::{Check, ExitStatus, ReporterKind},
     error::CommandError,
@@ -33,6 +33,9 @@ pub(super) async fn evaluate(
     state: &Path,
     check: &Check,
 ) -> Result<ExitStatus, CommandError> {
+    if let Some(selector) = &check.qualify {
+        return super::qualification::run(root, selector, check.run.json).await;
+    }
     if let Some(name) = &check.local {
         return super::local::run(root, state, name, check.fresh, check.run.json).await;
     }
@@ -63,7 +66,20 @@ pub(super) async fn evaluate(
     } else {
         Review::open(state)?
     };
-    let emit = |event| reporter.borrow_mut().emit(event);
+    let final_mode = check
+        .final_check
+        .then(|| FinalReview::new(&plan, state, check, started))
+        .transpose()?;
+    let emit = |event| {
+        if let Some(final_review) = &final_mode {
+            final_review.observe(&event);
+            if kind == ReporterKind::Jsonl {
+                reporter.borrow_mut().observe(&event);
+                return Ok(());
+            }
+        }
+        reporter.borrow_mut().emit(event)
+    };
     let begin = |provider: Option<String>, model: Option<String>| {
         RunInfo {
             version: env!("CARGO_PKG_VERSION").into(),
@@ -99,38 +115,20 @@ pub(super) async fn evaluate(
             selection: &selection,
         };
         let revision = review.commit(&evidence, &request, &checked)?;
-        return finish(&emit, &checked, revision, plan.coverage.clone(), started);
+        return finish(
+            final_mode.as_ref(),
+            &emit,
+            &checked,
+            revision,
+            plan.coverage.clone(),
+            started,
+        )
+        .await;
     }
     let model = run.provider.select_model(run.model.as_deref())?;
     // The provider and model the revision names.
     let identity = format!("{}/{model}", run.provider);
-    // A diff that no contract governs sends no request, so it needs no credential.
-    let evaluator = if plan
-        .contracts
-        .iter()
-        .all(|contract| plan.is_untouched(contract))
-    {
-        Model::Unneeded
-    } else {
-        let key = env::var(run.provider.read_key_variable()).with_context(|| {
-            format!(
-                "set {:?} to run model evaluations",
-                run.provider.read_key_variable()
-            )
-        })?;
-        Model::Jev(Box::new(
-            Jev::with_endpoint(
-                run.provider,
-                &model,
-                &key,
-                run.endpoint
-                    .as_deref()
-                    .unwrap_or_else(|| run.provider.read_endpoint()),
-            )?
-            .with_jobs(usize::from(run.jobs))?
-            .with_context_profile(check.input.context_profile.read_profile()),
-        ))
-    };
+    let evaluator = build_evaluator(check, &plan, &model)?;
     review.use_model(&run.provider.to_string(), &model, !check.fresh)?;
     emit(Event::Begin {
         run: begin(Some(run.provider.to_string()), Some(model)),
@@ -149,7 +147,12 @@ pub(super) async fn evaluate(
         tokio::pin!(future);
         loop {
             tokio::select! {
-                result = &mut future => break result?,
+                result = &mut future => match (result, &final_mode) {
+                    (Err(error), Some(report)) => {
+                        return report.report_stop(reporter.borrow().summary, Some(&error));
+                    },
+                    (done, _) => break done?,
+                },
                 _ = refresh.tick(), if live => reporter.borrow_mut().refresh()?,
                 signal = signal::ctrl_c() => {
                     signal?;
@@ -158,6 +161,9 @@ pub(super) async fn evaluate(
                     let mut summary = reporter.borrow().summary;
                     summary.cancelled = true;
                     summary.elapsed_ms = started.elapsed().as_millis();
+                    if let Some(final_review) = &final_mode {
+                        return final_review.report_stop(summary, None);
+                    }
                     emit(Event::Summary {
                         summary,
                         revision: None,
@@ -178,5 +184,57 @@ pub(super) async fn evaluate(
         selection: &selection,
     };
     let revision = review.commit(&evidence, &request, &checked)?;
-    finish(&emit, &checked, revision, plan.coverage.clone(), started)
+    finish(
+        final_mode.as_ref(),
+        &emit,
+        &checked,
+        revision,
+        plan.coverage.clone(),
+        started,
+    )
+    .await
+}
+
+/// Construct the transport only for scopes whose assessment might use it.
+fn build_evaluator(
+    check: &Check,
+    plan: &tenet_engine::Plan,
+    model: &str,
+) -> Result<Model, CommandError> {
+    let run = &check.run;
+    if plan
+        .contracts
+        .iter()
+        .all(|contract| plan.is_untouched(contract))
+    {
+        return Ok(Model::Unneeded);
+    }
+    let key = if run.max_requests == 0 {
+        // The offline evaluator only measures requests and cannot send them.
+        String::from("cache-only")
+    } else {
+        env::var(run.provider.read_key_variable()).with_context(|| {
+            format!(
+                "set {:?} to run model evaluations",
+                run.provider.read_key_variable()
+            )
+        })?
+    };
+    let jev = Box::new(
+        Jev::with_endpoint(
+            run.provider,
+            model,
+            &key,
+            run.endpoint
+                .as_deref()
+                .unwrap_or_else(|| run.provider.read_endpoint()),
+        )?
+        .with_jobs(usize::from(run.jobs))?
+        .with_context_profile(check.input.context_profile.read_profile()),
+    );
+    if run.max_requests == 0 {
+        Ok(Model::CacheOnly(jev))
+    } else {
+        Ok(Model::Jev(jev))
+    }
 }

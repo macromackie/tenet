@@ -22,7 +22,7 @@ struct ReceiptDocument {
     version: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Receipt {
     checker: String,
@@ -35,7 +35,9 @@ struct Receipt {
     outcome: Outcome,
 }
 
-pub(super) struct ReceiptSet(BTreeMap<(String, String), Receipt>);
+/// Immutable, validated observations read from a caller-selected trusted runner.
+#[derive(Debug)]
+pub struct ReceiptSet(BTreeMap<(String, String), Receipt>);
 
 const fn reject(reason: String) -> ReceiptError {
     ReceiptError::Invalid { reason }

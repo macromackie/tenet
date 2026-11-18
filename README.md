@@ -19,9 +19,10 @@ tenet validate                     # Check contract documents offline
 tenet check --local                # Run declared project tests and linters
 tenet check                        # Assess the current repository
 tenet check --base origin/main     # Assess changes, assuming a valid base
+tenet check --final                # Verify the current source and its declared checks
 ```
 
-To attach a test to a contract, replay one failure, and inspect saved results, see [Local checks](docs/local-checks.md).
+To attach a test to a contract, replay one failure, and inspect saved results, see [Local checks](docs/local-checks.md). To test the checker itself or verify a finished change, see [Qualify a local check](docs/qualifying-checks.md) and [Final checks](docs/final-checks.md).
 
 For example, a contract can require database failures to reach the caller rather than become empty results.
 Tenet checks relevant files and their combined context, then reports one conclusion per contract.

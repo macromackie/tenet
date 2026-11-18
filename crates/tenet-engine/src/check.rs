@@ -71,7 +71,7 @@ where
     Assessor: Evaluator<Error: ClassifyRequest>,
     Halted: From<CheckError<Assessor::Error>>,
 {
-    if !(1..=256).contains(&options.jobs) || options.max_requests == 0 {
+    if !(1..=256).contains(&options.jobs) {
         return Err(CheckError::InvalidJobs.into());
     }
     if !(options.min_confidence.is_finite()

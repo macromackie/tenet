@@ -9,7 +9,7 @@ use super::{CheckResult, ContractResult, ContractState, Stage, Summary};
     clippy::arbitrary_source_item_ordering,
     reason = "Field order is the serialized key order."
 )]
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct RunInfo {
     pub version: String,
     pub root: String,

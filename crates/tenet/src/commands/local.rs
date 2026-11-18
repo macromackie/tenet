@@ -1,28 +1,26 @@
 use std::path::Path;
 
 use serde_json::json;
-use tenet_engine::mechanical::{self, Evidence, Freshness, LocalMode, Outcome};
+use tenet_engine::{
+    mechanical::{self, Evidence, Freshness, LocalMode, Outcome},
+    review::OverallStatus,
+};
 use tokio::signal;
 
 use crate::{cli::ExitStatus, error::CommandError, output, review::write_mechanical};
 
-const PENDING: [Freshness; 2] = [Freshness::Missing, Freshness::Stale];
-
-fn summarize_checks(rows: &[Evidence]) -> ExitStatus {
-    if rows.is_empty() || rows.iter().any(|row| PENDING.contains(&row.freshness)) {
-        return ExitStatus::Pending;
-    }
-    if rows.iter().any(|row| {
-        row.freshness == Freshness::Current && row.observed_outcome == Some(Outcome::Fail)
-    }) {
-        return ExitStatus::Failed;
-    }
-    if rows.iter().all(|row| {
-        row.freshness == Freshness::Current && row.observed_outcome == Some(Outcome::Pass)
-    }) {
-        return ExitStatus::Passed;
-    }
-    ExitStatus::Unresolved
+pub(super) fn summarize_checks(rows: &[Evidence]) -> OverallStatus {
+    rows.iter()
+        .map(|row| {
+            match (row.freshness, row.observed_outcome) {
+                (Freshness::Missing | Freshness::Stale, _) => OverallStatus::Pending,
+                (Freshness::Current, Some(Outcome::Fail)) => OverallStatus::Failed,
+                (Freshness::Current, Some(Outcome::Pass)) => OverallStatus::Passed,
+                _ => OverallStatus::Unresolved,
+            }
+        })
+        .max()
+        .unwrap_or(OverallStatus::Passed)
 }
 
 pub(super) fn inspect(
@@ -62,7 +60,11 @@ pub(super) async fn run(
 }
 
 fn render(rows: &[Evidence], json: bool) -> Result<ExitStatus, CommandError> {
-    let result = summarize_checks(rows);
+    let result = if rows.is_empty() {
+        ExitStatus::Pending
+    } else {
+        ExitStatus::from(summarize_checks(rows))
+    };
     let mut out = output::open_stdout().lock();
     if json {
         output::write_document(

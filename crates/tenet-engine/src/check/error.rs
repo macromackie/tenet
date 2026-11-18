@@ -33,7 +33,7 @@ pub enum CheckError<RequestError> {
     InvalidBatchSize,
     #[error("min-confidence must be between 0 and 1")]
     InvalidConfidence,
-    #[error("jobs must be between 1 and 256 and max-requests must be positive")]
+    #[error("jobs must be between 1 and 256")]
     InvalidJobs,
     #[error("measuring the provider request failed: {0:#}")]
     Measure(RequestError),

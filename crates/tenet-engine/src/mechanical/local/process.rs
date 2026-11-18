@@ -14,7 +14,7 @@ use tokio::{
 };
 
 use super::{Binding, Observation, Protocol};
-use crate::mechanical::Outcome;
+use crate::{git::configure_checkout, mechanical::Outcome};
 
 const MAX_STREAM_BYTES: usize = 0x4000;
 
@@ -47,7 +47,24 @@ pub(super) async fn observe(
     binding: &Binding,
     program: &Path,
 ) -> io::Result<Observation> {
+    observe_command(root, binding, Command::new(program)).await
+}
+
+pub(super) async fn observe_checkout(
+    root: &Path,
+    binding: &Binding,
+    program: &Path,
+) -> io::Result<Observation> {
     let mut command = Command::new(program);
+    configure_checkout(command.as_std_mut());
+    observe_command(root, binding, command).await
+}
+
+async fn observe_command(
+    root: &Path,
+    binding: &Binding,
+    mut command: Command,
+) -> io::Result<Observation> {
     let _command = command
         .args(&binding.args)
         .current_dir(root)

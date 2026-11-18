@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.18.0
+
+- Qualify a local checker on known-good, deliberately broken, and behavior-preserving examples with `tenet check --qualify CONTRACT/CHECK`.
+- After the last edit, use `tenet check --final` to check the current source and see which semantic and executable claims still need attention.
+
 ## v0.17.0
 
 - Run trusted project tests and linters with `tenet check --local`. Replay individual failures, inspect dependency changes, and opt reproducible checkers into reuse. `status` can also compare independent checker receipts using `--evidence`.

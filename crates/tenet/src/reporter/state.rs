@@ -26,7 +26,7 @@ impl Reporter<'_> {
         clippy::arithmetic_side_effects,
         reason = "Counters are bounded by the requests and contracts of one run."
     )]
-    pub(super) fn track(&mut self, event: &Event) {
+    pub(crate) fn observe(&mut self, event: &Event) {
         if let Event::StageStarted { stage, .. } = event
             && REQUEST_STAGES.contains(stage)
         {

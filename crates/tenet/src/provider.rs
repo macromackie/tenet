@@ -15,6 +15,7 @@ use tenet_engine::{
 
 /// The provider's evaluator, or none for a check whose contracts can send no request.
 pub(crate) enum Model {
+    CacheOnly(Box<Jev>),
     Jev(Box<Jev>),
     Unneeded,
 }
@@ -94,7 +95,7 @@ impl Evaluator for Model {
     async fn assess(&self, query: &str, candidate: &Candidate) -> Result<Assessment, ModelError> {
         match self {
             Self::Jev(jev) => Ok(jev.assess(query, candidate).await?),
-            Self::Unneeded => Err(ModelError::Unneeded),
+            Self::CacheOnly(_) | Self::Unneeded => Err(ModelError::Unneeded),
         }
     }
 
@@ -105,7 +106,7 @@ impl Evaluator for Model {
     ) -> Result<DecisionBatch, ModelError> {
         match self {
             Self::Jev(jev) => Ok(jev.assess_questions(questions, state).await?),
-            Self::Unneeded => Err(ModelError::Unneeded),
+            Self::CacheOnly(_) | Self::Unneeded => Err(ModelError::Unneeded),
         }
     }
 
@@ -115,7 +116,7 @@ impl Evaluator for Model {
         state: &serde_json::Value,
     ) -> Result<usize, ModelError> {
         match self {
-            Self::Jev(jev) => Ok(jev.measure_questions(questions, state)?),
+            Self::CacheOnly(jev) | Self::Jev(jev) => Ok(jev.measure_questions(questions, state)?),
             Self::Unneeded => Err(ModelError::Unneeded),
         }
     }

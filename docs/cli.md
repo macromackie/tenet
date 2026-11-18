@@ -4,6 +4,8 @@
 tenet check
 tenet check --base origin/main
 tenet check --local [CONTRACT/NAME] [--fresh] [--json]
+tenet check --qualify CONTRACT/NAME [--json]
+tenet check --final [--evidence PATH] [--no-model] [--json]
 tenet status --local [CONTRACT/NAME] [--json]
 tenet status [--base REF] [--evidence PATH] [--json] [--prune-cache]
 tenet show NAME [PATH ...] [--json]
@@ -144,7 +146,7 @@ forget the review.
 
 ## Mechanical evidence
 
-Use [local checks](./local-checks.md) to bind and replay a project checker with Tenet.
+Use [local checks](./local-checks.md) to bind and replay a project checker. Exercise a checker on a defect and an equivalent implementation before using its results. See [Qualify a local check](./qualifying-checks.md). Verify the evidence after your last edit with [Final checks](./final-checks.md).
 
 Run `tenet status --evidence /path/to/receipt.json --json` with a receipt from your trusted local checker.
 Tenet reads the receipt and the project. The checker runs separately. Use receipts written outside the assessed

@@ -1,6 +1,7 @@
 mod assessment;
 mod binding;
 mod process;
+mod qualification;
 mod store;
 
 use std::{
@@ -10,6 +11,7 @@ use std::{
 
 use assessment::{recheck_inputs, report};
 use binding::{Binding, Protocol, Snapshot};
+pub use qualification::{Qualification, QualificationCase, qualify};
 use serde::{Deserialize, Serialize};
 use store::Record;
 use tenet_contracts::Contract;
@@ -95,12 +97,22 @@ pub fn inspect_local(
     selector: Option<&str>,
 ) -> Result<Vec<Evidence>, ReceiptError> {
     let tree = plan(root, &Selection::default())?;
-    select_checks(&tree, selector)?
+    inspect_selected_local(&tree, state, selector)
+}
+
+/// Compare the current dependencies of checks declared by this plan to their saved observations.
+#[inline]
+pub fn inspect_selected_local(
+    tree: &Plan,
+    state: &Path,
+    selector: Option<&str>,
+) -> Result<Vec<Evidence>, ReceiptError> {
+    select_checks(tree, selector)?
         .into_iter()
         .map(|(contract, name)| {
             let path = record_path(state, contract, name);
             let saved = Record::read(&path).map_err(|error| report_storage_error(&path, error))?;
-            let current = Binding::read(&tree, contract, name);
+            let current = Binding::read(tree, contract, name);
             Ok(report(contract, name, saved.as_ref(), &current))
         })
         .collect()
@@ -221,17 +233,29 @@ pub async fn run_local(
     mode: LocalMode,
 ) -> Result<Vec<Evidence>, ReceiptError> {
     let tree = plan(root, &Selection::default())?;
+    run_selected_local(&tree, state, selector, mode).await
+}
+
+/// Execute only the local checks declared by contracts in an already selected semantic plan.
+/// Bindings still resolve their full project dependencies, even for a path-limited check.
+#[inline]
+pub async fn run_selected_local(
+    tree: &Plan,
+    state: &Path,
+    selector: Option<&str>,
+    mode: LocalMode,
+) -> Result<Vec<Evidence>, ReceiptError> {
     let mut completed = Vec::new();
-    for (contract, name) in select_checks(&tree, selector)? {
+    for (contract, name) in select_checks(tree, selector)? {
         let path = record_path(state, contract, name);
-        let (row, snapshot) = execute_one(&tree, contract, name, &path, mode)
+        let (row, snapshot) = execute_one(tree, contract, name, &path, mode)
             .await
             .map_err(|error| report_storage_error(&path, error))?;
         completed.push((contract, name, row, snapshot));
     }
     let mut rows = Vec::new();
     let final_tree = if completed.len() > 1 {
-        Some(plan(root, &Selection::default())?)
+        Some(plan(&tree.root, &Selection::default())?)
     } else {
         None
     };

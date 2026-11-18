@@ -8,6 +8,8 @@ warnings go to stderr. Each format numbers its versions independently:
 | `check --json`, `check --reporter jsonl`                    | One [event](./output.md#jsonl) per line                    | 5       |
 | `check --dry-run --json`                                    | One event per line: `selected`, `combined`, then `summary` | 5       |
 | `check --local --json`, `status --local --json`             | One object with `checks` and `exit_code`                   | 1       |
+| `check --qualify CONTRACT/NAME --json`                      | One checker qualification report                           | 1       |
+| `check --final --json`                                      | One [final check report](./final-checks.md)                | 1       |
 | `status --json`                                             | One object                                                 | 1       |
 | `show NAME --json`, `show --pending --json`                 | One object                                                 | 2       |
 | `log --json`                                                | One review log entry per line                              | 2       |

@@ -50,7 +50,7 @@ fn status_lists_missing_obligations_before_the_first_review() -> Result<()> {
 }
 
 #[cfg(unix)]
-fn bind(root: &Path, name: &str, script: &str) -> Result<()> {
+pub(super) fn bind(root: &Path, name: &str, script: &str) -> Result<()> {
     write_file(root, &format!("checks/{name}.sh"), script)?;
     let binding = json!({
         "args": [format!("checks/{name}.sh")],

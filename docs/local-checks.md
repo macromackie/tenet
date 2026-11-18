@@ -41,7 +41,9 @@ tenet status --local --json
 The first command reports the checker's diagnostic. Repair the implementation and use the second command to replay it.
 The third inspects every declared check without executing commands or writing state. Omit the name to run all local checks.
 Review a binding and its checker before executing it. The process runs with the caller's access and environment.
-Tenet runs project commands only when you explicitly select `check --local`.
+A local run, checker qualification, and a final check with local execution all run project code. For a final check on code supplied by someone else, run the checker in a separate environment and pass its receipt to Tenet. See [Final checks](./final-checks.md).
+
+To test whether your checker can distinguish broken and equivalent implementations, see [Qualify a local check](./qualifying-checks.md).
 
 ## Checker results
 
