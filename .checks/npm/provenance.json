@@ -1,0 +1,20 @@
+{
+  "source": {
+    "repository": "https://github.com/macromackie/tenet-contracts",
+    "tag": "v13.0.1",
+    "revision": "01e7ac85f524a5446d04941e7db895af0b24f817",
+    "path": "contracts/code-dependency-boundaries/assets/npm"
+  },
+  "files": [
+    {
+      "path": "package-lock.json",
+      "sha256": "add3af08e8272115e7735b4b76b1bc06883d6ca9b49a21ca8aad70c9a1be51a7",
+      "mode": "100644"
+    },
+    {
+      "path": "package.json",
+      "sha256": "8b831a33cc2c5cf1876d5961cd142360dc775eb8513dca9a75a75077f9b14768",
+      "mode": "100644"
+    }
+  ]
+}

@@ -8,11 +8,11 @@ use serde_json::{Value, json};
 use tenet_engine::{
     Change,
     Review,
-    review::{self, Assessment, CurrentContract},
+    review::{self, Assessment, CurrentContract, OverallStatus},
 };
 
 use super::{HISTORY, History, SHOW_VERSION, write_brief};
-use crate::{cli::ExitStatus, error::CommandError, output};
+use crate::{agent_checks::Finding, cli::ExitStatus, error::CommandError, generated, output};
 
 #[expect(
     clippy::indexing_slicing,
@@ -33,9 +33,11 @@ pub(crate) async fn show(
     let review = Review::open_existing(state)?;
     let current = review::resolve_current(root, &review, None, Some(name)).await?;
     let entry = current.select(name, paths)?;
+    let generated = generated::inspect(root, state, entry, true)?;
     let mut out = BufWriter::new(output::open_stdout().lock());
     if !json {
         write_brief(&mut out, &review, &current, entry)?;
+        generated::write_rows(&mut out, &generated)?;
         change(&mut out, &entry.changes)?;
         out.flush()?;
         return Ok(ExitStatus::Passed);
@@ -56,11 +58,11 @@ pub(crate) async fn show(
             Ok(value)
         })
         .collect::<Result<_, CommandError>>()?;
-    output::write_document(
-        &mut out,
-        SHOW_VERSION,
-        render_contract_json(&review, entry, &files)?,
-    )?;
+    let mut document = render_contract_json(&review, entry, &files)?;
+    if !generated.is_empty() {
+        document["behavior_checks"] = json!(generated);
+    }
+    output::write_document(&mut out, SHOW_VERSION, document)?;
     out.flush()?;
     Ok(ExitStatus::Passed)
 }
@@ -135,27 +137,23 @@ pub(crate) async fn show_pending(
 ) -> Result<ExitStatus, CommandError> {
     let review = Review::open_existing(state)?;
     let current = review::resolve_current(root, &review, None, None).await?;
-    let pending: Vec<_> = (current.contracts.iter())
-        .filter(|entry| entry.state.is_pending())
-        .collect();
+    let mut pending = Vec::new();
+    for entry in &current.contracts {
+        let rows = generated::inspect(root, state, entry, true)?;
+        if entry.state.is_pending() || generated::summarize_status(&rows) != OverallStatus::Passed {
+            pending.push((entry, rows));
+        }
+    }
     let mut seen_paths = HashSet::new();
     let changes: Vec<_> = (pending.iter())
-        .flat_map(|entry| &entry.changes)
+        .flat_map(|(entry, _)| &entry.changes)
         .filter(|change| seen_paths.insert(&change.path))
         .cloned()
         .collect();
     let mut out = BufWriter::new(output::open_stdout().lock());
     if json {
         let contracts = (pending.iter())
-            .map(|entry| {
-                render_contract_json(
-                    &review,
-                    entry,
-                    &(entry.files.iter())
-                        .map(serde_json::to_value)
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
-            })
+            .map(|(entry, rows)| build_pending_document(&review, entry, rows))
             .collect::<Result<Vec<_>, CommandError>>()?;
         let changes: Vec<_> = (changes.iter())
             .filter(|change| !change.patch.is_empty())
@@ -172,15 +170,35 @@ pub(crate) async fn show_pending(
     if pending.is_empty() {
         writeln!(out, "No contract is pending.")?;
     }
-    for (index, entry) in pending.iter().enumerate() {
+    for (index, (entry, rows)) in pending.iter().enumerate() {
         if index > 0 {
             writeln!(out, "\n{}\n", "\u{2500}".repeat(72))?;
         }
         write_brief(&mut out, &review, &current, entry)?;
+        generated::write_rows(&mut out, rows)?;
     }
     change(&mut out, &changes)?;
     out.flush()?;
     Ok(ExitStatus::Passed)
+}
+
+fn build_pending_document(
+    review: &Review,
+    entry: &CurrentContract<'_>,
+    rows: &[Finding],
+) -> Result<Value, CommandError> {
+    let files = entry
+        .files
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut document = render_contract_json(review, entry, &files)?;
+    if let Some(fields) = document.as_object_mut()
+        && !rows.is_empty()
+    {
+        drop(fields.insert("behavior_checks".into(), json!(rows)));
+    }
+    Ok(document)
 }
 
 /// Each file's patch, under a Change heading when there is any.

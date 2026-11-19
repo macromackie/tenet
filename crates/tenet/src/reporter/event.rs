@@ -34,26 +34,27 @@ impl Reporter<'_> {
         match event {
             Event::Begin { run } => {
                 self.started = Instant::now();
-                self.term
-                    .write_line(&format!("TENET {}  {}\n", run.version, run.root))?;
-                self.term.write_line(&format!("Mode: {}", run.mode))?;
-                let profile = match run.context_profile {
-                    ContextProfile::Standard => "standard",
-                    ContextProfile::Long => "long",
-                };
-                self.term.write_line(&format!(
-                    "Input limit: {} bytes ({profile} context)",
-                    run.input_limit_bytes
-                ))?;
                 self.diff = run.base.is_some();
                 self.deleted = run.deleted_contracts;
                 self.min_confidence = run.min_confidence;
-                if let Some(assumption) = run.assumption {
-                    self.term.write_line(&format!("Assumption: {assumption}"))?;
-                }
-                if run.model.is_none() {
+                if self.kind == ReporterKind::Verbose {
                     self.term
-                        .write_line("Model: none; unchanged inputs reuse earlier conclusions")?;
+                        .write_line(&format!("TENET {}  {}", run.version, run.root))?;
+                    let profile = match run.context_profile {
+                        ContextProfile::Standard => "standard",
+                        ContextProfile::Long => "long",
+                    };
+                    self.term.write_line(&format!(
+                        "Mode: {} · {profile} context · {} byte limit",
+                        run.mode, run.input_limit_bytes
+                    ))?;
+                    if let Some(assumption) = run.assumption {
+                        self.term.write_line(&assumption)?;
+                    }
+                }
+                if let Some(base) = run.base {
+                    self.term
+                        .write_line(&format!("Reviewing changes since {base}"))?;
                 }
             },
             Event::ContractStarted {

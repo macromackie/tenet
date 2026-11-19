@@ -9,7 +9,6 @@ mod show;
 mod status;
 
 use brief::write_brief;
-pub(crate) use display::quote_argument;
 use display::{
     check_command,
     find_model,

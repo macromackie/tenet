@@ -13,6 +13,9 @@ use tenet_engine::{
     RequestFailure,
 };
 
+pub(crate) const OPENROUTER_MODEL: &str = "typesafe/jev-1.14-20261014";
+pub(crate) const TYPESAFE_MODEL: &str = "jev-1.14.0";
+
 /// The provider's evaluator, or none for a check whose contracts can send no request.
 pub(crate) enum Model {
     CacheOnly(Box<Jev>),

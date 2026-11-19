@@ -1,11 +1,9 @@
 mod checks;
 
-use std::{
-    io::{self, Write as _},
-    path::Path,
-};
+use std::{io::Write as _, path::Path};
 
 pub(crate) use checks::write_mechanical;
+use checks::write_unchecked;
 use serde_json::json;
 use tenet_engine::{
     ContractState,
@@ -28,6 +26,7 @@ use super::{
 use crate::{
     cli::ExitStatus,
     error::CommandError,
+    generated,
     output,
     report_format::{format_marker, format_painted},
 };
@@ -116,9 +115,14 @@ pub(crate) async fn report_status(
         },
         Err(error) => return Err(error.into()),
     };
-    let status = ExitStatus::from(review::summarize_overall(
-        current.contracts.iter().map(|contract| &contract.state),
-    ));
+    let observed = current
+        .contracts
+        .iter()
+        .map(|entry| generated::inspect(root, state, entry, evidence.is_none()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let generated: Vec<_> = observed.into_iter().flatten().collect();
+    let semantic = review::summarize_overall(current.contracts.iter().map(|entry| &entry.state));
+    let status = ExitStatus::from(semantic.max(generated::summarize_status(&generated)));
     if json {
         let contracts = current
             .contracts
@@ -148,6 +152,7 @@ pub(crate) async fn report_status(
                 "deleted_contracts": current.deleted,
                 "exit_code": u8::from(status),
         });
+        document["behavior_checks"] = json!(generated);
         if let Some(rows) = &mechanical {
             document["mechanical_evidence"] = json!(rows);
         }
@@ -202,6 +207,7 @@ pub(crate) async fn report_status(
     if let Some(rows) = &mechanical {
         write_mechanical(&mut out, rows)?;
     }
+    generated::write_rows(&mut out, &generated)?;
     let pending: Vec<_> = current
         .contracts
         .iter()
@@ -264,36 +270,4 @@ pub(crate) async fn report_status(
         )?;
     }
     Ok(status)
-}
-
-#[expect(
-    clippy::indexing_slicing,
-    reason = "The document is built as an object before adding optional mechanical evidence."
-)]
-fn write_unchecked(
-    out: &mut impl io::Write,
-    base: Option<&str>,
-    message: &str,
-    mechanical: Option<&[mechanical::Evidence]>,
-    json: bool,
-) -> Result<ExitStatus, CommandError> {
-    if json {
-        let mut document = json!({
-            "base": base,
-            "revision": null,
-            "contracts": [],
-            "exit_code": u8::from(ExitStatus::Pending),
-            "message": message,
-        });
-        if let Some(rows) = mechanical {
-            document["mechanical_evidence"] = json!(rows);
-        }
-        output::write_document(out, STATUS_VERSION, document)?;
-    } else {
-        writeln!(out, "{message}")?;
-        if let Some(rows) = mechanical {
-            write_mechanical(out, rows)?;
-        }
-    }
-    Ok(ExitStatus::Pending)
 }

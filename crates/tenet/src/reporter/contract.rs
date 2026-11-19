@@ -12,6 +12,7 @@ use tenet_engine::{
 
 use super::Reporter;
 use crate::{
+    cli::ReporterKind,
     diagnostics,
     error::CommandError,
     report_format::{self, Model, format_marker, format_painted, request_failure},
@@ -52,6 +53,9 @@ impl Reporter<'_> {
         state: &ContractState,
     ) -> Result<(), CommandError> {
         let mut progress = self.active_contracts.remove(&contract).unwrap_or_default();
+        if self.kind == ReporterKind::Default {
+            return self.write_compact_contract(&contract, conclusion, state, &progress);
+        }
         let model = conclusion.map(|verdict| {
             Model {
                 status: verdict.status,

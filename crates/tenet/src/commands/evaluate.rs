@@ -6,7 +6,7 @@ use ev_grep_jev::Jev;
 use tenet_engine::{Event, Mode, Options, Review, RunInfo, review::CheckRequest};
 use tokio::{signal, time, time::MissedTickBehavior};
 
-use super::{final_review::FinalReview, finish, prepare, report_dry_run};
+use super::{Completion, final_review::FinalReview, prepare::prepare_check, report_dry_run};
 use crate::{
     cli::{Check, ExitStatus, ReporterKind},
     error::CommandError,
@@ -41,7 +41,7 @@ pub(super) async fn evaluate(
     }
     // The summary's duration covers the whole check, from discovery to the review update.
     let started = Instant::now();
-    let (plan, selection, prepared) = prepare(root, &check.input)?;
+    let (plan, selection, prepared) = prepare_check(root, check)?;
     let snapshot = prepared.as_ref();
     let run = &check.run;
     let budget = run.request_budget().context("convert request budget")?;
@@ -70,6 +70,14 @@ pub(super) async fn evaluate(
         .final_check
         .then(|| FinalReview::new(&plan, state, check, started))
         .transpose()?;
+    let completion = Completion {
+        check,
+        final_review: final_mode.as_ref(),
+        plan: &plan,
+        reporter: &reporter,
+        started,
+        state,
+    };
     let emit = |event| {
         if let Some(final_review) = &final_mode {
             final_review.observe(&event);
@@ -115,15 +123,7 @@ pub(super) async fn evaluate(
             selection: &selection,
         };
         let revision = review.commit(&evidence, &request, &checked)?;
-        return finish(
-            final_mode.as_ref(),
-            &emit,
-            &checked,
-            revision,
-            plan.coverage.clone(),
-            started,
-        )
-        .await;
+        return completion.finish(&emit, &checked, revision).await;
     }
     let model = run.provider.select_model(run.model.as_deref())?;
     // The provider and model the revision names.
@@ -184,15 +184,7 @@ pub(super) async fn evaluate(
         selection: &selection,
     };
     let revision = review.commit(&evidence, &request, &checked)?;
-    finish(
-        final_mode.as_ref(),
-        &emit,
-        &checked,
-        revision,
-        plan.coverage.clone(),
-        started,
-    )
-    .await
+    completion.finish(&emit, &checked, revision).await
 }
 
 /// Construct the transport only for scopes whose assessment might use it.

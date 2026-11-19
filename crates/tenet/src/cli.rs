@@ -5,7 +5,7 @@ mod exit_status;
 use std::path::PathBuf;
 
 pub(crate) use adoption::{Contracts, Locked, Skills};
-pub(crate) use checking::{Check, Export, Input, Record, ReporterKind};
+pub(crate) use checking::{Check, Export, Fix, Input, Record, ReporterKind};
 use clap::{Parser, Subcommand};
 pub(crate) use exit_status::ExitStatus;
 use tenet_engine::review::DIRECTORY;
@@ -59,7 +59,13 @@ impl Cli {
 )]
 pub(crate) enum Command {
     /// Assess a repository, or whether a change preserves its contracts, and update the review.
+    #[command(
+        after_help = "Run tenet show CONTRACT to inspect a finding. Use --help for all check \
+                      options."
+    )]
     Check(Check),
+    /// Apply safe native fixes for adopted contracts, then check the edited files.
+    Fix(Fix),
     /// Show which contracts are settled and which are pending, without calling a model.
     Status {
         /// Inspect project check evidence only. Optionally select CONTRACT/NAME.

@@ -56,14 +56,19 @@ tenet check --base origin/main
 tenet check --base HEAD --dry-run --json
 ```
 
-Assume the base satisfies the selected contracts, then assess whether the change preserves them. `--base REF` compares that exact commit with the working tree, including staged, unstaged, and untracked files. It does not choose a merge base automatically.
+A diff check asks whether the change introduces or worsens a violation. It assumes the base satisfies the contracts.
+An explicit `--base REF` compares that exact revision to the working tree, including staged, unstaged and untracked files.
 
-In CI, pass the merge base, not `origin/main`; otherwise commits that reached `main` after the branch started count
-as part of the change. The merge base needs history back to that point, so check out full history, such as
-`fetch-depth: 0` in `actions/checkout`, or unshallow first:
+On GitHub Actions, run `tenet check` with `fetch-depth: 0` in `actions/checkout`. In the pull request head checkout,
+Tenet reads the event's head and target commits and compares the change to their merge base. In GitHub's test merge,
+it compares the integrated tree to the target parent. The report identifies the selected commit. Missing history or
+a checkout of the wrong commit produces an error. A changed contract or an edit to its assets starts a full check
+to establish the updated rule across its scope. `--contract NAME` limits that check to one rule.
+
+Use `tenet check --full` for an intentional full check in pull request CI. Local and other CI checkouts use a full
+check by default. For a PR targeting `main` outside GitHub Actions, fetch its history and run:
 
 ```sh
-git fetch --unshallow origin main 2>/dev/null || git fetch origin main
 tenet check --base "$(git merge-base origin/main HEAD)"
 ```
 
@@ -76,7 +81,7 @@ question. It retains all captured selected source in the contract scope, regardl
 contents, patches, explicit context, and the file inventory. An unrelated change can leave a contract unaffected;
 relevant changes need evidence of preservation. A diff that changes no file a contract governs, and not the contract
 itself, concludes `unaffected` without a model request.
-The caller owns establishing the baseline and running full checks when contracts change. Tenet does not silently switch modes.
+With an explicit `--base`, establish the baseline and run `tenet check --full --contract NAME` for each changed contract.
 
 `contracts list --base REF --json` returns the containing contract scopes in evaluation order, plus changed contract paths
 and the change's [`coverage`](./output.md#coverage): the changed files no contract governs. A change to any file in a
@@ -187,7 +192,7 @@ size limits, and examples of preparing a focused question.
 ## Shared contracts and skills
 
 `tenet contracts` and `tenet skills` install contracts and agent skills from a library and record them in `.tenet.lock`
-at the project root. They are the only commands that write the lock or reach the network. They need `git`, and `add`,
+at the project root. They write the library lock. They need `git`, and `add`,
 `update`, and `remove` need the project to be a Git checkout. `check`, `export`, and `contracts list` and `show` read
 only the lock's [`projects`](#discovery). `validate` checks offline that the lock is well formed, that each recorded
 file exists, and that each read-only file matches its hash. With `--strict-adaptations`, it also exits 1 and prints
@@ -324,4 +329,4 @@ Either discovery found no files there, because ignore files or excluded names hi
 or no selected contract governs the files found.
 
 Symlinks are not followed. Symbolic links and empty, binary, or non-UTF-8 files are skipped: they stay in the inventory, but no model judges their contents. Unreadable inputs are errors.
-There is no configuration file, stored baseline, generated verifier, or automatic fixer.
+Use [behavior checks](./behavior-checks.md) to generate a replayable check from an English rule. Use `tenet fix` to apply supported native fixes.

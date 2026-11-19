@@ -160,6 +160,10 @@ impl Upstream {
             .then_some(files))
     }
 
+    pub(super) fn repository(&self) -> &Path {
+        &self.repository
+    }
+
     /// Resolve a tag, branch, or commit; without one, take the highest `vX.Y.Z` tag.
     pub(super) fn resolve(&self, reference: Option<&str>) -> Result<Revision, AdoptionError> {
         let resolved = match reference {

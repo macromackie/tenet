@@ -241,9 +241,11 @@ pub(super) fn format_counts(summary: &Summary) -> String {
 pub(super) fn format_painted(state: &str) -> String {
     let styled = output::format_styled(state);
     match state.to_ascii_uppercase().as_str() {
-        "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => styled.green().to_string(),
+        "PASS" | "PASSED" | "VERIFIED" | "PRESERVED" | "CLEAR" => styled.green().to_string(),
         "FAIL" | "FAILED" | "ERROR" => styled.red().bold().to_string(),
-        "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" | "PENDING" => styled.yellow().to_string(),
+        "REVIEW" | "FOR REVIEW" | "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" | "PENDING" => {
+            styled.yellow().to_string()
+        },
         _ => styled.dim().to_string(),
     }
 }
@@ -268,5 +270,17 @@ pub(super) fn format_contract_counts(states: &BTreeMap<&str, usize>, total: usiz
         format!("0 completed ({total})")
     } else {
         format!("{counts} ({total})")
+    }
+}
+
+pub(crate) fn quote_argument(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "_-./:".contains(character))
+    {
+        value.to_owned()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }

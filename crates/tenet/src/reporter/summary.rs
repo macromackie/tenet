@@ -36,6 +36,9 @@ impl Reporter<'_> {
     ) -> Result<(), CommandError> {
         self.running = false;
 
+        if self.kind == ReporterKind::Default {
+            return self.write_compact_summary(summary, revision, pending, coverage);
+        }
         for failure in &self.failures {
             failure.write(self.contracts, &mut self.term)?;
         }

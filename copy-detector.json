@@ -17,6 +17,10 @@
   "extensionlessSources": "shebang",
   "exclusions": [
     {
+      "pattern": "**/node_modules/**",
+      "reason": "The package lockfiles track installed third-party dependencies."
+    },
+    {
       "pattern": "**/target/**",
       "reason": "Cargo emits generated build output and dependency sources here."
     },

@@ -1,3 +1,5 @@
+mod pull_request;
+
 use alloc::{collections::BTreeMap, string::FromUtf8Error};
 use core::{str, str::Utf8Error};
 use std::{
@@ -8,6 +10,8 @@ use std::{
     process::Command,
 };
 
+pub use pull_request::pull_request_base;
+
 /// Why a Git command failed or its output cannot be read.
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
@@ -17,6 +21,8 @@ pub enum GitError {
     Failed { command: String, stderr: String },
     #[error(transparent)]
     Input(io::Error),
+    #[error("pull request event contains an invalid Git commit ID")]
+    InvalidPullRequestCommit,
     #[error("malformed Git check-ignore output")]
     MalformedCheckIgnore,
     #[error("missing Git path")]
@@ -38,6 +44,8 @@ pub enum GitError {
         reference: String,
         source: Box<Self>,
     },
+    #[error("check out the pull request head or its test merge before reviewing this change")]
+    WrongPullRequestCheckout,
 }
 
 pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {

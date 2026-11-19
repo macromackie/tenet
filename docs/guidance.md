@@ -9,6 +9,22 @@ Contract names start with an area, followed by any technology the rules depend o
 applies to any stack; `ui-react-interaction-ownership` applies only to React code. The library
 [README](https://github.com/macromackie/tenet-contracts#contracts) lists every contract by area.
 
+## Find relevant contracts
+
+Run `tenet contracts recommend` in a project, including a project with no contracts yet. Each
+suggestion names a rule from the latest tagged catalog, cites a public declaration in this checkout
+and gives the released rule's description. To adopt one, run `tenet contracts add tenet/NAME@REF --scope DIR` using the reported release. Recommendation leaves the project unchanged.
+
+Tenet samples up to 256 JavaScript, TypeScript, Python and Rust source files, reading the first 16
+KiB of each. It uses top-level declarations and a few recognizable expressions, including default
+lookups. It skips tooling, tests, examples and installed dependencies. Installed rules that already
+govern the matching source are excluded. With `OPENROUTER_API_KEY`, one batched Jev decision
+request ranks up to 16 catalog matches from their descriptions, paths and declaration names.
+Affirmative suggestions are ordered by model confidence. Each suggestion is advisory.
+The recommendation honors `TENET_PROVIDER` and `TENET_MODEL` just like a check. Without the selected provider’s key, Tenet reports the local ranking. The result shows up to six suggestions. Use
+`--json` for the release, commit, selection basis, raw model choices and provider usage. Pass `--library DIR` to
+read the highest release of a local catalog checkout.
+
 ## Shared contracts
 
 Install a contract into the scope it should govern:
@@ -133,7 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          curl -fsSL https://tenet-contracts.com/v0.18.0/install.sh | bash
+          curl -fsSL https://tenet-contracts.com/v0.19.0/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - id: update
         run: |

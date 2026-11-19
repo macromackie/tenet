@@ -9,6 +9,15 @@ use clap::Subcommand;
               codes."
 )]
 pub(crate) enum Contracts {
+    /// Suggest shared contracts for the public code in this repository, without installing them.
+    Recommend {
+        /// Read the highest release from this local catalog checkout instead of fetching it.
+        #[arg(long, value_name = "DIR", env = "TENET_CATALOG_DIR")]
+        library: Option<PathBuf>,
+        /// Print recommendations and their supporting paths as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     List {
         /// List only the contracts that govern this file.
         #[arg(long = "for", value_name = "FILE")]

@@ -7,7 +7,7 @@ curl -fsSL https://tenet-contracts.com/install.sh | bash
 tenet --version
 ```
 
-To pin a release, use its path, such as `/v0.18.0/install.sh`.
+To pin a release, use its path, such as `/v0.19.0/install.sh`.
 Archives and SHA-256 checksums are also available on [GitHub Releases](https://github.com/macromackie/tenet/releases).
 
 To build from a source checkout:
@@ -30,7 +30,9 @@ export TYPESAFE_API_KEY='your-key'
 tenet check --provider typesafe
 ```
 
-Tenet uses the same provider adapter as ev-grep. Supported model IDs are pinned:
+For automatic behavior checks, set `OPENROUTER_API_KEY` and use the default OpenRouter endpoint. Tenet sends the contract, selected project source and reference examples to its fx generation model, `openai/gpt-6-luna` by default. Override it with `TENET_AGENT_MODEL`. See [behavior checks](./behavior-checks.md) for local runtime requirements.
+
+Semantic review uses the same provider adapter as ev-grep. Supported model IDs are pinned:
 
 | Provider     | Default model                | Other supported model        |
 | ------------ | ---------------------------- | ---------------------------- |

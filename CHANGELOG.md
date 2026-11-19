@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.19.0
+
+- Run `tenet contracts recommend` to see catalog contracts that fit the current repository and the source evidence for each suggestion.
+- Tenet can generate behavior checks for plain-English contracts on supported Linux projects. A generated check must accept two working examples and distinguish a defective one before Tenet reports what it observed in the project.
+- Pull request checks in GitHub Actions can discover the merge base from the event. Local reviews and explicit bases keep their existing behavior.
+- Use `tenet fix` to apply supported native fixes for an adopted contract and check the resulting edit.
+
 ## v0.18.0
 
 - Qualify a local checker on known-good, deliberately broken, and behavior-preserving examples with `tenet check --qualify CONTRACT/CHECK`.

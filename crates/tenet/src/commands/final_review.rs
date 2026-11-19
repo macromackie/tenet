@@ -21,6 +21,7 @@ use super::{local::summarize_checks, prepare};
 use crate::{
     cli::{Check, ExitStatus, ReporterKind},
     error::CommandError,
+    generated,
 };
 
 /// Uses the ordinary semantic check and journal. Only this explicit mode runs project checkers.
@@ -152,9 +153,15 @@ impl<'run> FinalReview<'run> {
         observed: Vec<Evidence>,
         mut errors: Vec<String>,
     ) -> Result<ExitStatus, CommandError> {
+        let generated = generated::assess(self.plan, self.state, self.check, checked).await?;
         // Rediscover as well as recapture. A checker or editor can add a new contract or file,
         // change an already checked input, or remove the original selection entirely.
-        let refreshed = prepare(&self.plan.root, &self.check.input);
+        let refreshed = prepare(
+            &self.plan.root,
+            &self.check.input,
+            self.plan.base.as_deref(),
+            &self.plan.selected_paths,
+        );
         let latest = refreshed.as_ref().ok().map(|(plan, ..)| plan);
         let capture = match latest {
             Some(plan) => Some(plan.capture().await),
@@ -173,34 +180,41 @@ impl<'run> FinalReview<'run> {
             self.check,
             self.state,
         );
-        let checks = if let Some(plan) = latest {
-            let result = self.verify_checks(plan, &observed);
-            result.unwrap_or_else(|error| {
-                errors.push(error.to_string());
-                observed
-            })
-        } else {
-            observed
-        };
+        let checks = self.refresh_checks(latest, observed, &mut errors);
         let status = summarize_final(
             checked,
             &contracts,
             &checks,
             source_error.is_some(),
             !errors.is_empty(),
-        );
+        )
+        .max(generated::summarize_status(&generated));
         let mut summary = checked.summary;
         summary.elapsed_ms = self.started.elapsed().as_millis();
         let report = Report {
             checks,
             contracts,
             errors,
+            generated,
             revision,
             source_error,
             status,
             summary,
         };
         report.write(self)
+    }
+
+    fn refresh_checks(
+        &self,
+        latest: Option<&Plan>,
+        observed: Vec<Evidence>,
+        errors: &mut Vec<String>,
+    ) -> Vec<Evidence> {
+        let Some(plan) = latest else { return observed };
+        self.verify_checks(plan, &observed).unwrap_or_else(|error| {
+            errors.push(error.to_string());
+            observed
+        })
     }
 
     fn verify_checks(

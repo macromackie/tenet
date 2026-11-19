@@ -1,3 +1,5 @@
+mod recommend;
+
 use std::{io::Write as _, path::Path};
 
 use anyhow::{Context as _, anyhow};
@@ -52,11 +54,14 @@ pub(super) fn execute_skills(root: &Path, operation: &Skills) -> Result<ExitStat
     reason = "The steps run in one order and share local state; splitting them would add \
               forwarding functions."
 )]
-pub(super) fn execute_contracts(
+pub(super) async fn execute_contracts(
     root: &Path,
     operation: &Contracts,
 ) -> Result<ExitStatus, CommandError> {
     match operation {
+        Contracts::Recommend { library, json } => {
+            return recommend::run(root, library.as_deref(), *json).await;
+        },
         Contracts::Add {
             spec,
             scope: selected_scope,

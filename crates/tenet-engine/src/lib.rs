@@ -13,6 +13,7 @@ mod check;
 mod discovery;
 mod evidence;
 mod failure;
+pub mod fixes;
 mod git;
 mod lock;
 pub mod mechanical;
@@ -76,7 +77,7 @@ pub use evidence::{
     classify_input_status,
 };
 pub use failure::{ClassifyRequest, FailureKind, RequestFailure};
-pub use git::GitError;
+pub use git::{GitError, pull_request_base};
 pub use plan::{ContextError, SpanError, SpanRequest};
 pub use report::{
     Answer,

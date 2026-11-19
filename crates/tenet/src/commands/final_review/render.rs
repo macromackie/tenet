@@ -1,10 +1,17 @@
 use std::io::Write as _;
 
-use serde_json::json;
+use serde_json::{Value, json};
 use tenet_engine::{Summary, mechanical::Evidence, review::OverallStatus};
 
 use super::{FinalReview, contracts::Row, replay};
-use crate::{cli::ExitStatus, error::CommandError, output, review::write_mechanical};
+use crate::{
+    agent_checks::Finding,
+    cli::ExitStatus,
+    error::CommandError,
+    generated,
+    output,
+    review::write_mechanical,
+};
 
 #[expect(
     clippy::field_scoped_visibility_modifiers,
@@ -14,6 +21,7 @@ pub(super) struct Report<'run> {
     pub(super) checks: Vec<Evidence>,
     pub(super) contracts: Vec<Row<'run>>,
     pub(super) errors: Vec<String>,
+    pub(super) generated: Vec<Finding>,
     pub(super) revision: Option<u64>,
     pub(super) source_error: Option<String>,
     pub(super) status: OverallStatus,
@@ -21,35 +29,41 @@ pub(super) struct Report<'run> {
 }
 
 impl Report<'_> {
+    fn build_document(&self, review: &FinalReview<'_>, replay: &str) -> Value {
+        let rows: Vec<_> = self.contracts.iter().map(Row::build_document).collect();
+        json!({
+            "type": "final",
+            "run": review.run.borrow().as_ref(),
+            "mode": review.plan.mode,
+            "base": review.plan.base,
+            "head": review.plan.head,
+            "contracts": rows,
+            "checks": self.checks,
+            "behavior_checks": self.generated,
+            "generation": generated::summarize_generation(&self.generated),
+            "revision": self.revision,
+            "paths": review.plan.selected_paths,
+            "coverage": review.plan.coverage,
+            "excluded": review.plan.excluded_paths,
+            "check_source": if review.check.evidence.is_some() {"imported"} else {"local"},
+            "summary": self.summary,
+            "requests": review.requests.borrow().as_slice(),
+            "source_error": self.source_error,
+            "errors": self.errors,
+            "status": format_status(self.status),
+            "exit_code": u8::from(ExitStatus::from(self.status)),
+            "replay": replay
+        })
+    }
+
     pub(super) fn write(&self, review: &FinalReview<'_>) -> Result<ExitStatus, CommandError> {
         let exit = ExitStatus::from(self.status);
         let replay = replay::build_command(review.check, review.plan, review.state, None);
         if review.is_json() {
-            let rows: Vec<_> = self.contracts.iter().map(Row::build_document).collect();
             output::write_document(
                 &mut output::open_stdout().lock(),
                 1,
-                json!({
-                    "type": "final",
-                    "run": review.run.borrow().as_ref(),
-                    "mode": review.plan.mode,
-                    "base": review.plan.base,
-                    "head": review.plan.head,
-                    "contracts": rows,
-                    "checks": self.checks,
-                    "revision": self.revision,
-                    "paths": review.plan.selected_paths,
-                    "coverage": review.plan.coverage,
-                    "excluded": review.plan.excluded_paths,
-                    "check_source": if review.check.evidence.is_some() {"imported"} else {"local"},
-                    "summary": self.summary,
-                    "requests": review.requests.borrow().as_slice(),
-                    "source_error": self.source_error,
-                    "errors": self.errors,
-                    "status": format_status(self.status),
-                    "exit_code": u8::from(exit),
-                    "replay": replay
-                }),
+                self.build_document(review, &replay),
             )?;
         } else {
             let mut out = output::open_stdout().lock();
@@ -64,6 +78,7 @@ impl Report<'_> {
                 row.write(&mut out)?;
             }
             write_mechanical(&mut out, &self.checks)?;
+            generated::write_rows(&mut out, &self.generated)?;
             for error in self.source_error.iter().chain(&self.errors) {
                 writeln!(out, "  {}", error.escape_debug())?;
             }

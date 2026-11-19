@@ -12,17 +12,16 @@ Binaries support macOS and Linux on ARM64 and x86-64. Local checks run with the 
 
 ## Check code
 
-Write numbered [contracts](docs/contracts.md) under `.contracts/`, then run:
+Write a numbered [contract](docs/contracts.md) under `.contracts/`. For example, “When the caller supplies a timeout, including zero, use it without reading the default.” Then run:
 
 ```sh
-tenet validate                     # Check contract documents offline
-tenet check --local                # Run declared project tests and linters
-tenet check                        # Assess the current repository
-tenet check --base origin/main     # Assess changes, assuming a valid base
-tenet check --final                # Verify the current source and its declared checks
+tenet check                   # Review the repo or the current GitHub pull request
+tenet show timeouts           # Inspect a finding and its evidence
+tenet fix                     # Apply supported safe native lint fixes
+tenet check --contract timeouts
 ```
 
-To attach a test to a contract, replay one failure, and inspect saved results, see [Local checks](docs/local-checks.md). To test the checker itself or verify a finished change, see [Qualify a local check](docs/qualifying-checks.md) and [Final checks](docs/final-checks.md).
+With OpenRouter configured, a supported Linux checkout can build a behavior check, exercise it against a deliberate defect, and save it for the next run. See [behavior checks and runner requirements](docs/behavior-checks.md). Use [local checks](docs/local-checks.md) for project-owned tests and linters, and [final checks](docs/final-checks.md) to verify the finished change.
 
 For example, a contract can require database failures to reach the caller rather than become empty results.
 Tenet checks relevant files and their combined context, then reports one conclusion per contract.
@@ -32,6 +31,7 @@ Selected-path checks assess their combined evidence and can report `clear` witho
 Install shared contracts from the public [tenet-contracts](https://github.com/macromackie/tenet-contracts) library:
 
 ```sh
+tenet contracts recommend           # See suitable contracts before installing them
 tenet contracts add tenet/data-and-apis --scope packages/api
 tenet contracts update             # Take releases up to the next major, keeping local edits
 ```
@@ -75,6 +75,18 @@ The same docs are at [tenet-contracts.com/docs](https://tenet-contracts.com/docs
 cargo build --release --locked -p tenet
 cargo install --path crates/tenet --locked
 ```
+
+The Rust binary embeds the checker worker. To change it, use Node 22.23.2 and regenerate the bundle before building.
+
+```sh
+cd checker
+npm ci --ignore-scripts
+npm run typecheck
+npm test
+npm run bundle
+```
+
+CI rebuilds the worker and checks it against the committed copy. A fresh checkout can replay a frozen check with Node and the sandbox tools for its language. The first model-generated check also installs the pinned fx library in the user cache.
 
 Package ownership and allowed crate dependencies are declared in [package-boundaries.json](package-boundaries.json).
 CI verifies that declaration against Cargo and source imports, alongside the source-copy and advisory checks.

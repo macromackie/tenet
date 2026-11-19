@@ -1,3 +1,4 @@
+mod compact;
 mod contract;
 mod display;
 mod event;

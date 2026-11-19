@@ -1,8 +1,9 @@
 use std::io;
 
+use serde_json::json;
 use tenet_engine::mechanical;
 
-use crate::error::CommandError;
+use crate::{cli::ExitStatus, error::CommandError, output, review::STATUS_VERSION};
 
 pub(crate) fn write_mechanical(
     out: &mut impl io::Write,
@@ -61,4 +62,36 @@ fn write_details(out: &mut impl io::Write, row: &mechanical::Evidence) -> io::Re
         }
     }
     Ok(())
+}
+
+#[expect(
+    clippy::indexing_slicing,
+    reason = "The document is built as an object before adding optional mechanical evidence."
+)]
+pub(super) fn write_unchecked(
+    out: &mut impl io::Write,
+    base: Option<&str>,
+    message: &str,
+    mechanical: Option<&[mechanical::Evidence]>,
+    json: bool,
+) -> Result<ExitStatus, CommandError> {
+    if json {
+        let mut document = json!({
+            "base": base,
+            "revision": null,
+            "contracts": [],
+            "exit_code": u8::from(ExitStatus::Pending),
+            "message": message,
+        });
+        if let Some(rows) = mechanical {
+            document["mechanical_evidence"] = json!(rows);
+        }
+        output::write_document(out, STATUS_VERSION, document)?;
+    } else {
+        writeln!(out, "{message}")?;
+        if let Some(rows) = mechanical {
+            write_mechanical(out, rows)?;
+        }
+    }
+    Ok(ExitStatus::Pending)
 }

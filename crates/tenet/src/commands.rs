@@ -4,6 +4,7 @@ mod dry_run;
 mod evaluate;
 mod final_review;
 mod finish;
+mod fix;
 mod local;
 mod prepare;
 mod qualification;
@@ -12,7 +13,7 @@ use administration::{execute_contracts, execute_skills};
 use documents::{export, validate};
 use dry_run::report_dry_run;
 use evaluate::evaluate;
-use finish::finish;
+use finish::Completion;
 use prepare::prepare;
 
 use crate::{
@@ -30,8 +31,9 @@ pub(crate) async fn execute(cli: &Cli) -> Result<ExitStatus, CommandError> {
     match &cli.command {
         Command::Validate { strict_adaptations } => validate(&cli.root, *strict_adaptations),
         Command::Skills { command } => execute_skills(&cli.root, command),
-        Command::Contracts { command } => execute_contracts(&cli.root, command),
+        Command::Contracts { command } => execute_contracts(&cli.root, command).await,
         Command::Check(check) => evaluate(&cli.root, &cli.resolve_state(), check).await,
+        Command::Fix(args) => fix::run(&cli.root, args).await,
         Command::Status {
             local: Some(name),
             json,

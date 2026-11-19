@@ -9,10 +9,12 @@
 extern crate alloc;
 
 mod adoption;
+mod agent_checks;
 mod cli;
 mod commands;
 mod diagnostics;
 mod error;
+mod generated;
 mod output;
 mod progress;
 mod provider;
@@ -37,6 +39,7 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
     let json = match &cli.command {
         Command::Check(check) => check.run.json || check.run.reporter == ReporterKind::Jsonl,
+        Command::Fix(fix) => fix.json,
         Command::Status { json, .. } | Command::Show { json, .. } | Command::Log { json, .. } => {
             *json
         },

@@ -74,3 +74,25 @@ A tool that cannot start, malformed checker output, an exceeded limit, or inputs
 Set `"cache": true` only for reproducible checks. Include test helpers, rule files, tool configuration, and runtime dependency locks in `inputs`. Tenet matches each glob against project discovery from the root. Each pattern must match and at least one input must be governed by the contract. Tenet compares the contract, binding, resolved executable and its bytes, discovered paths, and file contents. A changed dependency makes the prior observation stale. Environment variables, installed plugins, external services, and transitive tools need separate control by the project. Leave caching off when those can change the result. A fresh run always executes the check. Unresolved observations are retried.
 
 Local observations live under the review state directory. `tenet status` includes them after the first run. Its exit code continues to describe the semantic review. `tenet check --local` provides a separate gate for the selected executable claims. Exit 0 means all passed, 1 indicates a current failure, 2 indicates a command or state error, 3 indicates unresolved evidence, and 4 indicates missing or stale evidence or an empty selection of declarations. Pending evidence takes precedence over current failures, and failures take precedence over unresolved observations. A passing example establishes only the claim it exercises. For independently produced evidence, see [mechanical receipts](./cli.md#mechanical-evidence).
+
+## Apply native fixes
+
+Run `tenet fix` to apply the safe fixes a contract's installed Oxlint or Ruff configuration offers.
+Select a contract, a path or the files changed since a Git commit. For example:
+
+```sh
+tenet fix --contract cleanup src/
+tenet fix --base HEAD --json
+```
+
+Install the native tool on your command path. Tenet reads the adopted configuration recorded in
+`.tenet.lock` at `assets/oxlint/oxlintrc.json` or `assets/ruff/ruff.toml`. Oxlint assets can name
+built-in plugins and rules. Configurations that extend another Oxlint configuration, use custom
+plugins or define overrides require a project-owned check. A local edit to the contract, including
+a written exception, leaves that contract for ordinary review because the installed native rules
+describe the upstream contract.
+
+Tenet applies fixes to copies of the selected source files and reruns the selected linters on the
+result. It prints the patch, replaces changed files in the working tree and lists findings that
+still need a person or agent. A setup or execution problem leaves the patch unapplied. Contracts
+without a supported native fixer appear separately. Run `tenet check` to review the resulting code.

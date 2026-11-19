@@ -6,6 +6,19 @@ use ev_grep_jev::Provider;
 use tenet_engine::SpanRequest;
 
 #[derive(Args)]
+pub(crate) struct Fix {
+    /// Limit fixes to files changed since this commit.
+    #[arg(long)]
+    pub base: Option<String>,
+    /// Apply fixes for one adopted contract.
+    #[arg(long)]
+    pub contract: Option<String>,
+    #[arg(long)]
+    pub json: bool,
+    pub paths: Vec<PathBuf>,
+}
+
+#[derive(Args)]
 #[expect(
     clippy::arbitrary_source_item_ordering,
     reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
@@ -18,14 +31,28 @@ use tenet_engine::SpanRequest;
 pub(crate) struct Check {
     #[command(flatten)]
     pub input: Input,
+    /// Check the full scope even in pull request CI.
+    #[arg(long, conflicts_with_all = ["base", "snapshot", "local", "qualify"])]
+    pub full: bool,
     /// Run trusted project checks without a model. Optionally select CONTRACT/NAME.
-    #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "CONTRACT/NAME",
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Project checks",
+        long,
+        num_args = 0..=1,
+        default_missing_value = "",
+        value_name = "CONTRACT/NAME",
           conflicts_with_all = ["paths", "base", "snapshot", "patch", "contract", "context",
                                 "dry_run", "no_model", "context_profile", "max_requests", "jobs",
                                 "contract_batch_size", "min_confidence", "reporter"])]
     pub local: Option<String>,
     /// Exercise a project checker against declared good, defective and refactored controls.
-    #[arg(long, value_name = "CONTRACT/NAME", conflicts_with = "final_check",
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Project checks",
+        long,
+        value_name = "CONTRACT/NAME",
+        conflicts_with = "final_check",
           conflicts_with_all = ["local", "paths", "base", "snapshot", "patch", "contract",
                                 "context", "dry_run", "no_model", "fresh", "context_profile",
                                 "max_requests", "jobs", "contract_batch_size", "min_confidence",
@@ -35,17 +62,28 @@ pub(crate) struct Check {
     #[arg(long = "final", conflicts_with_all = ["local", "dry_run", "snapshot", "patch"])]
     pub final_check: bool,
     /// Verify receipts from a trusted external checker runner instead of executing project code.
-    #[arg(long, value_name = "FILE", requires = "final_check")]
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Project checks",
+        long,
+        value_name = "FILE",
+        requires = "final_check"
+    )]
     pub evidence: Option<PathBuf>,
     /// Show candidate pairs and predict requests without calling a model or updating the review.
-    #[arg(long, conflicts_with = "no_model")]
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Planning and replay",
+        long,
+        conflicts_with = "no_model"
+    )]
     pub dry_run: bool,
     /// Capture the change and reuse earlier conclusions for unchanged inputs; leave the rest
     /// pending.
     #[arg(long, conflicts_with = "fresh")]
     pub no_model: bool,
     /// Rerun the selected checks even when their saved results can be reused.
-    #[arg(long)]
+    #[arg(hide_short_help = true, help_heading = "Planning and replay", long)]
     pub fresh: bool,
     #[command(flatten)]
     pub run: Run,
@@ -94,19 +132,40 @@ pub(crate) struct Export {
 pub(crate) struct Input {
     pub paths: Vec<PathBuf>,
     /// Bound assessment inputs for the standard or opt-in long context window.
-    #[arg(long, value_enum, default_value_t = ContextWindow::Standard)]
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Model settings",
+        long,
+        value_enum,
+        default_value_t = ContextWindow::Standard,
+    )]
     pub context_profile: ContextWindow,
     /// Supply a related repository file, or only some of its lines, without changing contract
     /// scope; repeat as needed.
-    #[arg(long, value_name = "PATH[:START-END]")]
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Planning and replay",
+        long,
+        value_name = "PATH[:START-END]"
+    )]
     pub context: Vec<SpanRequest>,
     /// Compare this exact revision with the working tree, assuming base compliance.
     #[arg(long, conflicts_with = "snapshot")]
     pub base: Option<String>,
     /// Check an isolated copy of this directory, optionally applying a patch.
-    #[arg(long, conflicts_with = "base")]
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Planning and replay",
+        long,
+        conflicts_with = "base"
+    )]
     pub snapshot: Option<PathBuf>,
-    #[arg(long, requires = "snapshot")]
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Planning and replay",
+        long,
+        requires = "snapshot"
+    )]
     pub patch: Option<PathBuf>,
     #[arg(long)]
     pub contract: Option<String>,
@@ -119,34 +178,65 @@ pub(crate) struct Input {
               codes."
 )]
 pub(crate) struct Run {
-    #[arg(long, env = "TENET_PROVIDER", default_value = "openrouter")]
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Model settings",
+        long,
+        env = "TENET_PROVIDER",
+        default_value = "openrouter"
+    )]
     pub provider: Provider,
     #[arg(
+        hide_short_help = true,
+        help_heading = "Model settings",
         long,
         env = "TENET_MODEL",
-        default_value_if("provider", "openrouter", "typesafe/jev-1.14-20261014"),
-        default_value_if("provider", "typesafe", "jev-1.14.0")
+        default_value_if("provider", "openrouter", crate::provider::OPENROUTER_MODEL),
+        default_value_if("provider", "typesafe", crate::provider::TYPESAFE_MODEL)
     )]
     pub model: Option<String>,
     /// Send requests and the provider credential to a trusted protocol-compatible proxy.
-    #[arg(long, env = "TENET_ENDPOINT")]
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Model settings",
+        long,
+        env = "TENET_ENDPOINT"
+    )]
     pub endpoint: Option<String>,
-    #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u16).range(1..=256))]
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Model settings",
+        long,
+        default_value_t = 4,
+        value_parser = clap::value_parser!(u16).range(1..=256),
+    )]
     pub jobs: u16,
     /// Share file context across at most this many contracts in one model request.
-    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=64))]
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Model settings",
+        long,
+        default_value_t = 1,
+        value_parser = clap::value_parser!(u16).range(1..=64),
+    )]
     pub contract_batch_size: u16,
     /// Maximum model requests. Zero reuses cached answers and leaves unaffordable work pending.
     #[arg(long, default_value_t = 1000)]
     pub max_requests: u32,
     /// Route lower-confidence answers to unresolved while preserving their raw values.
-    #[arg(
+    #[arg(hide_short_help = true, help_heading = "Model settings",
         long,
         default_value_t = tenet_engine::MIN_CONFIDENCE,
         value_parser = parse_min_confidence
     )]
     pub min_confidence: f64,
-    #[arg(long, value_enum, default_value_t = ReporterKind::Default)]
+    #[arg(
+        hide_short_help = true,
+        help_heading = "Output",
+        long,
+        value_enum,
+        default_value_t = ReporterKind::Default,
+    )]
     pub reporter: ReporterKind,
     /// Write JSON Lines for ordinary checks, or one JSON document for a final check.
     #[arg(long)]

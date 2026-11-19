@@ -1,0 +1,20 @@
+{
+  "name": "tenet-checker-runtime",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "libfx": "0.0.17"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.15",
+    "effect": "4.0.4",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  },
+  "scripts": {
+    "bundle": "bash bundle.sh",
+    "check:bundle": "bash bundle.sh --check",
+    "test": "node --test test/runtime.test.mts test/generation.test.mts test/pin-changes.test.mts test/record-cas.test.mts",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

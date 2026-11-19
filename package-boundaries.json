@@ -61,6 +61,22 @@
       "testSupport": false,
       "tsconfig": "",
       "builtins": []
+    },
+    {
+      "name": "tenet-checker-runtime",
+      "manifest": "checker/package.json",
+      "manager": "npm",
+      "ownership": "Embedded checker discovery, verification, and replay.",
+      "dependencies": [],
+      "testSources": [
+        "test/**",
+        "tests/**",
+        "**/*.test.*",
+        "**/*.spec.*"
+      ],
+      "testSupport": false,
+      "tsconfig": "checker/tsconfig.json",
+      "builtins": []
     }
   ],
   "exclusions": [

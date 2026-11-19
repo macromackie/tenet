@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tenet_engine::Plan;
 
-use crate::{cli::Check, review::quote_argument};
+use crate::{cli::Check, report_format::quote_argument};
 
 /// Preserve the original selection, budget, model and explicit receipt boundary in a rerun.
 pub(super) fn build_command(
@@ -23,6 +23,8 @@ pub(super) fn build_command(
     }
     if let Some(base) = &plan.base {
         args.extend(["--base".into(), base.clone()]);
+    } else {
+        args.push("--full".into());
     }
     if let Some(receipt) = &check.evidence {
         args.extend(["--evidence".into(), receipt.display().to_string()]);
@@ -37,12 +39,10 @@ pub(super) fn build_command(
     for context in &check.input.context {
         args.extend(["--context".into(), context.to_string()]);
     }
-    if !check.input.paths.is_empty() {
+    if !plan.selected_paths.is_empty() {
         args.push("--".into());
         args.extend(
-            check
-                .input
-                .paths
+            plan.selected_paths
                 .iter()
                 .map(|path| path.display().to_string()),
         );

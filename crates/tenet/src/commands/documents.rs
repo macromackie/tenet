@@ -55,7 +55,12 @@ pub(super) fn validate(root: &Path, strict_adaptations: bool) -> Result<ExitStat
     reason = "tokio::select! expands to a remainder for its branch order."
 )]
 pub(super) async fn export(root: &Path, export: &Export) -> Result<ExitStatus, CommandError> {
-    let (plan, _selection, _snapshot) = prepare(root, &export.input)?;
+    let (plan, _selection, _snapshot) = prepare(
+        root,
+        &export.input,
+        export.input.base.as_deref(),
+        &export.input.paths,
+    )?;
     let capture = plan.export_evidence(export.max_bytes as usize);
     let bytes = tokio::select! {
         result = capture => result?,

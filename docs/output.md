@@ -1,8 +1,12 @@
 # Output
 
-The default reporter shows progress while files are assessed, then one final result per contract. Unresolved results show the reason they could not complete. Only failed contracts show requirement snippets and finding details. Interactive terminals show a spinner, file counts, and elapsed time below completed contracts. Failure details follow the results. Redirected output contains no animation.
+The default reporter lists contracts that need attention and summarizes the rest. `REVIEW` means a model flagged
+a concern or the check needs more evidence. A reviewer can inspect it with `tenet show NAME`.
+`FAIL` marks a confirmed violation. A record that overrides the model remains visible as `REVIEWED`.
+Colors and progress appear in interactive terminals. The labels also work in plain CI logs.
 
-Use `--reporter verbose` for individual file judgments. JSONL retains all intermediate evidence, including uncertainty that a later repository assessment resolves.
+Use `--reporter verbose` for individual file judgments, model details and request counts. JSONL retains all
+intermediate evidence, including uncertainty that a later repository assessment resolves.
 Human reports go to stderr. JSONL goes to stdout.
 The offline [`export` command](./export.md) has a separate JSON format containing source and contract documents.
 

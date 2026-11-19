@@ -31,17 +31,23 @@
         "run": |
           shasum -a 256 --check .checks/clone-detector/SHA256SUMS
           uv run --locked --script .checks/clone-detector/check-clones.py --root . --config copy-detector.json
-      - "name": "Check package dependencies"
-        "run": |
-          shasum -a 256 --check .checks/package-boundaries/SHA256SUMS
-          uv run --locked --script .checks/package-boundaries/check-package-boundaries.py --root . --config package-boundaries.json
       - "run": "rustup show"
       - "uses": "jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c" # v4.3.0
         "with":
           "cache": false
           "env": false
-          "install_args": "aqua:EmbarkStudios/cargo-deny@0.19.9"
+          "install_args": "node@22.23.2 aqua:EmbarkStudios/cargo-deny@0.19.9"
           "version": "2026.8.12"
+      - "name": "Check package dependencies"
+        "run": "bash .github/scripts/check-package-dependencies.sh"
+      - "name": "Install the Linux checker sandbox"
+        "run": "bash .github/scripts/install-checker-sandbox.sh"
+      - "name": "Rebuild and test the embedded checker"
+        "run": |
+          npm run typecheck
+          npm run check:bundle
+          npm test
+        "working-directory": "checker"
       - "name": "Check dependency advisories and policies"
         "run": "mise exec aqua:EmbarkStudios/cargo-deny@0.19.9 -- cargo deny --all-features --locked check --deny warnings"
       # rustfmt.toml uses unstable options, so formatting runs on one dated nightly rustfmt.

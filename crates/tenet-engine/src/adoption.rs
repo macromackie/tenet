@@ -4,6 +4,7 @@
 //! touch the network, and nothing persists outside the project.
 
 mod add;
+mod catalog;
 mod commands;
 mod error;
 mod file_errors;
@@ -19,6 +20,7 @@ use std::{
 };
 
 pub use add::{AddRequest, Destination, SkillDestination, SkillRequest, add, add_skill};
+pub use catalog::{Candidate, Catalog, find_candidates};
 pub use commands::{diff, list_outdated, remove, update, validate_lock};
 #[expect(
     clippy::module_name_repetitions,

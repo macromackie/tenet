@@ -42,7 +42,7 @@
           printf '%s\n' '---' 'name: errors' 'message: Preserve failures.' '---' '## Rules' 'Preserve failures.' > fixture/.contracts/001-errors/CONTRACT.md
           printf 'fn main() {}\n' > fixture/sample.rs
           "${binary}" --root fixture validate
-          "${binary}" --root fixture check --dry-run --json > output.jsonl
+          "${binary}" --root fixture check --full --dry-run --json > output.jsonl
           jq -s -e '[.[] | select(.type == "selected")] | length == 1' output.jsonl
         "shell": "bash"
       # A review sends real requests through the packaged HTTP client, so a provider on localhost answers each question
@@ -95,7 +95,7 @@
           export TENET_ENDPOINT
           # One job sends no duplicate request, so the provider receives exactly the dry run's count.
           code=0
-          "${binary}" --root fixture check --jobs 1 || code=${?}
+          "${binary}" --root fixture check --full --jobs 1 || code=${?}
           test "${code}" = 4
           planned=$(jq -s '[.[] | select(.type == "summary")][0].requests' output.jsonl)
           sent=$(awk 'END { print NR }' requests.log)
@@ -107,7 +107,7 @@
           test "${code}" = 4
           "${binary}" --root fixture record errors --conclusion verified --evidence sample.rs:1 -m 'main loses no failure.'
           "${binary}" --root fixture status
-          "${binary}" --root fixture check --jobs 1 --json > recheck.jsonl
+          "${binary}" --root fixture check --full --jobs 1 --json > recheck.jsonl
           jq -s -e --argjson planned "${planned}" \
             '[.[] | select(.type == "summary")][0] | .exit_code == 0 and .summary.requests == 0 and .summary.cached == $planned' recheck.jsonl
           sent=$(awk 'END { print NR }' requests.log)

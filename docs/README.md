@@ -4,7 +4,7 @@ Tenet checks code against requirements in `.contracts/`. A contract might requir
 
 [Install Tenet](./installation.md), set your provider key, then [write a contract](./contracts.md).
 
-You can also [attach a local test to a contract](./local-checks.md) and replay failures without a provider key.
+To see a concrete counterexample and replay it after a fix, use [behavior checks](./behavior-checks.md). You can also [attach a local test to a contract](./local-checks.md) and replay failures without a provider key.
 
 ## Check the repository
 

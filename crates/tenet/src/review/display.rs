@@ -9,7 +9,7 @@ use tenet_engine::{
     review::{self, Current, CurrentContract, Revision},
 };
 
-use crate::report_format::{self, Model};
+use crate::report_format::{self, Model, quote_argument};
 
 /// The model's conclusion for the row's exact input.
 pub(super) fn find_model(entry: &CurrentContract<'_>) -> Option<Model> {
@@ -162,18 +162,6 @@ pub(super) fn check_command(revision: &Revision, contract: Option<&str>) -> Stri
         }
     }
     command
-}
-
-pub(crate) fn quote_argument(value: &str) -> String {
-    if !value.is_empty()
-        && value
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || "_-./:".contains(character))
-    {
-        value.to_owned()
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
-    }
 }
 
 #[expect(
