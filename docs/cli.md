@@ -12,7 +12,7 @@ tenet status --local [CONTRACT/NAME] [--json]
 tenet status [--base REF] [--evidence PATH] [--json] [--prune-cache]
 tenet show NAME [PATH ...] [--json]
 tenet show --pending [--json]
-tenet record NAME [PATH ...] --conclusion CONCLUSION [--evidence PATH:START-END ...] -m MESSAGE
+tenet record NAME [PATH ...] --conclusion CONCLUSION [--evidence PATH:START-END ...] -m MESSAGE [--json]
 tenet log [NAME] [--json]
 tenet export src/ --base origin/main > evidence.json
 tenet validate [--strict-adaptations]
@@ -50,8 +50,9 @@ those suggestions immediately into `--scope` (default `.`), or `--starter [NAME]
 
 `tenet doctor` verifies provider credentials (`OPENROUTER_API_KEY` or `TYPESAFE_API_KEY`), Node.js/npm, local sandbox
 tooling (`/usr/bin/sandbox-exec` on macOS, or `bubblewrap >= 0.7` and `prlimit` on Linux), language runtimes (`python3`,
-`rustc`), Git status, `.contracts/` validity, `.tenet.lock` validity, and that `.tenet/` is not tracked in Git. It exits
-`0` when required checks pass and `1` when any required check needs attention. Both commands support `--json`.
+`rustc`), Git status, `.contracts/` validity, `.tenet.lock` validity, committed `agent-checks.lock.json` behavior pins,
+and that `.tenet/` has its `.gitignore` guard and is not tracked in Git. It exits `0` when required checks pass and `1`
+when any required check needs attention. Both commands support `--json`.
 
 ## Full check
 

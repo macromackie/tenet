@@ -38,7 +38,7 @@ pub(crate) async fn show(
     let mut out = BufWriter::new(output::open_stdout().lock());
     if !json {
         write_brief(&mut out, &review, &current, entry)?;
-        generated::write_rows(&mut out, &generated)?;
+        generated::write_section(&mut out, &generated)?;
         change(&mut out, &entry.changes)?;
         out.flush()?;
         return Ok(ExitStatus::Passed);
@@ -176,7 +176,7 @@ pub(crate) async fn show_pending(
             writeln!(out, "\n{}\n", "\u{2500}".repeat(72))?;
         }
         write_brief(&mut out, &review, &current, entry)?;
-        generated::write_rows(&mut out, rows)?;
+        generated::write_section(&mut out, rows)?;
     }
     change(&mut out, &changes)?;
     out.flush()?;

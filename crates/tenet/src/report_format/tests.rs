@@ -4,41 +4,53 @@ use tenet_checks::behavior::{Finding, Outcome};
 use super::{DiagnosticBlock, block::split_wrapped_lines, format_display, write_diagnostic_block};
 use crate::generated::summarize_generation;
 
+fn sample_finding(check: &str, message: &str, requested: bool, reused: bool) -> Finding {
+    Finding {
+        check: check.into(),
+        contract: "options".into(),
+        cost_usd: requested.then_some(0.003_f64),
+        explanation_cost_usd: requested.then_some(0.0005_f64),
+        explanation_requests: requested.then_some(1),
+        generation_requests: requested.then_some(2),
+        message: message.into(),
+        outcome: Outcome::Passed,
+        pin_reused: reused.then_some(true),
+        requested,
+        reused,
+        subject: None,
+    }
+}
+
 #[test]
 fn summarize_generation_counts_repair_attempts_without_double_counting_reused_rows() {
     let rows = vec![
-        Finding {
-            check: "zero-timeout".into(),
-            contract: "options".into(),
-            cost_usd: Some(0.003_f64),
-            generation_requests: Some(2),
-            message: "kept explicit zero".into(),
-            outcome: Outcome::Passed,
-            requested: true,
-            reused: false,
-            subject: None,
-        },
-        Finding {
-            check: "default-read".into(),
-            contract: "options".into(),
-            cost_usd: None,
-            generation_requests: None,
-            message: "reused check".into(),
-            outcome: Outcome::Passed,
-            requested: false,
-            reused: true,
-            subject: None,
-        },
+        sample_finding("zero-timeout", "kept explicit zero", true, false),
+        sample_finding("default-read", "reused check", false, true),
     ];
     let summary = summarize_generation(&rows);
     assert_eq!(summary.get("requests"), Some(&json!(2_usize)));
     assert_eq!(summary.get("returned_cost_usd"), Some(&json!(0.003_f64)));
+    assert_eq!(summary.get("explanation_requests"), Some(&json!(1_usize)));
+    assert_eq!(
+        summary.get("explanation_cost_usd"),
+        Some(&json!(0.0005_f64))
+    );
 
     let zero_summary = summarize_generation(&[]);
     assert_eq!(zero_summary.get("requests"), Some(&json!(0_usize)));
     assert_eq!(
         zero_summary
             .get("returned_cost_usd")
+            .map(ToString::to_string),
+        Some(String::from("0.0"))
+    );
+    assert_eq!(
+        zero_summary.get("explanation_requests"),
+        Some(&json!(0_usize))
+    );
+    assert_eq!(
+        zero_summary
+            .get("explanation_cost_usd")
             .map(ToString::to_string),
         Some(String::from("0.0"))
     );

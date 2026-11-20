@@ -3,7 +3,7 @@ import { env as hostEnvironment } from 'node:process';
 import { CheckerError } from '../checker-error.mts';
 import { runFile } from './host-tool.mts';
 
-const TOOL_TIMEOUT_MS = 5_000;
+const TOOL_TIMEOUT_MS = 20_000;
 const OUTPUT_BYTES = 65_536;
 
 /** Query the host's selected compiler without forwarding provider credentials. */

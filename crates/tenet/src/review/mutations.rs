@@ -1,22 +1,81 @@
 use std::{
     collections::HashMap,
-    io::{BufWriter, Write as _},
+    io::{self, BufWriter, Write},
     path::Path,
 };
 
 use anyhow::Context as _;
+use serde_json::json;
 use tenet_engine::{
     ContractStatus,
     Review,
     review::{self, Entry, Record, RecordRequest, Recorded},
 };
 
-use super::{LOG_VERSION, format_ago, format_paths_note, format_threshold_note};
+use super::{LOG_VERSION, RECORD_VERSION, format_ago, format_paths_note, format_threshold_note};
 use crate::{
     cli::{self, ExitStatus},
     error::CommandError,
     output,
+    report_format::{format_dim, format_display, format_marker, format_painted},
 };
+
+const fn format_conclusion_label(conclusion: ContractStatus) -> &'static str {
+    match conclusion {
+        ContractStatus::Failed => "FAIL",
+        ContractStatus::Unresolved => "REVIEW",
+        ContractStatus::Verified
+        | ContractStatus::Preserved
+        | ContractStatus::Unaffected
+        | ContractStatus::Clear => "PASS",
+    }
+}
+
+fn write_record_summary(
+    out: &mut impl Write,
+    record: &Record,
+    replaces: Option<&Record>,
+) -> io::Result<()> {
+    let label = format_conclusion_label(record.conclusion);
+    writeln!(
+        out,
+        "  {} {}  {}  {}",
+        format_marker(label),
+        format_painted(label),
+        format_display(&record.contract),
+        format_dim(&format!(
+            "recorded {} for r{} \u{b7} {}",
+            record.conclusion.as_str(),
+            record.rev,
+            record.id
+        )),
+    )?;
+    if let Some(earlier) = replaces.filter(|earlier| earlier.conclusion != record.conclusion) {
+        writeln!(
+            out,
+            "    {} Replaces record {} (which concluded {}) for this input.",
+            format_dim("= note:"),
+            earlier.id,
+            earlier.conclusion.as_str()
+        )?;
+    }
+    if let Some(model) = record.model
+        && model != record.conclusion
+    {
+        writeln!(
+            out,
+            "    {} Overrides the model conclusion ({}) while this input is unchanged.",
+            format_dim("= note:"),
+            model.as_str()
+        )?;
+    }
+    writeln!(
+        out,
+        "    {} Bound to this exact input; editing governed files or the contract invalidates it \
+         automatically.",
+        output::format_styled("= help:").cyan(),
+    )
+}
 
 #[expect(
     clippy::future_not_send,
@@ -48,32 +107,19 @@ pub(crate) async fn record(
     )
     .await?;
     let mut out = output::open_stdout().lock();
-    writeln!(
-        out,
-        "Recorded {}: {} {} for r{}",
-        record.id,
-        record.contract,
-        record.conclusion.as_str(),
-        record.rev
-    )?;
-    if let Some(earlier) = replaces.filter(|earlier| earlier.conclusion != record.conclusion) {
-        writeln!(
-            out,
-            "It replaces record {}, which concluded {} for this input.",
-            earlier.id,
-            earlier.conclusion.as_str()
+    if args.json {
+        output::write_document(
+            &mut out,
+            RECORD_VERSION,
+            json!({
+                "record": record,
+                "replaces": replaces,
+                "exit_code": u8::from(ExitStatus::Passed),
+            }),
         )?;
+        return Ok(ExitStatus::Passed);
     }
-    if let Some(model) = record.model
-        && model != record.conclusion
-    {
-        writeln!(
-            out,
-            "The model concluded {}; this record decides the contract while its input is \
-             unchanged.",
-            model.as_str()
-        )?;
-    }
+    write_record_summary(&mut out, &record, replaces.as_ref())?;
     Ok(ExitStatus::Passed)
 }
 

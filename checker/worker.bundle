@@ -20860,7 +20860,7 @@ async function runFile({ file, args: args2, options }) {
 var BWRAP = "/usr/bin/bwrap";
 var PRLIMIT = "/usr/bin/prlimit";
 var SANDBOX_EXEC = "/usr/bin/sandbox-exec";
-var PREFLIGHT_TIMEOUT_MS = 5e3;
+var PREFLIGHT_TIMEOUT_MS = 15e3;
 var OUTPUT_BYTES = 16384;
 var SYSTEM_PATH = "/usr/bin:/bin";
 var MACOS_PREFLIGHT_PROFILE = "(version 1)(deny default)(allow process-exec)(allow file-read*)(allow file-map-executable)(allow sysctl-read)(deny network*)";
@@ -20996,7 +20996,7 @@ function readPythonPaths({ files, root }) {
 // sandbox/rust-tool.mts
 import { tmpdir } from "node:os";
 import { env as hostEnvironment } from "node:process";
-var TOOL_TIMEOUT_MS = 5e3;
+var TOOL_TIMEOUT_MS = 2e4;
 var OUTPUT_BYTES2 = 65536;
 async function readRustTool(arg) {
   const env6 = {
@@ -21189,7 +21189,7 @@ async function classifyResult(input) {
 
 // sandbox/python-tool.mts
 var SYSTEM_PYTHON = "/usr/bin/python3";
-var TOOL_TIMEOUT_MS2 = 5e3;
+var TOOL_TIMEOUT_MS2 = 2e4;
 var OUTPUT_BYTES3 = 8192;
 async function probeHostPython() {
   const env6 = {
@@ -21886,14 +21886,19 @@ var NullableText = Schema_exports.OptionFromNullOr(Schema_exports.String);
 var FileDecisions = Schema_exports.Record(Schema_exports.String, Schema_exports.String);
 var Outcome = Schema_exports.Literals(["passed", "failed", "unresolved"]);
 var NullableCost = Schema_exports.OptionFromNullOr(Schema_exports.Number);
+var OptionalNullableCost = Schema_exports.OptionFromOptionalKey(NullableCost);
 var OptionalCount = Schema_exports.OptionFromOptionalKey(Schema_exports.Int);
+var OptionalFlag = Schema_exports.OptionFromOptionalKey(Schema_exports.Boolean);
 var FindingFields = Schema_exports.Struct({
   check: Schema_exports.String,
   contract: Schema_exports.String,
   cost_usd: NullableCost,
+  explanation_cost_usd: OptionalNullableCost,
+  explanation_requests: OptionalCount,
   generation_requests: OptionalCount,
   message: Schema_exports.String,
   outcome: Outcome,
+  pin_reused: OptionalFlag,
   requested: Schema_exports.Boolean,
   reused: Schema_exports.Boolean,
   subject: NullableText
@@ -21916,7 +21921,6 @@ var ContractFields = Schema_exports.Struct({
 var Contract = Schema_exports.toEncoded(ContractFields);
 var OptionalBase = Schema_exports.OptionFromOptionalNullOr(Schema_exports.String);
 var ContractList = Schema_exports.Array(Contract);
-var OptionalFlag = Schema_exports.OptionFromOptionalKey(Schema_exports.Boolean);
 var RequestFields = Schema_exports.Struct({
   base: OptionalBase,
   contracts: ContractList,
@@ -22030,9 +22034,13 @@ function parsePin({ value: value3, current, contractHash }) {
 
 // review/build-finding.mts
 var SUMMARY_LIMIT = 512;
-function buildFinding({ subject = null, ...note }) {
+function buildFinding({
+  pin_reused,
+  subject = null,
+  ...note
+}) {
   const message = note.message.replaceAll(new RegExp("[\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029\\u202A-\\u202E\\u2066-\\u2069]", "gv"), " ").slice(0, SUMMARY_LIMIT);
-  return {
+  const finding = {
     ...note,
     cost_usd: null,
     message,
@@ -22040,6 +22048,10 @@ function buildFinding({ subject = null, ...note }) {
     reused: note.reused === true,
     subject
   };
+  if (pin_reused === true) {
+    return { ...finding, pin_reused: true };
+  }
+  return finding;
 }
 
 // review/build-open-finding.mts
@@ -23382,10 +23394,11 @@ async function isFailingAtBase({ evaluation, check: check2 }) {
   return !old.passed;
 }
 async function observeOne(input) {
-  const { evaluation, check: check2, qualified, reused } = input;
+  const { evaluation, check: check2, pinReused, qualified, reused } = input;
   const context3 = {
     check: check2.id,
     contract: evaluation.contract,
+    pin_reused: pinReused,
     reused,
     subject: check2.subject
   };
@@ -23430,6 +23443,7 @@ async function observeCheck(input) {
     contract: input.evaluation.contract,
     message,
     outcome: "unresolved",
+    pin_reused: input.pinReused,
     subject: input.check.subject
   });
 }
@@ -23442,7 +23456,7 @@ function readQualifications({ pin, evaluation }) {
   return new Set(saved.qualifications);
 }
 async function evaluate2(input) {
-  const { pin, evaluation, prequalifiedIds } = input;
+  const { pin, evaluation, pinReused = false, prequalifiedIds } = input;
   const prior = readQualifications(input);
   const rows = pin.bundle.open.map(
     (reason) => buildOpenFinding({ contract: evaluation.contract, reason })
@@ -23450,7 +23464,7 @@ async function evaluate2(input) {
   for (const check2 of pin.bundle.checks) {
     const reused = prior.has(check2.id);
     const qualified = reused || (prequalifiedIds?.has(check2.id) ?? false);
-    const row = await observeCheck({ check: check2, evaluation, qualified, reused });
+    const row = await observeCheck({ check: check2, evaluation, pinReused, qualified, reused });
     rows.push(row);
   }
   return rows;
@@ -23642,7 +23656,7 @@ function buildSelectedPin({ ctx, evaluated }) {
   };
   const qualifiedIds = evaluated.qualified.map((check2) => check2.id);
   const prequalifiedIds = new Set(qualifiedIds);
-  return { extraUnresolved: evaluated.extraUnresolved, pin, prequalifiedIds };
+  return { extraUnresolved: evaluated.extraUnresolved, pin, pinReused: false, prequalifiedIds };
 }
 async function runRepairIfNeeded({
   first,
@@ -23684,7 +23698,7 @@ async function selectPin(input) {
     throw new CheckerError({ message: "no supported source was available for a behavior check." });
   }
   if (ctx.pin !== void 0 && ctx.matching) {
-    return { extraUnresolved: [], pin: ctx.pin, prequalifiedIds: /* @__PURE__ */ new Set() };
+    return { extraUnresolved: [], pin: ctx.pin, pinReused: true, prequalifiedIds: /* @__PURE__ */ new Set() };
   }
   await assertSandboxAvailable();
   const generated = await generateAndQualify(input);
@@ -23707,13 +23721,13 @@ async function assertStableSource(ctx) {
   }
 }
 async function verify({ ctx, onRequest }) {
-  const { extraUnresolved, pin, prequalifiedIds } = await selectPin({ ctx, onRequest });
+  const { extraUnresolved, pin, pinReused, prequalifiedIds } = await selectPin({ ctx, onRequest });
   await reportProgress({
     contract: ctx.job.contract.name,
     phase: "replaying checks",
     progressFile: ctx.job.request.progressFile
   });
-  const observed = await evaluate2({ evaluation: ctx.evaluation, pin, prequalifiedIds });
+  const observed = await evaluate2({ evaluation: ctx.evaluation, pin, pinReused, prequalifiedIds });
   await assertStableSource(ctx);
   const rows = [...observed, ...extraUnresolved];
   const cache2 = ctx.matching || pin.bundle.checks.length > 0;
@@ -23724,6 +23738,9 @@ async function verify({ ctx, onRequest }) {
 }
 
 // review/measure.mts
+function createAttempt() {
+  return { cost: null, hasUnknownCost: false, requested: false, requests: 0 };
+}
 function recordAttemptCost({ attempt, cost }) {
   const requests = attempt.requests + 1;
   if (cost === null) {
@@ -23764,31 +23781,43 @@ async function collectFindings(options) {
   }
   return mergeResults({ gaps, result: classified.success });
 }
-function attachUsage({ attempt, rows }) {
+function attachUsage({ explanation, generation, rows }) {
   const first = rows.at(0);
-  if (!attempt.requested || first === void 0) {
+  if (first === void 0) {
     return;
   }
-  Object.assign(first, { cost_usd: attempt.cost, requested: true });
-  if (attempt.requests > 1) {
-    Object.assign(first, { generation_requests: attempt.requests });
+  if (generation.requested) {
+    Object.assign(first, { cost_usd: generation.cost, requested: true });
+    if (generation.requests > 1) {
+      Object.assign(first, { generation_requests: generation.requests });
+    }
+  }
+  if (explanation.requested) {
+    Object.assign(first, {
+      explanation_cost_usd: explanation.cost,
+      explanation_requests: explanation.requests
+    });
   }
 }
 async function measure(ctx) {
-  const attempt = { cost: null, hasUnknownCost: false, requested: false, requests: 0 };
-  function onRequest(cost) {
-    recordAttemptCost({ attempt, cost });
+  const generation = createAttempt();
+  const explanation = createAttempt();
+  function onGenerationRequest(cost) {
+    recordAttemptCost({ attempt: generation, cost });
   }
-  const result3 = await collectFindings({ ctx, onRequest });
+  function onExplanationRequest(cost) {
+    recordAttemptCost({ attempt: explanation, cost });
+  }
+  const result3 = await collectFindings({ ctx, onRequest: onGenerationRequest });
   const rows = await explainFindings({
     canSpendRequest: ctx.job.canSpendRequest,
     contract: ctx.job.contract,
-    onRequest,
+    onRequest: onExplanationRequest,
     progressFile: ctx.job.request.progressFile,
     rows: result3.rows
   });
   await saveReceipt({ ctx, pin: result3.pin, rows });
-  attachUsage({ attempt, rows });
+  attachUsage({ explanation, generation, rows });
   return rows;
 }
 

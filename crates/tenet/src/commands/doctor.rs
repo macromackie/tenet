@@ -4,7 +4,7 @@ mod repository;
 use std::{io::Write, path::Path};
 
 use environment::{check_credentials, check_node, check_runtimes, check_sandbox};
-use repository::{check_contracts, check_git, check_lockfile, check_state};
+use repository::{check_behavior_pins, check_contracts, check_git, check_lockfile, check_state};
 use serde::Serialize;
 use serde_json::json;
 
@@ -54,6 +54,7 @@ fn collect_checks(root: &Path, state: &Path) -> Vec<DoctorItem> {
         git_item,
         check_contracts(root),
         check_lockfile(root),
+        check_behavior_pins(root),
         check_state(root, state, in_git),
     ]
 }

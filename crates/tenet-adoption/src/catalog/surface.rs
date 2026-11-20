@@ -49,6 +49,7 @@ const REQUIRED_FRAMEWORK_TERMS: &[&str] = &[
     "postgres",
     "react",
     "ruff",
+    "sql",
     "storybook",
     "webhook",
 ];
@@ -113,14 +114,60 @@ impl Surface {
     }
 }
 
+fn is_workflow_path(path: &Path) -> bool {
+    path.starts_with(".github/workflows")
+        && matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("yml" | "yaml")
+        )
+}
+
 fn detect_language(path: &Path) -> Option<&'static str> {
+    if is_workflow_path(path) {
+        return Some("GitHub Actions");
+    }
     match path.extension()?.to_str()? {
         "ts" | "tsx" | "mts" | "cts" => Some("TypeScript"),
         "js" | "jsx" | "mjs" | "cjs" => Some("JavaScript"),
         "rs" => Some("Rust"),
         "py" => Some("Python"),
+        "tf" => Some("Terraform"),
         _ => None,
     }
+}
+
+fn build_declarative_surface(path: &Path, language: &'static str, source: &str) -> Option<Surface> {
+    let (symbol, signal, extra_terms): (&str, &'static str, &[&str]) = match language {
+        "GitHub Actions" if source.contains("jobs:") || source.contains("runs-on:") => {
+            (
+                "workflow",
+                "CI workflow checks",
+                &["ci", "check", "trust", "reproducible", "workflow"],
+            )
+        },
+        "Terraform"
+            if source.contains("resource ")
+                || source.contains("module ")
+                || source.contains("terraform ")
+                || source.contains("provider ") =>
+        {
+            (
+                "terraform",
+                "Terraform infrastructure definitions",
+                &["infra", "terraform", "state", "apply", "authority"],
+            )
+        },
+        _ => return None,
+    };
+    let mut terms = split_words(&path.to_string_lossy());
+    terms.extend(extra_terms.iter().map(|term| (*term).to_owned()));
+    Some(Surface {
+        language,
+        path: path.to_path_buf(),
+        signals: vec![signal],
+        symbols: vec![symbol.to_owned()],
+        terms,
+    })
 }
 
 fn read_declaration(line: &str) -> Option<&str> {
@@ -137,6 +184,30 @@ fn read_declaration(line: &str) -> Option<&str> {
         && name.starts_with(|first: char| first.is_ascii_alphabetic())
         && !name.starts_with('_'))
     .then_some(name)
+}
+
+fn build_code_surface(path: &Path, language: &'static str, source: &str) -> Option<Surface> {
+    let symbols: Vec<_> = source
+        .lines()
+        .filter_map(read_declaration)
+        .take(8)
+        .map(str::to_owned)
+        .collect();
+    if symbols.is_empty() {
+        return None;
+    }
+    let (signals, signal_terms) = observe(source);
+    let mut terms = split_words(&symbols.join(" "));
+    terms.extend(signal_terms);
+    terms.extend(split_words(&path.to_string_lossy()));
+    let _inserted = terms.insert(language.to_ascii_lowercase());
+    Some(Surface {
+        language,
+        path: path.to_path_buf(),
+        signals,
+        symbols,
+        terms,
+    })
 }
 
 pub(super) fn inspect(root: &Path, inventory: &[PathBuf]) -> Result<Vec<Surface>, AdoptionError> {
@@ -165,27 +236,11 @@ pub(super) fn inspect(root: &Path, inventory: &[PathBuf]) -> Result<Vec<Surface>
             .and_then(|file| file.take(0x0001_0000).read_to_end(&mut bytes))
             .map_err(AdoptionError::Scratch)?;
         let source = String::from_utf8_lossy(&bytes);
-        let symbols: Vec<_> = source
-            .lines()
-            .filter_map(read_declaration)
-            .take(8)
-            .map(str::to_owned)
-            .collect();
-        if symbols.is_empty() {
-            continue;
+        if let Some(surface) = build_declarative_surface(path, language, &source)
+            .or_else(|| build_code_surface(path, language, &source))
+        {
+            found.push(surface);
         }
-        let (signals, signal_terms) = observe(&source);
-        let mut terms = split_words(&symbols.join(" "));
-        terms.extend(signal_terms);
-        terms.extend(split_words(&path.to_string_lossy()));
-        let _inserted = terms.insert(language.to_ascii_lowercase());
-        found.push(Surface {
-            language,
-            path: path.clone(),
-            signals,
-            symbols,
-            terms,
-        });
     }
     Ok(found)
 }
@@ -203,6 +258,9 @@ fn is_support_path(path: &Path) -> bool {
         "tools",
         "vendor",
     ];
+    if is_workflow_path(path) {
+        return false;
+    }
     path.iter().any(|part| {
         part.to_str()
             .is_none_or(|name| name.starts_with('.') || SUPPORT.contains(&name))
@@ -250,18 +308,52 @@ const OBSERVATION_PATTERNS: &[(&str, &[&str], &[&str])] = &[
     ),
     (
         "React components",
-        &["react"],
+        &["react", "component", "jsx"],
         &["from 'react'", r#"from "react""#],
     ),
     (
+        "React hook calls",
+        &["react", "hook"],
+        &[
+            "useEffect(",
+            "useState(",
+            "useMemo(",
+            "useCallback(",
+            "useRef(",
+        ],
+    ),
+    (
         "Effect programs",
-        &["effect"],
+        &["effect", "schema", "error"],
         &["from 'effect'", r#"from "effect""#],
     ),
     (
         "Rust tracing spans",
-        &["tracing"],
+        &["tracing", "telemetry", "span"],
         &["tracing::", "use tracing"],
+    ),
+    (
+        "CLI output channels",
+        &["cli", "output", "channel"],
+        &[
+            "process.stdout.write(",
+            "process.stderr.write(",
+            "io::stdout(",
+            "io::stderr(",
+            "sys.stdout",
+            "sys.stderr",
+        ],
+    ),
+    (
+        "SQL database queries",
+        &["sql", "database", "store", "schema"],
+        &[
+            "conn.execute(",
+            "cursor.execute(",
+            "sqlx::",
+            "from sqlalchemy",
+            "import sqlalchemy",
+        ],
     ),
 ];
 

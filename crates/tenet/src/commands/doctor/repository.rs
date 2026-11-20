@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
+use serde_json::Value;
 use tenet_adoption as adoption;
 use tenet_engine::{discover_contracts, review::DIRECTORY, run_git};
 
@@ -111,6 +112,70 @@ pub(super) fn check_lockfile(root: &Path) -> DoctorItem {
     }
 }
 
+fn count_pin_checks(pin_path: &Path) -> Option<usize> {
+    let text = fs::read_to_string(pin_path).ok()?;
+    let doc: Value = serde_json::from_str(&text).ok()?;
+    (doc.get("protocol").and_then(Value::as_u64) == Some(1))
+        .then(|| doc.pointer("/bundle/checks").and_then(Value::as_array))
+        .flatten()
+        .map(Vec::len)
+}
+
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "Pin and check counts are bounded by the discovered contract documents."
+)]
+pub(super) fn check_behavior_pins(root: &Path) -> DoctorItem {
+    let Ok(contracts) = discover_contracts(root) else {
+        return DoctorItem {
+            detail: "skipped (contracts could not be parsed)".into(),
+            hint: None,
+            label: "Behavior pins",
+            name: "behavior_pins",
+            required: false,
+            status: CheckStatus::Ok,
+        };
+    };
+    let (mut files, mut checks, mut invalid) = (0_usize, 0_usize, 0_usize);
+    for contract in contracts {
+        let pin_path = root.join(contract.path.with_file_name("agent-checks.lock.json"));
+        if !pin_path.is_file() {
+            continue;
+        }
+        files += 1;
+        match count_pin_checks(&pin_path) {
+            Some(count) => checks += count,
+            None => invalid += 1,
+        }
+    }
+    if invalid > 0 {
+        return DoctorItem {
+            detail: format!("{invalid} of {files} agent-checks.lock.json file(s) are malformed"),
+            hint: Some(
+                "Remove or fix the malformed agent-checks.lock.json file and rerun `tenet check`."
+                    .into(),
+            ),
+            label: "Behavior pins",
+            name: "behavior_pins",
+            required: false,
+            status: CheckStatus::Warn,
+        };
+    }
+    let detail = if files == 0 {
+        "none yet (created automatically on `tenet check`)".into()
+    } else {
+        format!("{files} pin file(s) \u{b7} {checks} frozen behavior check(s)")
+    };
+    DoctorItem {
+        detail,
+        hint: None,
+        label: "Behavior pins",
+        name: "behavior_pins",
+        required: false,
+        status: CheckStatus::Ok,
+    }
+}
+
 pub(super) fn check_state(root: &Path, state: &Path, in_git: bool) -> DoctorItem {
     let tracked = in_git
         && run_git(root, &["ls-files", DIRECTORY])
@@ -125,6 +190,24 @@ pub(super) fn check_state(root: &Path, state: &Path, in_git: bool) -> DoctorItem
             name: "state",
             required: true,
             status: CheckStatus::Fail,
+        };
+    }
+    if in_git
+        && state == root.join(DIRECTORY)
+        && state.is_dir()
+        && !state.join(".gitignore").is_file()
+        && run_git(root, &["check-ignore", "-q", DIRECTORY]).is_err()
+    {
+        return DoctorItem {
+            detail: format!("{} exists without a .gitignore guard", state.display()),
+            hint: Some(format!(
+                "Run `tenet check` or write `*` to `{DIRECTORY}/.gitignore` so review state stays \
+                 untracked."
+            )),
+            label: "Review state",
+            name: "state",
+            required: false,
+            status: CheckStatus::Warn,
         };
     }
     let detail = if state.exists() {

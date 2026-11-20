@@ -28,9 +28,15 @@ pub struct Finding {
     pub contract: String,
     pub cost_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation_cost_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation_requests: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation_requests: Option<usize>,
     pub message: String,
     pub outcome: Outcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_reused: Option<bool>,
     pub requested: bool,
     pub reused: bool,
     pub subject: Option<PathBuf>,
@@ -136,9 +142,12 @@ fn run(
                         check: "discovery".into(),
                         contract: contract.name.clone(),
                         cost_usd: None,
+                        explanation_cost_usd: None,
+                        explanation_requests: None,
                         generation_requests: None,
                         message: format!("Could not start the checker worker: {error}"),
                         outcome: Outcome::Unresolved,
+                        pin_reused: None,
                         requested: false,
                         reused: false,
                         subject: None,

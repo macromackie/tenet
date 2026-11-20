@@ -1,6 +1,7 @@
 mod starter;
 
 use std::{
+    env,
     io::Write,
     path::{Component, Path, PathBuf},
 };
@@ -19,6 +20,25 @@ use crate::{
 
 pub(super) const INIT_VERSION: u64 = 1;
 const MAX_INIT_CANDIDATES: usize = 5;
+
+pub(super) fn write_credential_hint(out: &mut impl Write) -> Result<(), CommandError> {
+    let provider = env::var("TENET_PROVIDER").unwrap_or_default();
+    let has_openrouter = env::var_os("OPENROUTER_API_KEY").is_some_and(|value| !value.is_empty());
+    let has_typesafe = env::var_os("TYPESAFE_API_KEY").is_some_and(|value| !value.is_empty());
+    let missing = if provider.eq_ignore_ascii_case("typesafe") {
+        (!has_typesafe).then_some("TYPESAFE_API_KEY")
+    } else {
+        (!has_openrouter).then_some("OPENROUTER_API_KEY")
+    };
+    if let Some(variable) = missing {
+        writeln!(
+            out,
+            "  {} Set `{variable}` in your environment before running `tenet check`.",
+            output::format_styled("= help:").cyan(),
+        )?;
+    }
+    Ok(())
+}
 
 pub(super) fn normalize_scope(root: &Path, scope: &Path) -> Result<PathBuf, CommandError> {
     let mut normalized = PathBuf::new();
@@ -130,6 +150,7 @@ fn write_installed(
         "\n  {}  Run `tenet doctor` to verify credentials, then `tenet check`.",
         output::format_styled("Next").bold(),
     )?;
+    write_credential_hint(out)?;
     Ok(())
 }
 

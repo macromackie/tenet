@@ -9,15 +9,20 @@ const FileDecisions = Schema.Record(Schema.String, Schema.String);
 const Outcome = Schema.Literals(['passed', 'failed', 'unresolved']);
 
 const NullableCost = Schema.OptionFromNullOr(Schema.Number);
+const OptionalNullableCost = Schema.OptionFromOptionalKey(NullableCost);
 const OptionalCount = Schema.OptionFromOptionalKey(Schema.Int);
+const OptionalFlag = Schema.OptionFromOptionalKey(Schema.Boolean);
 
 const FindingFields = Schema.Struct({
   check: Schema.String,
   contract: Schema.String,
   cost_usd: NullableCost,
+  explanation_cost_usd: OptionalNullableCost,
+  explanation_requests: OptionalCount,
   generation_requests: OptionalCount,
   message: Schema.String,
   outcome: Outcome,
+  pin_reused: OptionalFlag,
   requested: Schema.Boolean,
   reused: Schema.Boolean,
   subject: NullableText,
@@ -48,7 +53,6 @@ export type Contract = typeof Contract.Type;
 
 const OptionalBase = Schema.OptionFromOptionalNullOr(Schema.String);
 const ContractList = Schema.Array(Contract);
-const OptionalFlag = Schema.OptionFromOptionalKey(Schema.Boolean);
 
 const RequestFields = Schema.Struct({
   base: OptionalBase,

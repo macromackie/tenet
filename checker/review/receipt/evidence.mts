@@ -44,16 +44,18 @@ async function isFailingAtBase({ evaluation, check }: IsFailingAtBaseInput): Pro
 type Invocation = {
   check: Check;
   evaluation: Evaluation;
+  pinReused: boolean;
   qualified: boolean;
   reused: boolean;
 };
 
 async function observeOne(input: Invocation): Promise<Finding> {
-  const { evaluation, check, qualified, reused } = input;
+  const { evaluation, check, pinReused, qualified, reused } = input;
 
   const context = {
     check: check.id,
     contract: evaluation.contract,
+    pin_reused: pinReused,
     reused,
     subject: check.subject,
   };
@@ -111,6 +113,7 @@ async function observeCheck(input: Invocation): Promise<Finding> {
     contract: input.evaluation.contract,
     message,
     outcome: 'unresolved',
+    pin_reused: input.pinReused,
     subject: input.check.subject,
   });
 }
@@ -135,12 +138,13 @@ function readQualifications({ pin, evaluation }: ReadQualificationsInput): Set<s
 type EvaluateInput = {
   evaluation: Evaluation;
   pin: Pin;
+  pinReused?: boolean;
   prequalifiedIds?: ReadonlySet<string>;
 };
 
 /** Replay all controls before believing an executable observation on changed inputs. */
 export async function evaluate(input: EvaluateInput): Promise<readonly Finding[]> {
-  const { pin, evaluation, prequalifiedIds } = input;
+  const { pin, evaluation, pinReused = false, prequalifiedIds } = input;
   const prior = readQualifications(input);
 
   const rows = pin.bundle.open.map((reason) =>
@@ -152,7 +156,7 @@ export async function evaluate(input: EvaluateInput): Promise<readonly Finding[]
     const reused = prior.has(check.id);
     const qualified = reused || (prequalifiedIds?.has(check.id) ?? false);
     // oxlint-disable-next-line no-await-in-loop
-    const row = await observeCheck({ check, evaluation, qualified, reused });
+    const row = await observeCheck({ check, evaluation, pinReused, qualified, reused });
 
     rows.push(row);
   }

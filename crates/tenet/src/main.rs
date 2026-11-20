@@ -29,21 +29,28 @@ use cli::{Cli, Command, ExitStatus, ReporterKind};
 use error::CommandError;
 use tracing::{Instrument as _, Span};
 
-#[tokio::main(flavor = "current_thread")]
 #[expect(
     clippy::wildcard_enum_match_arm,
     reason = "Only the commands that take `--json` print a JSON error."
 )]
-async fn main() -> ExitCode {
-    let cli = Cli::parse();
-    let json = match &cli.command {
+fn is_json_command(command: &Command) -> bool {
+    match command {
         Command::Check(check) => check.run.json || check.run.reporter == ReporterKind::Jsonl,
+        Command::Doctor { json } => *json,
         Command::Fix(fix) => fix.json,
+        Command::Init(init) => init.json,
+        Command::Record(record) => record.json,
         Command::Status { json, .. } | Command::Show { json, .. } | Command::Log { json, .. } => {
             *json
         },
         _ => false,
-    };
+    }
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let json = is_json_command(&cli.command);
     let traced = match &cli.trace {
         Some(path) => telemetry::install(path, cli.trace_environment),
         None => Ok(()),

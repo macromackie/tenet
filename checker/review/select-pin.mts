@@ -17,6 +17,7 @@ export type Checked = {
 type SelectedPin = Readonly<{
   extraUnresolved: readonly Finding[];
   pin: Pin;
+  pinReused: boolean;
   prequalifiedIds: ReadonlySet<string>;
 }>;
 
@@ -102,7 +103,7 @@ function buildSelectedPin({ ctx, evaluated }: BuildSelectedInput): SelectedPin {
   const qualifiedIds = evaluated.qualified.map((check) => check.id);
   const prequalifiedIds = new Set(qualifiedIds);
 
-  return { extraUnresolved: evaluated.extraUnresolved, pin, prequalifiedIds };
+  return { extraUnresolved: evaluated.extraUnresolved, pin, pinReused: false, prequalifiedIds };
 }
 
 async function runRepairIfNeeded({
@@ -159,7 +160,7 @@ export async function selectPin(input: Preparation): Promise<SelectedPin> {
   }
 
   if (ctx.pin !== undefined && ctx.matching) {
-    return { extraUnresolved: [], pin: ctx.pin, prequalifiedIds: new Set() };
+    return { extraUnresolved: [], pin: ctx.pin, pinReused: true, prequalifiedIds: new Set() };
   }
 
   await assertSandboxAvailable();

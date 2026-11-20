@@ -37,7 +37,7 @@ async function assertStableSource(ctx: Context): Promise<void> {
 
 /** Qualify and publish immutable observations only after the checkout is stable. */
 export async function verify({ ctx, onRequest }: VerifyInput): Promise<Checked> {
-  const { extraUnresolved, pin, prequalifiedIds } = await selectPin({ ctx, onRequest });
+  const { extraUnresolved, pin, pinReused, prequalifiedIds } = await selectPin({ ctx, onRequest });
 
   await reportProgress({
     contract: ctx.job.contract.name,
@@ -45,7 +45,7 @@ export async function verify({ ctx, onRequest }: VerifyInput): Promise<Checked> 
     progressFile: ctx.job.request.progressFile,
   });
 
-  const observed = await evaluate({ evaluation: ctx.evaluation, pin, prequalifiedIds });
+  const observed = await evaluate({ evaluation: ctx.evaluation, pin, pinReused, prequalifiedIds });
 
   await assertStableSource(ctx);
 

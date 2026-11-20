@@ -35,6 +35,8 @@ use tenet_engine::{
 const STATUS_VERSION: u64 = 1;
 /// The schema version of the objects that `show NAME --json` and `show --pending --json` print.
 const SHOW_VERSION: u64 = 2;
+/// The schema version of the object that `record --json` prints.
+const RECORD_VERSION: u64 = 1;
 /// The schema version of each review log entry that `log --json` prints.
 const LOG_VERSION: u64 = 2;
 

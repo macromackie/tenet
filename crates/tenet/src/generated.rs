@@ -2,15 +2,13 @@
 
 mod declared;
 mod native;
+mod render;
 
-use alloc::collections::BTreeMap;
-use std::{
-    io::{self, Write},
-    path::Path,
-};
+use std::path::Path;
 
 use anyhow::Context as _;
 use ev_grep_jev::Provider;
+pub(crate) use render::{emit, write_section};
 use serde_json::{Value, json};
 use tenet_checks::{
     behavior::{self as agent_checks, Finding, Outcome},
@@ -22,19 +20,7 @@ use tenet_engine::{
     review::{Checked, CurrentContract, OverallStatus},
 };
 
-use crate::{
-    cli::{Check, ReporterKind},
-    error::CommandError,
-    output,
-    report_format::{
-        DiagnosticBlock,
-        format_dim,
-        format_display,
-        format_marker,
-        format_painted,
-        write_diagnostic_block,
-    },
-};
+use crate::{cli::Check, error::CommandError};
 
 /// Results for the standing path selection in a stored review. Inspection never runs a checker.
 pub(crate) fn inspect(
@@ -126,7 +112,8 @@ pub(crate) async fn assess(
     Ok(rows)
 }
 
-/// Account for generation separately from the Jev request receipts. A missing price stays unknown.
+/// Account for generation and failure explanation separately from the Jev request receipts. A
+/// missing price stays unknown.
 #[expect(
     clippy::float_arithmetic,
     reason = "Adding positive zero normalizes IEEE-754 negative zero before JSON serialization."
@@ -145,7 +132,27 @@ pub(crate) fn summarize_generation(rows: &[Finding]) -> Value {
             .sum::<Option<f64>>()
             .map(|total| total + 0.0_f64)
     };
-    json!({"requests": requests, "returned_cost_usd": cost})
+    let explanations = rows
+        .iter()
+        .filter(|row| row.explanation_requests.is_some_and(|count| count > 0));
+    let explanation_requests: usize = explanations
+        .clone()
+        .map(|row| row.explanation_requests.unwrap_or(0))
+        .sum();
+    let explanation_cost: Option<f64> = if explanation_requests == 0 {
+        Some(0.0_f64)
+    } else {
+        explanations
+            .map(|row| row.explanation_cost_usd)
+            .sum::<Option<f64>>()
+            .map(|total| total + 0.0_f64)
+    };
+    json!({
+        "requests": requests,
+        "returned_cost_usd": cost,
+        "explanation_requests": explanation_requests,
+        "explanation_cost_usd": explanation_cost,
+    })
 }
 
 pub(crate) fn summarize_status(rows: &[Finding]) -> OverallStatus {
@@ -159,108 +166,4 @@ pub(crate) fn summarize_status(rows: &[Finding]) -> OverallStatus {
         })
         .max()
         .unwrap_or(OverallStatus::Passed)
-}
-
-fn write_finding(out: &mut impl Write, label: &str, row: &Finding) -> io::Result<()> {
-    let title = format!("{}/{}", row.contract, row.check);
-    let subject = row
-        .subject
-        .as_deref()
-        .map(|path| path.display().to_string());
-    if label == "PASS" {
-        let location = subject
-            .as_deref()
-            .map(|path| format!("  {}", format_dim(&format_display(path))))
-            .unwrap_or_default();
-        writeln!(
-            out,
-            "  {} {}  {}{location}",
-            format_marker(label),
-            format_painted(label),
-            format_display(&title),
-        )?;
-        return writeln!(out, "        {}", format_dim(&format_display(&row.message)));
-    }
-    write_diagnostic_block(
-        out,
-        &DiagnosticBlock {
-            help: None,
-            label,
-            location: subject.as_deref(),
-            message: &row.message,
-            meta: None,
-            title: &title,
-        },
-    )
-}
-
-pub(crate) fn write_rows(out: &mut impl Write, rows: &[Finding]) -> io::Result<()> {
-    for row in rows {
-        let label = match row.outcome {
-            Outcome::Passed => "PASS",
-            Outcome::Failed => "FAIL",
-            Outcome::Unresolved => "REVIEW",
-        };
-        write_finding(out, label, row)?;
-    }
-    Ok(())
-}
-
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "Passing check counts are bounded by the rows returned in one run."
-)]
-fn write_default_rows(out: &mut impl Write, rows: &[Finding]) -> io::Result<()> {
-    let mut passed_counts: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut wrote_diagnostic = false;
-    for row in rows {
-        let label = match row.outcome {
-            Outcome::Passed => {
-                *passed_counts.entry(row.contract.as_str()).or_default() += 1;
-                continue;
-            },
-            Outcome::Failed => "FAIL",
-            Outcome::Unresolved => "REVIEW",
-        };
-        write_finding(out, label, row)?;
-        wrote_diagnostic = true;
-    }
-    if wrote_diagnostic && !passed_counts.is_empty() {
-        writeln!(out)?;
-    }
-    for (contract, count) in passed_counts {
-        let noun = if count == 1 {
-            "behavior check passed"
-        } else {
-            "behavior checks passed"
-        };
-        writeln!(
-            out,
-            "  {} {}  {}  {}",
-            format_marker("PASS"),
-            format_painted("PASS"),
-            format_display(contract),
-            format_dim(&format!("{count} {noun}"))
-        )?;
-    }
-    Ok(())
-}
-
-pub(crate) fn emit(rows: &[Finding], kind: ReporterKind) -> Result<(), CommandError> {
-    match kind {
-        ReporterKind::Jsonl => {
-            output::write_document(
-                &mut output::open_stdout().lock(),
-                tenet_engine::EVENTS_VERSION,
-                json!({
-                    "type": "behavior_checks",
-                    "checks": rows,
-                    "generation": summarize_generation(rows)
-                }),
-            )?;
-        },
-        ReporterKind::Verbose => write_rows(&mut output::open_stderr().lock(), rows)?,
-        ReporterKind::Default => write_default_rows(&mut output::open_stderr().lock(), rows)?,
-    }
-    Ok(())
 }

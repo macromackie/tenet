@@ -9,7 +9,7 @@ use serde_json::json;
 use tenet_contracts::is_kebab;
 use tenet_engine::discover_contracts;
 
-use super::{INIT_VERSION, normalize_scope};
+use super::{INIT_VERSION, normalize_scope, write_credential_hint};
 use crate::{cli::ExitStatus, error::CommandError, output, report_format::format_marker};
 
 fn build_starter_document(name: &str) -> String {
@@ -63,6 +63,7 @@ fn write_starter_result(
         output::format_styled("Next").bold(),
         path.display(),
     )?;
+    write_credential_hint(out)?;
     Ok(())
 }
 

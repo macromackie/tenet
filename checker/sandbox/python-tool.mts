@@ -7,7 +7,7 @@ import { classifyResult } from '../classify-result.mts';
 import { runFile } from './host-tool.mts';
 
 const SYSTEM_PYTHON = '/usr/bin/python3';
-const TOOL_TIMEOUT_MS = 5_000;
+const TOOL_TIMEOUT_MS = 20_000;
 const OUTPUT_BYTES = 8_192;
 
 async function probeHostPython(): Promise<string> {

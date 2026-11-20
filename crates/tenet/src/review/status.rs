@@ -218,7 +218,7 @@ pub(crate) async fn report_status(
     if let Some(rows) = &mechanical {
         write_mechanical(&mut out, rows)?;
     }
-    generated::write_rows(&mut out, &generated)?;
+    generated::write_section(&mut out, &generated)?;
     let pending: Vec<_> = current
         .contracts
         .iter()

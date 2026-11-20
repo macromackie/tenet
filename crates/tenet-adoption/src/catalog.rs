@@ -192,7 +192,7 @@ fn split_words(text: &str) -> BTreeSet<String> {
         .split_ascii_whitespace()
         .filter(|word| word.len() > 2)
         .map(|word| {
-            if word.len() > 4 && !word.ends_with("ss") {
+            if word.len() > 4 && !word.ends_with("ss") && word != "postgres" {
                 word.strip_suffix('s').unwrap_or(word)
             } else {
                 word

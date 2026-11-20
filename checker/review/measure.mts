@@ -17,9 +17,17 @@ type Attempt = {
 
 type MergeResultsInput = { readonly gaps: readonly Finding[]; readonly result: Checked };
 
-type AttachUsageInput = Readonly<{ attempt: Attempt; rows: readonly Finding[] }>;
+type AttachUsageInput = Readonly<{
+  explanation: Attempt;
+  generation: Attempt;
+  rows: readonly Finding[];
+}>;
 
 type RecordCostInput = Readonly<{ attempt: Attempt; cost: Finding['cost_usd'] }>;
+
+function createAttempt(): Attempt {
+  return { cost: null, hasUnknownCost: false, requested: false, requests: 0 };
+}
 
 function recordAttemptCost({ attempt, cost }: RecordCostInput): void {
   const requests = attempt.requests + 1;
@@ -80,40 +88,54 @@ async function collectFindings(
   return mergeResults({ gaps, result: classified.success });
 }
 
-function attachUsage({ attempt, rows }: AttachUsageInput): void {
+function attachUsage({ explanation, generation, rows }: AttachUsageInput): void {
   const first = rows.at(0);
 
-  if (!attempt.requested || first === undefined) {
+  if (first === undefined) {
     return;
   }
 
-  Object.assign(first, { cost_usd: attempt.cost, requested: true });
+  if (generation.requested) {
+    Object.assign(first, { cost_usd: generation.cost, requested: true });
 
-  if (attempt.requests > 1) {
-    Object.assign(first, { generation_requests: attempt.requests });
+    if (generation.requests > 1) {
+      Object.assign(first, { generation_requests: generation.requests });
+    }
+  }
+
+  if (explanation.requested) {
+    Object.assign(first, {
+      explanation_cost_usd: explanation.cost,
+      explanation_requests: explanation.requests,
+    });
   }
 }
 
 /** Record provider charges alongside the contract’s coverage and executable cases. */
 export async function measure(ctx: Context): Promise<readonly Finding[]> {
-  const attempt: Attempt = { cost: null, hasUnknownCost: false, requested: false, requests: 0 };
+  const generation = createAttempt();
+  const explanation = createAttempt();
 
-  function onRequest(cost: Finding['cost_usd']): void {
-    recordAttemptCost({ attempt, cost });
+  function onGenerationRequest(cost: Finding['cost_usd']): void {
+    recordAttemptCost({ attempt: generation, cost });
   }
 
-  const result = await collectFindings({ ctx, onRequest });
+  function onExplanationRequest(cost: Finding['cost_usd']): void {
+    recordAttemptCost({ attempt: explanation, cost });
+  }
+
+  const result = await collectFindings({ ctx, onRequest: onGenerationRequest });
 
   const rows = await explainFindings({
     canSpendRequest: ctx.job.canSpendRequest,
     contract: ctx.job.contract,
-    onRequest,
+    onRequest: onExplanationRequest,
     progressFile: ctx.job.request.progressFile,
     rows: result.rows,
   });
 
   await saveReceipt({ ctx, pin: result.pin, rows });
-  attachUsage({ attempt, rows });
+  attachUsage({ explanation, generation, rows });
 
   return rows;
 }

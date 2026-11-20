@@ -107,6 +107,10 @@ fn read_suggestion_names(root: &Path, library: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
+fn has_name(names: &[String], target: &str) -> bool {
+    names.iter().any(|name| name == target)
+}
+
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
@@ -129,25 +133,16 @@ fn avoids_false_positive_service_and_instruction_matches_for_a_python_library() 
     )?;
     let names = read_suggestion_names(root, library)?;
     assert!(
-        names
-            .iter()
-            .any(|name| name == "code-explicit-input-precedence"),
+        has_name(&names, "code-explicit-input-precedence"),
+        "{names:?}"
+    );
+    assert!(has_name(&names, "code-borrowed-inputs"), "{names:?}");
+    assert!(
+        !has_name(&names, "context-agent-instruction-files"),
         "{names:?}"
     );
     assert!(
-        names.iter().any(|name| name == "code-borrowed-inputs"),
-        "{names:?}"
-    );
-    assert!(
-        !names
-            .iter()
-            .any(|name| name == "context-agent-instruction-files"),
-        "{names:?}"
-    );
-    assert!(
-        !names
-            .iter()
-            .any(|name| name == "service-mutation-idempotency-keys"),
+        !has_name(&names, "service-mutation-idempotency-keys"),
         "{names:?}"
     );
     Ok(())
@@ -175,63 +170,111 @@ fn matches_fastapi_routes_and_avoids_script_false_positives_on_typescript_librar
     )?;
     let names = read_suggestion_names(root, library)?;
     assert!(
-        names
-            .iter()
-            .any(|name| name == "api-fastapi-route-authorization"),
+        has_name(&names, "api-fastapi-route-authorization"),
         "{names:?}"
     );
     assert!(
-        !names
-            .iter()
-            .any(|name| name == "code-typescript-node-scripts"),
+        !has_name(&names, "code-typescript-node-scripts"),
         "{names:?}"
     );
     Ok(())
 }
 
-fn release_catalog(library: &Path) -> Result<()> {
-    drop(run_git(library, &["init", "-q"])?);
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assert CI workflow, Terraform, and postgres framework gating."
+)]
+fn matches_workflows_and_terraform_while_gating_postgres_and_sql() -> Result<()> {
+    let (project, catalog) = create_fixture()?;
+    let root = project.path();
+    let library = catalog.path();
     write_file(
-        library,
-        "contracts/code-explicit-input-precedence/CONTRACT.md",
-        INPUTS,
+        root,
+        ".github/workflows/ci.yml",
+        "name: CI\non: [push]\njobs:\n  check:\n    runs-on: ubuntu-24.04\n",
     )?;
     write_file(
-        library,
+        root,
+        "infra/main.tf",
+        "terraform {\n  backend \"s3\" {}\n}\nresource \"aws_s3_bucket\" \"state\" {}\n",
+    )?;
+    write_file(
+        root,
+        "src/schema.ts",
+        "import { Schema } from 'effect';\nexport const ChargeSchema = Schema.Struct({ id: \
+         Schema.String });\n",
+    )?;
+    let names = read_suggestion_names(root, library)?;
+    assert!(has_name(&names, "ci-check-trust"), "{names:?}");
+    assert!(
+        has_name(&names, "infra-terraform-apply-authority"),
+        "{names:?}"
+    );
+    assert!(
+        !has_name(&names, "data-postgres-schema-migrations"),
+        "{names:?}"
+    );
+    Ok(())
+}
+
+const CATALOG_CONTRACTS: &[(&str, &str)] = &[
+    (
+        "contracts/code-explicit-input-precedence/CONTRACT.md",
+        INPUTS,
+    ),
+    (
         "contracts/code-borrowed-inputs/CONTRACT.md",
         "---\nname: code-borrowed-inputs\nmessage: Preserve caller-owned values.\n---\n\n## \
          Rules\n\nPreserve borrowed inputs.",
-    )?;
-    write_file(
-        library,
+    ),
+    (
         "contracts/context-agent-instruction-files/CONTRACT.md",
         "---\nname: context-agent-instruction-files\nmessage: Keep agent instruction files \
          accurate.\n---\n\n## Rules\n\nKeep agent instruction files accurate.",
-    )?;
-    write_file(
-        library,
+    ),
+    (
         "contracts/service-mutation-idempotency-keys/CONTRACT.md",
         "---\nname: service-mutation-idempotency-keys\nmessage: Guard service mutations with \
          idempotency keys.\n---\n\n## Rules\n\nGuard service mutations.",
-    )?;
-    write_file(
-        library,
+    ),
+    (
         "contracts/code-python-options/CONTRACT.md",
         "---\nname: code-python-options\nmessage: Check Python fallback inputs.\n---\n\n## \
          Rules\n\nCheck Python.",
-    )?;
-    write_file(
-        library,
+    ),
+    (
         "contracts/api-fastapi-route-authorization/CONTRACT.md",
         "---\nname: api-fastapi-route-authorization\nmessage: Authorize every FastAPI \
          route.\n---\n\n## Rules\n\nAuthorize routes.",
-    )?;
-    write_file(
-        library,
+    ),
+    (
         "contracts/code-typescript-node-scripts/CONTRACT.md",
         "---\nname: code-typescript-node-scripts\nmessage: Keep TypeScript Node scripts \
          portable.\n---\n\n## Rules\n\nKeep scripts portable.",
-    )?;
+    ),
+    (
+        "contracts/ci-check-trust/CONTRACT.md",
+        "---\nname: ci-check-trust\nmessage: Run complete required CI checks with explicit \
+         trust.\n---\n\n## Rules\n\nPin workflow steps.",
+    ),
+    (
+        "contracts/infra-terraform-apply-authority/CONTRACT.md",
+        "---\nname: infra-terraform-apply-authority\nmessage: Apply Terraform state only from \
+         saved plans.\n---\n\n## Rules\n\nVerify saved plans.",
+    ),
+    (
+        "contracts/data-postgres-schema-migrations/CONTRACT.md",
+        "---\nname: data-postgres-schema-migrations\nmessage: Roll out Postgres schema migrations \
+         safely.\n---\n\n## Rules\n\nUse transactional Postgres migrations.",
+    ),
+];
+
+fn release_catalog(library: &Path) -> Result<()> {
+    drop(run_git(library, &["init", "-q"])?);
+    for (path, document) in CATALOG_CONTRACTS {
+        write_file(library, path, document)?;
+    }
     commit(library, "public catalog")?;
     drop(run_git(library, &["tag", "v1.0.0"])?);
     write_file(

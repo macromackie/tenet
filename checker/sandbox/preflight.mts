@@ -7,7 +7,7 @@ import { runFile } from './host-tool.mts';
 const BWRAP = '/usr/bin/bwrap';
 const PRLIMIT = '/usr/bin/prlimit';
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
-const PREFLIGHT_TIMEOUT_MS = 5_000;
+const PREFLIGHT_TIMEOUT_MS = 15_000;
 const OUTPUT_BYTES = 16_384;
 const SYSTEM_PATH = '/usr/bin:/bin';
 

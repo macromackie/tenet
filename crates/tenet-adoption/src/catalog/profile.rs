@@ -13,7 +13,6 @@ const DATA_TERMS: &[&str] = &[
     "migration",
     "postgres",
     "query",
-    "schema",
     "sql",
     "sqlite",
     "store",
@@ -123,6 +122,7 @@ impl RepositoryProfile {
             "agent" => has_any_term(terms, AGENT_TERMS),
             "api" => has_any_term(terms, API_TERMS),
             "ci" => self.has_ci_workflows,
+            "cli" => terms.contains("cli"),
             "context" => {
                 if contract_name.contains("instruction") {
                     self.has_agent_instructions

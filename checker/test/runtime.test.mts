@@ -89,17 +89,23 @@ async function preparePinned(context: TestContext) {
   return root;
 }
 
+function assertPinReplay(row: Finding): void {
+  assert.equal(row.reused, false);
+  assert.equal(row.pin_reused, true);
+  assert.equal(row.requested, false);
+}
+
 async function verifyReuse(root: string) {
   const [cold] = await assess({ root });
   const [warm] = await assess({ root });
 
   assert.equal(cold.outcome, 'failed', cold.message);
+  assertPinReplay(cold);
   assert.equal(warm.reused, true);
 
   const [fresh] = await assess({ fresh: true, root });
 
-  assert.equal(fresh.reused, false);
-  assert.equal(fresh.requested, false);
+  assertPinReplay(fresh);
 }
 
 async function replayOnClone(context: TestContext): Promise<string> {
@@ -116,7 +122,7 @@ async function replayOnClone(context: TestContext): Promise<string> {
 
   const [fresh] = await assess({ root: clean });
 
-  assert.equal(fresh.reused, false);
+  assertPinReplay(fresh);
 
   return clean;
 }

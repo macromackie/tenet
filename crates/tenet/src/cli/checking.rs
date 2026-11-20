@@ -87,6 +87,9 @@ pub(crate) struct Record {
     /// What the evidence shows, or for unresolved, the fact that is missing.
     #[arg(long, short)]
     pub message: String,
+    /// Print the recorded conclusion as a JSON document.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args)]

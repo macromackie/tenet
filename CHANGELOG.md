@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.21.0
+
+- Raised host-tool discovery and sandbox preflight timeouts in the embedded checker worker (`rustc` and `python3` discovery from 5s to 20s; sandbox preflight from 5s to 15s) to eliminate cold-runner timeout flakes on Linux and macOS CI runners.
+- Separated `fx` failure-explanation requests and cost from probe generation in `behavior_checks` telemetry (`generation.explanation_requests` and `generation.explanation_cost_usd` alongside `generation.requests` and `generation.returned_cost_usd`), added `pin_reused` on behavior findings when a matching `agent-checks.lock.json` pin is replayed without generating new probes, and surfaced `· cached` and `· replayed pin` tags plus a `Behavior checks` section heading in `status`, `show`, and `--final` output.
+- Added `--json` output (version 1) and Ruff/Vitest-styled human diagnostics to `tenet record`, ensured `doctor --json`, `init --json`, and `record --json` emit structured JSON error records on failure, added `Behavior pins` inspection and missing `.tenet/.gitignore` warnings to `tenet doctor`, and added missing credential onboarding hints to `tenet init`.
+- Expanded `tenet contracts recommend` to recognize GitHub Actions workflows (`.github/workflows/*.yml`), Terraform definitions (`*.tf`), CLI stdout/stderr channels, React hooks, Effect schemas/errors, Rust tracing spans, and SQL queries, while fixing singularization of `postgres` and tightening `data-sql-*`/`data-postgres-*` gating so non-database schemas never trigger SQL recommendations.
+
 ## v0.20.0
 
 - `tenet check` now always requires a model and removes the `--no-model` flag so no check silently skips model review. Offline inspection commands (`init --starter`, `doctor`, `status`, `show`, `log`, `export`, `validate`, `contracts`, `skills`, and `check --dry-run`) continue to work without credentials, and `--max-requests 0` still bounds new model requests to cached answers.

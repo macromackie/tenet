@@ -5,6 +5,8 @@ warnings go to stderr. Each format numbers its versions independently:
 
 | Command                                                     | Output                                                     | Version |
 | ----------------------------------------------------------- | ---------------------------------------------------------- | ------- |
+| `init --json`                                               | One onboarding recommendation or scaffold result           | 1       |
+| `doctor --json`                                             | One environment and repository readiness report            | 1       |
 | `check --json`, `check --reporter jsonl`                    | One [event](./output.md#jsonl) per line                    | 5       |
 | `check --dry-run --json`                                    | One event per line: `selected`, `combined`, then `summary` | 5       |
 | `check --local --json`, `status --local --json`             | One object with `checks` and `exit_code`                   | 1       |
@@ -12,6 +14,7 @@ warnings go to stderr. Each format numbers its versions independently:
 | `check --final --json`                                      | One [final check report](./final-checks.md)                | 1       |
 | `status --json`                                             | One object                                                 | 1       |
 | `show NAME --json`, `show --pending --json`                 | One object                                                 | 2       |
+| `record NAME ... --json`                                    | One object with `record`, `replaces`, and `exit_code`      | 1       |
 | `log --json`                                                | One review log entry per line                              | 2       |
 | `export`                                                    | One [evidence packet](./export.md#contents)                | 2       |
 | `contracts list --json`                                     | One object                                                 | 1       |
@@ -39,7 +42,7 @@ Versions are not aligned across formats. Raising every format to one number woul
 
 ## Errors
 
-When `check`, `status`, `show`, or `log` fails with JSON output requested, stdout ends with one `check` error event,
+When `init`, `doctor`, `check`, `fix`, `status`, `show`, `record`, or `log` fails with JSON output requested, stdout ends with one `check` error event,
 stderr repeats its message, and the command exits 2. A `check` that stops partway, such as on rejected credentials,
 prints its earlier events first:
 

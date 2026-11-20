@@ -79,7 +79,7 @@ impl Report<'_> {
                 row.write(&mut out)?;
             }
             write_mechanical(&mut out, &self.checks)?;
-            generated::write_rows(&mut out, &self.generated)?;
+            generated::write_section(&mut out, &self.generated)?;
             for error in self.source_error.iter().chain(&self.errors) {
                 writeln!(out, "  {}", format_display(error))?;
             }
