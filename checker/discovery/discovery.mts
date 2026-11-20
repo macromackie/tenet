@@ -5,11 +5,12 @@ import { hashSource, readRegular } from '../storage/index.mts';
 import type { Contract, Inventory } from '../types.d.mts';
 import { hashSurface } from './hash-surface.mts';
 import { MANIFESTS } from './manifests.mts';
+import { listRankedPaths } from './rank-path.mts';
 
 const EXECUTION = { bytes: 16_777_216, files: 1_024, source: 524_288 } as const;
 const MAX_FILES = 160;
-const MAX_BYTES = 196_608;
-const MAX_SOURCE = 49_152;
+const MAX_BYTES = 393_216;
+const MAX_SOURCE = 131_072;
 const MAX_SAMPLES = 32_768;
 const MAX_SAMPLE = 8_192;
 
@@ -89,60 +90,15 @@ async function readSample(input: ReadSampleInput): Promise<Option.Option<string>
   return Result.getSuccess(result);
 }
 
-const enumRank = { failure: 1, manifest: 0, other: 3, source: 2, unrelated: 4 } as const;
-
-type RankPathInput = {
-  path: string;
-  decision?: string;
-};
-
-function rankPath({ path, decision }: RankPathInput): number {
-  const name = basename(path);
-
-  if (MANIFESTS.has(name)) {
-    return enumRank.manifest;
-  }
-
-  if (decision === 'fail') {
-    return enumRank.failure;
-  }
-
-  if (decision === 'not_applicable') {
-    return enumRank.unrelated;
-  }
-
-  if (path.startsWith('src/') || path.startsWith('lib/')) {
-    return enumRank.source;
-  }
-
-  return enumRank.other;
-}
-
-function listPaths(contract: Contract): readonly string[] {
-  const paths = contract.paths.toSorted();
-
-  const groups = [
-    enumRank.manifest,
-    enumRank.failure,
-    enumRank.source,
-    enumRank.other,
-    enumRank.unrelated,
-  ];
-
-  return groups.flatMap((group) =>
-    paths.filter((path) => rankPath({ decision: contract.decisions?.[path], path }) === group),
-  );
-}
-
 type Budget = { bytes: number; files: number; source: number };
 
 type SelectInput = {
-  root: string;
-  contract: Contract;
   budget: Budget;
+  contract: Contract;
+  root: string;
 };
 
-type CreateCaptureInput = { readonly root: string; readonly budget: Budget };
+type CreateCaptureInput = { readonly budget: Budget; readonly root: string };
 
 function createCapture({ root, budget }: CreateCaptureInput) {
   const files = new Map<string, string>();
@@ -178,8 +134,8 @@ function createCapture({ root, budget }: CreateCaptureInput) {
 }
 
 type ReadSamplesInput = {
-  root: string;
   paths: readonly string[];
+  root: string;
 };
 
 async function readSamples({ root, paths }: ReadSamplesInput): Promise<Record<string, string>> {
@@ -210,7 +166,7 @@ async function select(input: SelectInput): Promise<Selected> {
   const packageRoots = listPackageRoots(input);
   const pool = createCapture(input);
 
-  for (const path of listPaths(input.contract)) {
+  for (const path of listRankedPaths(input.contract)) {
     const decision = input.contract.decisions?.[path];
     const kind = classifyPath({ decision, packageRoots, path });
 

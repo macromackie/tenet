@@ -50,6 +50,7 @@ pub(crate) struct Reporter<'check> {
     active_contracts: BTreeMap<String, ContractProgress>,
     pub summary: Summary,
     contract_statuses: BTreeMap<&'static str, usize>,
+    behavior_statuses: BTreeMap<&'static str, usize>,
     /// Contracts a record settled rather than the model.
     recorded: usize,
     /// Contract documents the diff deletes, listed with the summary.
@@ -87,6 +88,7 @@ impl<'check> Reporter<'check> {
             active_contracts: BTreeMap::new(),
             summary: Summary::default(),
             contract_statuses: BTreeMap::new(),
+            behavior_statuses: BTreeMap::new(),
             recorded: 0,
             deleted: Vec::new(),
             diff: false,

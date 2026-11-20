@@ -1,8 +1,8 @@
 use std::{io::Write as _, path::Path};
 
 use similar::TextDiff;
-use tenet_engine::adoption::{
-    self,
+use tenet_adoption::{
+    self as adoption,
     Added,
     Change,
     Comparison,

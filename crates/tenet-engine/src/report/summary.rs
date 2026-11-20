@@ -26,8 +26,8 @@ pub struct Summary {
     pub retryable_failures: usize,
     /// Requests not sent because `--max-requests` was spent; their checks are incomplete.
     pub over_budget: usize,
-    /// Cached file pairs, hunk groups and combined conclusions, plus conclusions
-    /// `check --no-model` reused. Several entries may originate in one physical request.
+    /// Cached file pairs, hunk groups and combined conclusions reused without a new request.
+    /// Several entries may originate in one physical request.
     pub cached: usize,
     pub attempts: usize,
     pub hedges: usize,

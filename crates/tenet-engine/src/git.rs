@@ -1,3 +1,5 @@
+//! Git command helpers for checkout isolation, ignore checks, and pull-request base resolution.
+
 mod pull_request;
 
 use alloc::{collections::BTreeMap, string::FromUtf8Error};
@@ -48,12 +50,15 @@ pub enum GitError {
     WrongPullRequestCheckout,
 }
 
-pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+/// Execute a non-interactive Git command rooted at `root` and return its standard output.
+#[inline]
+pub fn run_git(root: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
     execute_git(Command::new("git"), root, args)
 }
 
 /// A checkout owns its index, objects, config and work tree even when the caller is in a Git hook.
-pub(crate) fn configure_checkout(command: &mut Command) {
+#[inline]
+pub fn configure_checkout(command: &mut Command) {
     for (name, _) in env::vars_os() {
         if name.as_encoded_bytes().starts_with(b"GIT_") {
             let _command = command.env_remove(name);
@@ -66,7 +71,9 @@ pub(crate) fn configure_checkout(command: &mut Command) {
         .env("GIT_ATTR_NOSYSTEM", "1");
 }
 
-pub(crate) fn run_checkout_git(root: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+/// Execute an isolated checkout Git command ignoring caller hook and global Git configuration.
+#[inline]
+pub fn run_checkout_git(root: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
     let mut command = Command::new("git");
     configure_checkout(&mut command);
     execute_git(command, root, args)
@@ -90,13 +97,15 @@ fn execute_git(mut command: Command, root: &Path, args: &[&str]) -> Result<Vec<u
 }
 
 /// A path Git ignores and the rule that ignores it, as `SOURCE:LINE:PATTERN`.
-pub(crate) struct Ignored {
+#[derive(Debug)]
+pub struct Ignored {
     pub path: String,
     pub rule: String,
 }
 
 /// The first of `paths` that the project's ignore rules exclude; tracked files are never ignored.
-pub(crate) fn find_ignored(root: &Path, paths: &[PathBuf]) -> Result<Option<Ignored>, GitError> {
+#[inline]
+pub fn find_ignored(root: &Path, paths: &[PathBuf]) -> Result<Option<Ignored>, GitError> {
     // Without `--verbose`, Git lists only excluded paths; with it, Git also lists paths that a
     // negated `!PATTERN` keeps. So find the first excluded path, then ask for the rule that decided
     // it.

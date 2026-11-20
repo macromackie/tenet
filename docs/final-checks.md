@@ -1,6 +1,6 @@
 # Final checks
 
-Run a final check from the working tree after your last edit. Tenet 0.18.0 can assess the current source, run the checks declared by its contracts, and report both results in one document.
+Run a final check from the working tree after your last edit. Tenet assesses the current source, runs declared local checks and generated behavior checks, and reports all results in one document.
 
 ```sh
 tenet check --final --json
@@ -20,7 +20,7 @@ tenet check --final --evidence /path/to/receipt.json --json
 
 Tenet compares the receipt with the contracts, file inventory and bytes in the checkout. You choose and trust the producer of the receipt. Include the checker's code, configuration and other dependencies among the inputs it attests. See [Mechanical evidence](./cli.md#mechanical-evidence).
 
-Use `--max-requests N` to bound new model requests. Use `--no-model` to reuse the semantic evidence already available and leave missing answers pending. Both modes still check mechanical evidence.
+Use `--max-requests N` to bound new model requests (`--max-requests 0` reuses cached answers without sending new requests and leaves uncached inputs pending). Local and behavior checks still report their evidence.
 
 ## Read the result
 

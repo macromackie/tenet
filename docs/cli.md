@@ -1,11 +1,13 @@
 # Commands
 
 ```sh
+tenet init [--starter [NAME]] [--yes] [--scope DIR] [--json]
+tenet doctor [--json]
 tenet check
 tenet check --base origin/main
 tenet check --local [CONTRACT/NAME] [--fresh] [--json]
 tenet check --qualify CONTRACT/NAME [--json]
-tenet check --final [--evidence PATH] [--no-model] [--json]
+tenet check --final [--evidence PATH] [--json]
 tenet status --local [CONTRACT/NAME] [--json]
 tenet status [--base REF] [--evidence PATH] [--json] [--prune-cache]
 tenet show NAME [PATH ...] [--json]
@@ -31,6 +33,25 @@ messages. A check's `tenet.check` span takes the caller's trace and span ids fro
 Inside it, `tenet.contract` and `tenet.pair` spans cover each contract and each contract and file.
 `tenet.wait` times each wait for a parallel slot.
 `cache.hit` and `budget.exhausted` events mark answers read from the cache and requests the budget refuses.
+
+## Setup and diagnostics
+
+```sh
+tenet init                       # Preview recommended catalog contracts for this repo
+tenet init --yes                 # Install recommended catalog contracts and lock them
+tenet init --starter api-guards  # Scaffold a local starter .contracts/001-api-guards/CONTRACT.md
+tenet doctor                     # Check credentials, Node.js, sandbox tooling, and repo setup
+```
+
+`tenet init` handles Day-1 setup without overwriting existing contracts. By default it inspects public declarations and
+suggests matching contracts from the catalog with ready-to-run `tenet contracts add` commands. Pass `--yes` to install
+those suggestions immediately into `--scope` (default `.`), or `--starter [NAME]` to scaffold a valid local
+`CONTRACT.md` offline.
+
+`tenet doctor` verifies provider credentials (`OPENROUTER_API_KEY` or `TYPESAFE_API_KEY`), Node.js/npm, local sandbox
+tooling (`/usr/bin/sandbox-exec` on macOS, or `bubblewrap >= 0.7` and `prlimit` on Linux), language runtimes (`python3`,
+`rustc`), Git status, `.contracts/` validity, `.tenet.lock` validity, and that `.tenet/` is not tracked in Git. It exits
+`0` when required checks pass and `1` when any required check needs attention. Both commands support `--json`.
 
 ## Full check
 
@@ -141,13 +162,12 @@ file, `status` lists it once per check. Pass that check's paths after the name, 
 records and earlier assessments, and counts of the older ones. `show --pending --json` lists every pending contract in
 that form and each changed file's patch once. See [JSON](./json.md) for every command's format.
 
-`check --no-model` captures inputs and appends a revision without credentials or requests. Contracts settled for the
-same input stay settled; the rest are pending. Each row shows the reused model conclusion, as in
-`✓ errors (1 file) preserved · recorded 2540a6592efb over model failed · violation 100% · unchanged`. A model check
-answers repeated identical requests from `.tenet/answers.jsonl`; `--fresh` asks the model again. An answer is reused
-only by the same Tenet version and provider, for the model revision the provider reported. `status --prune-cache`
-removes the answers an earlier Tenet wrote and those a later answer to the same request replaced. Delete `.tenet/` to
-forget the review.
+`tenet check` always runs with a configured model so no check silently skips model review. Use `tenet status` to
+recompute states from the working tree without calling a model, `tenet check --dry-run` to preview planned requests
+without credentials, or `--max-requests N` to bound new model requests. Repeated identical requests are answered from
+`.tenet/answers.jsonl`; `--fresh` asks the model again. An answer is reused only by the same Tenet version and provider,
+for the model revision the provider reported. `status --prune-cache` removes answers an earlier Tenet wrote and those a
+later answer to the same request replaced. Delete `.tenet/` to forget the review.
 
 ## Mechanical evidence
 
@@ -256,7 +276,6 @@ as version 1 otherwise. A Tenet older than 0.11.0 cannot read a version 2 lock, 
 | `--model ID`                 | provider default | Select a supported pinned model                                                                                                                           |
 | `--reporter KIND`            | default          | `default`, `verbose`, or `jsonl`                                                                                                                          |
 | `--json`                     | off              | Shorthand for JSONL                                                                                                                                       |
-| `--no-model`                 | off              | Capture and keep a revision without requests; see [Review state](#review-state)                                                                           |
 | `--fresh`                    | off              | Ask the model again instead of reusing answers to identical requests; with `--dry-run`, predict as if nothing were cached                                 |
 
 `check --dry-run` lists candidate pairs and builds each file input, including the contract and explicit context,
@@ -272,7 +291,7 @@ earlier answers. `file_pairs` counts selected file/contract checks, including ch
 The summary also counts `combined_over_limit`, the contracts whose combined input exceeds the limit after reduction, and
 reports the diff's `coverage`. When the requests to send exceed `--max-requests`, it prints a warning to stderr. A diff with no changes
 prints `No changes since BASE; nothing to check.` Only execution errors exit 2.
-`validate`, `contracts`, and `skills` also work without credentials.
+`validate`, `contracts`, `skills`, `status`, `show`, `log`, and `export` also work without credentials.
 
 ## Assessment inputs
 

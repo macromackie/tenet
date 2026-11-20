@@ -9,11 +9,13 @@ const FileDecisions = Schema.Record(Schema.String, Schema.String);
 const Outcome = Schema.Literals(['passed', 'failed', 'unresolved']);
 
 const NullableCost = Schema.OptionFromNullOr(Schema.Number);
+const OptionalCount = Schema.OptionFromOptionalKey(Schema.Int);
 
 const FindingFields = Schema.Struct({
   check: Schema.String,
   contract: Schema.String,
   cost_usd: NullableCost,
+  generation_requests: OptionalCount,
   message: Schema.String,
   outcome: Outcome,
   requested: Schema.Boolean,
@@ -54,6 +56,7 @@ const RequestFields = Schema.Struct({
   fresh: OptionalFlag,
   inspect: OptionalFlag,
   maxGenerations: Schema.Int,
+  progressFile: OptionalText,
   root: Schema.String,
   state: Schema.String,
 });

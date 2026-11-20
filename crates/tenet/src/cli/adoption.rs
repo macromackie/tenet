@@ -18,6 +18,7 @@ pub(crate) enum Contracts {
         #[arg(long)]
         json: bool,
     },
+    /// List discovered contracts in this repository.
     List {
         /// List only the contracts that govern this file.
         #[arg(long = "for", value_name = "FILE")]
@@ -25,10 +26,13 @@ pub(crate) enum Contracts {
         /// Select scopes touched since this revision, including contract changes.
         #[arg(long)]
         base: Option<String>,
+        /// Print discovered contracts and coverage as JSON.
         #[arg(long)]
         json: bool,
     },
+    /// Print one contract document by name.
     Show {
+        /// Name of the contract to display.
         name: String,
     },
     /// Install a shared contract and record it in .tenet.lock.
@@ -47,6 +51,7 @@ pub(crate) enum Contracts {
         /// Local contract name when the upstream name is already used.
         #[arg(long, conflicts_with = "path")]
         name: Option<String>,
+        /// Explicit 3-digit folder prefix instead of the next free number.
         #[arg(long, conflicts_with = "path", value_parser = clap::value_parser!(u32).range(1..))]
         number: Option<u32>,
         /// Register a source as ALIAS=URL; repeat as needed.
@@ -96,6 +101,7 @@ pub(crate) enum Locked {
         /// Report only local edits, without fetching sources.
         #[arg(long)]
         offline: bool,
+        /// Print comparison results as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -106,11 +112,13 @@ pub(crate) enum Locked {
         /// Move to this tag, branch, or commit instead of the newest.
         #[arg(long = "ref")]
         reference: Option<String>,
+        /// Print update outcomes as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Show upstream changes and local edits since the locked version.
     Diff {
+        /// Path to the installed contract or skill copy.
         path: PathBuf,
         /// Print the base, upstream, and local texts.
         #[arg(long)]
@@ -118,6 +126,7 @@ pub(crate) enum Locked {
     },
     /// Remove an installed copy and its lock entry.
     Remove {
+        /// Path to the installed contract or skill copy.
         path: PathBuf,
         /// Keep the files as ordinary local files.
         #[arg(long)]

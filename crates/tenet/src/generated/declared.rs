@@ -2,16 +2,13 @@
 
 use std::path::Path;
 
-use tenet_engine::{
-    Plan,
+use tenet_checks::{
+    behavior::{Finding, Outcome},
     mechanical::{self, Evidence, Freshness},
 };
+use tenet_engine::Plan;
 
-use crate::{
-    agent_checks::{Finding, Outcome},
-    error::CommandError,
-    report_format::quote_argument,
-};
+use crate::{error::CommandError, report_format::quote_argument};
 
 pub(super) fn inspect(plan: &Plan, state: &Path) -> Result<Vec<Finding>, CommandError> {
     let evidence = mechanical::inspect_selected_local(plan, state, None)?;
@@ -40,6 +37,7 @@ fn build_finding(row: Evidence) -> Finding {
         check: format!("project-{name}"),
         contract: row.contract,
         cost_usd: None,
+        generation_requests: None,
         message,
         outcome,
         requested: false,

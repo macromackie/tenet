@@ -4,6 +4,14 @@ use super::Reporter;
 use crate::report_format::format_contract_counts;
 
 impl Reporter<'_> {
+    pub(crate) fn clear_progress(&mut self) -> io::Result<()> {
+        if self.live {
+            self.progress.clear(&self.term)?;
+            self.term.flush()?;
+        }
+        Ok(())
+    }
+
     #[expect(
         clippy::excessive_nesting,
         reason = "Each level is a loop, match or closure over one parsed structure, and \
@@ -38,6 +46,21 @@ impl Reporter<'_> {
             self.progress.draw(
                 &self.term,
                 &active,
+                &format!(
+                    "Contracts  {}",
+                    format_contract_counts(&self.contract_statuses, self.contracts.len())
+                ),
+                self.started.elapsed(),
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn refresh_behavior(&mut self, phase: &str) -> io::Result<()> {
+        if self.live {
+            self.progress.draw(
+                &self.term,
+                phase,
                 &format!(
                     "Contracts  {}",
                     format_contract_counts(&self.contract_statuses, self.contracts.len())

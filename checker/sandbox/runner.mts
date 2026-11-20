@@ -8,19 +8,33 @@ import type { Check } from '../types.d.mts';
 import { createSandbox } from './runner-sandbox.mts';
 
 type ObserveInput = Readonly<{
-  files: ReadonlyMap<string, string>;
   check: Check;
+  files: ReadonlyMap<string, string>;
   qualify: boolean;
+  skipActual?: boolean;
 }>;
 
-type Project = Omit<ObserveInput, 'qualify'> & Readonly<{ work: string }>;
-type Staged = Project & Readonly<{ run: () => Promise<unknown> }>;
-type Case = 'good' | 'defect' | 'refactor' | 'actual';
-type SampleInput = Readonly<{ project: Staged; variant: Case }>;
-type Observation = Readonly<{ passed: boolean; value: unknown }>;
-type SourceInput = Readonly<{ work: string; path: string; source: string }>;
+type Project = Omit<ObserveInput, 'qualify' | 'skipActual'> &
+  Readonly<{ probeTmp: string; work: string }>;
 
-async function copySource({ work, path, source }: SourceInput): Promise<void> {
+type Staged = Project & Readonly<{ run: () => Promise<unknown> }>;
+
+type Case = 'good' | 'defect' | 'refactor' | 'actual';
+
+type SampleInput = Readonly<{ project: Staged; variant: Case }>;
+
+type Observation = Readonly<{ passed: boolean; value: unknown }>;
+
+type SourceInput = Readonly<{ path: string; source: string; work: string }>;
+
+type ExecuteInput = Readonly<{
+  check: Check;
+  project: Staged;
+  qualify: boolean;
+  skipActual: boolean;
+}>;
+
+async function copySource({ path, source, work }: SourceInput): Promise<void> {
   const file = resolve(work, path);
   const prefix = join(work, sep);
 
@@ -44,7 +58,14 @@ async function prepareProject(project: Project): Promise<Staged> {
 
   await Effect.runPromise(copies);
 
-  return { ...project, run: await createSandbox({ check: project.check, work: project.work }) };
+  const run = await createSandbox({
+    check: project.check,
+    files: project.files,
+    probeTmp: project.probeTmp,
+    work: project.work,
+  });
+
+  return { ...project, run };
 }
 
 async function restoreSubject({ project, variant }: SampleInput): Promise<void> {
@@ -91,7 +112,9 @@ async function qualifyControl({ project, variant }: SampleInput): Promise<void> 
 
   if (result.passed !== (variant !== 'defect')) {
     const name = JSON.stringify(variant);
-    const message = `test did not distinguish its ${name} control`;
+    const observed = JSON.stringify(result.value);
+    const expected = JSON.stringify(project.check.expected);
+    const message = `test did not distinguish its ${name} control (expected ${expected}, observed ${observed})`;
 
     throw new CheckerError({ message });
   }
@@ -103,21 +126,42 @@ async function verifyControls(project: Staged): Promise<void> {
   await qualifyControl({ project, variant: 'refactor' });
 }
 
+async function executeObservation({
+  check,
+  project,
+  qualify,
+  skipActual,
+}: ExecuteInput): Promise<Observation> {
+  if (qualify) {
+    await verifyControls(project);
+  }
+
+  if (skipActual) {
+    return { passed: true, value: check.expected };
+  }
+
+  return await readObservation({ project, variant: 'actual' });
+}
+
 /** Qualify a checker and compare its observation on the exact submitted code. */
-export async function observe({ files, check, qualify }: ObserveInput): Promise<Observation> {
+export async function observe({
+  check,
+  files,
+  qualify,
+  skipActual = false,
+}: ObserveInput): Promise<Observation> {
   const temporary = tmpdir();
-  const prefix = join(temporary, 'tenet-observe-');
-  const work = await mkdtemp(prefix);
+  const workPrefix = join(temporary, 'tenet-observe-');
+  const tmpPrefix = join(temporary, 'tenet-probe-tmp-');
+  const work = await mkdtemp(workPrefix);
+  const probeTmp = await mkdtemp(tmpPrefix);
 
   try {
-    const project = await prepareProject({ check, files, work });
+    const project = await prepareProject({ check, files, probeTmp, work });
 
-    if (qualify) {
-      await verifyControls(project);
-    }
-
-    return await readObservation({ project, variant: 'actual' });
+    return await executeObservation({ check, project, qualify, skipActual });
   } finally {
     await rm(work, { force: true, recursive: true });
+    await rm(probeTmp, { force: true, recursive: true });
   }
 }

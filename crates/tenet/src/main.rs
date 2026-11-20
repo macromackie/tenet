@@ -9,7 +9,6 @@
 extern crate alloc;
 
 mod adoption;
-mod agent_checks;
 mod cli;
 mod commands;
 mod diagnostics;

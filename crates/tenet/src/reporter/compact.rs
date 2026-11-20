@@ -1,20 +1,27 @@
+use tenet_checks::behavior::{Finding, Outcome};
 use tenet_engine::{
     ContractResult,
     ContractState,
     ContractStatus,
-    Coverage,
     Pending,
-    Summary,
     review::{Checked, Concluded},
 };
 
 use super::{ContractProgress, Reporter};
 use crate::{
-    agent_checks::{Finding, Outcome},
     cli::ReporterKind,
     error::CommandError,
     generated,
-    report_format::{format_coverage, format_painted, quote_argument},
+    report_format::{
+        DiagnosticBlock,
+        format_dim,
+        format_display,
+        format_marker,
+        format_painted,
+        format_violation,
+        quote_argument,
+        write_diagnostic_block,
+    },
 };
 
 const PENDING_LABELS: &[&str] = &["failed", "for review"];
@@ -102,94 +109,55 @@ impl Reporter<'_> {
             .contract_statuses
             .entry(count_label(state))
             .or_default() += 1;
-        let Some((label, detail)) = describe_review(state, verdict) else {
-            return Ok(());
-        };
-        let path = progress
-            .issues
-            .first()
-            .map(|issue| format!("  {}", issue.path.escape_debug()))
-            .unwrap_or_default();
         let title = self
             .contracts
             .iter()
             .find(|candidate| candidate.name == contract)
             .map_or(contract, |candidate| candidate.message.as_str());
-        self.term.write_line(&format!(
-            "  {}  {}{path}",
-            format_painted(label),
-            title.escape_debug()
-        ))?;
-        self.term
-            .write_line(&format!("        {}", detail.escape_debug()))?;
-        if matches!(
+        let Some((label, detail)) = describe_review(state, verdict) else {
+            return self.write_passed_contract(title, state);
+        };
+        if label == "REVIEWED" {
+            self.term.write_line(&format!(
+                "  {} {}  {}  {}",
+                format_marker(label),
+                format_painted(label),
+                format_display(title),
+                format_dim(&format_display(detail)),
+            ))?;
+            return Ok(());
+        }
+        let score = verdict
+            .and_then(|result| result.violation)
+            .map(|share| format_violation(Some(share)));
+        let location = progress.issues.first().map(|issue| issue.path.as_str());
+        let help = if matches!(
             state,
             ContractState::Pending {
                 reason: Pending::ContractChanged
             }
         ) {
-            self.term.write_line(&format!(
-                "        tenet check --full --contract {}",
-                quote_argument(contract)
-            ))?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn write_compact_summary(
-        &self,
-        summary: Summary,
-        revision: Option<u64>,
-        pending: &[String],
-        coverage: Option<&Coverage>,
-    ) -> Result<(), CommandError> {
-        if let Some(message) = coverage.and_then(format_coverage) {
-            self.term.write_line(&message)?;
-        }
-        for path in &self.deleted {
-            self.term
-                .write_line(&format!("Removed contract  {}", path.display()))?;
-        }
-        if summary.cancelled {
-            self.term
-                .write_line("Cancelled. Remaining checks did not finish.")?;
-        }
-        let counts = self
-            .contract_statuses
-            .iter()
-            .map(|(label, count)| format!("{count} {}", format_painted(label)))
-            .collect::<Vec<_>>()
-            .join(" \u{b7} ");
-        match counts.is_empty() {
-            false => self.term.write_line(&counts)?,
-            true if self.contracts.is_empty()
-                && coverage.is_none_or(|diff| diff.changed_files == 0) =>
-            {
-                self.term.write_line("No contracts to check.")?;
+            format!("tenet check --full --contract {}", quote_argument(contract))
+        } else {
+            format!("tenet show {}", quote_argument(contract))
+        };
+        write_diagnostic_block(
+            &mut self.term,
+            &DiagnosticBlock {
+                help: Some(&help),
+                label,
+                location,
+                message: detail,
+                meta: score.as_deref(),
+                title,
             },
-            true => {},
-        }
-        if let Some(number) = revision {
-            self.term.write_line(&format!(
-                "Saved review r{number} in {}",
-                self.state.join("events.jsonl").display()
-            ))?;
-        }
-        if let Some(name) = pending.first() {
-            if revision.is_some() {
-                self.term
-                    .write_line(&format!("Inspect: tenet show {}", quote_argument(name)))?;
-            } else {
-                self.term
-                    .write_line("Run outside the snapshot to record a review.")?;
-            }
-        }
+        )?;
         Ok(())
     }
 
     #[expect(
         clippy::arithmetic_side_effects,
-        reason = "Each planned contract contributes once."
+        reason = "Each planned contract and behavior check row contributes once."
     )]
     pub(crate) fn write_generated(
         &mut self,
@@ -205,7 +173,40 @@ impl Reporter<'_> {
                 let label = label_with_checks(contract, rows);
                 *self.contract_statuses.entry(label).or_default() += 1;
             }
+            self.behavior_statuses.clear();
+            for row in rows {
+                let label = match row.outcome {
+                    Outcome::Passed => "passed",
+                    Outcome::Failed => "failed",
+                    Outcome::Unresolved => "for review",
+                };
+                *self.behavior_statuses.entry(label).or_default() += 1;
+            }
         }
         generated::emit(rows, self.kind)
+    }
+
+    fn write_passed_contract(
+        &self,
+        title: &str,
+        state: &ContractState,
+    ) -> Result<(), CommandError> {
+        if matches!(
+            state,
+            ContractState::Settled {
+                conclusion: ContractStatus::Verified
+                    | ContractStatus::Preserved
+                    | ContractStatus::Clear,
+                ..
+            }
+        ) {
+            self.term.write_line(&format!(
+                "  {} {}  {}",
+                format_marker("PASS"),
+                format_painted("PASS"),
+                format_display(title)
+            ))?;
+        }
+        Ok(())
     }
 }

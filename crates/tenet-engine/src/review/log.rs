@@ -65,7 +65,8 @@ pub struct Assessment {
     pub scope: RequestedScope,
     /// The model's conclusion; absent when the contract was captured without one.
     pub conclusion: Option<Conclusion>,
-    /// The revision whose model conclusion for this same input `check --no-model` reused.
+    /// The revision whose model conclusion for this same input an earlier cache-only capture
+    /// reused.
     pub carried_from: Option<u64>,
     /// Positions in the revision's `files` of the files this contract selected.
     pub selected: Vec<usize>,

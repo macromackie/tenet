@@ -1,12 +1,16 @@
 import { CheckerError } from '../checker-error.mts';
 import { readInventory } from '../discovery/index.mts';
+import { reportProgress } from '../progress-log.mts';
 import { replacePin, writeAtomic } from '../storage/index.mts';
 import type { Pin } from '../types.d.mts';
-import { evaluate } from './evidence.mts';
-import type { Context } from './receipt.mts';
-import { type Attempt, type Checked, selectPin } from './select-pin.mts';
+import { type Context, evaluate } from './receipt/index.mts';
+import { type Checked, type Preparation, selectPin } from './select-pin.mts';
+
+export type { Checked, Preparation } from './select-pin.mts';
 
 type PublishInput = { ctx: Context; pin: Pin };
+
+type VerifyInput = Preparation;
 
 async function publish({ ctx, pin }: PublishInput): Promise<void> {
   const input = { path: ctx.lock, root: ctx.job.request.root, value: pin };
@@ -20,12 +24,7 @@ async function publish({ ctx, pin }: PublishInput): Promise<void> {
   await replacePin({ ...input, prior: ctx.prior });
 }
 
-type VerifyInput = { ctx: Context; attempt: Attempt };
-
-/** Qualify and publish immutable observations only after the checkout is stable. */
-export async function verify({ ctx, attempt }: VerifyInput): Promise<Checked> {
-  const pin = await selectPin({ attempt, ctx });
-  const rows = await evaluate({ evaluation: ctx.evaluation, pin });
+async function assertStableSource(ctx: Context): Promise<void> {
   const after = await readInventory({ contract: ctx.job.contract, root: ctx.job.request.root });
 
   if (
@@ -34,11 +33,24 @@ export async function verify({ ctx, attempt }: VerifyInput): Promise<Checked> {
   ) {
     throw new CheckerError({ message: 'source changed during the check. Run it again.' });
   }
+}
 
-  const results = rows.filter((row) => row.outcome !== 'unresolved');
+/** Qualify and publish immutable observations only after the checkout is stable. */
+export async function verify({ ctx, onRequest }: VerifyInput): Promise<Checked> {
+  const { extraUnresolved, pin, prequalifiedIds } = await selectPin({ ctx, onRequest });
 
-  const cache =
-    ctx.matching || (pin.bundle.checks.length > 0 && results.length === pin.bundle.checks.length);
+  await reportProgress({
+    contract: ctx.job.contract.name,
+    phase: 'replaying checks',
+    progressFile: ctx.job.request.progressFile,
+  });
+
+  const observed = await evaluate({ evaluation: ctx.evaluation, pin, prequalifiedIds });
+
+  await assertStableSource(ctx);
+
+  const rows = [...observed, ...extraUnresolved];
+  const cache = ctx.matching || pin.bundle.checks.length > 0;
 
   if (cache && !ctx.matching) {
     await publish({ ctx, pin });

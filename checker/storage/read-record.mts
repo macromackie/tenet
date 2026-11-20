@@ -3,7 +3,7 @@ import { classifyResult } from '../classify-result.mts';
 import { readRegular } from './read-regular.mts';
 import type { LocationInput } from './resolve-inside.mts';
 
-const RECORD_LIMIT = 2_097_152;
+const RECORD_LIMIT = 4_194_304;
 
 export type RecordData = { readonly text: string; readonly json: unknown };
 

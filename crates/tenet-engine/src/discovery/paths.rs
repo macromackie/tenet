@@ -21,7 +21,9 @@ fn is_protected(name: &OsStr) -> bool {
     PROTECTED_NAMES.contains(&text.as_ref()) || text.starts_with(".env.")
 }
 
-pub(crate) fn list_paths(root: &Path) -> Result<Vec<PathBuf>, DiscoveryError> {
+/// List all repository-relative files eligible for contract assessment under `root`.
+#[inline]
+pub fn list_paths(root: &Path) -> Result<Vec<PathBuf>, DiscoveryError> {
     let projects = lock::read_lock(root)?.compile_separate_projects()?;
     let prefix = root.to_owned();
     let walker = WalkBuilder::new(root)
@@ -55,6 +57,9 @@ pub(crate) fn is_contract(path: &Path) -> bool {
         .any(|component| component.as_os_str() == ".contracts")
 }
 
-pub(crate) fn is_allowed(path: &Path) -> bool {
+/// Return whether a project-relative path is eligible for inspection outside protected directories.
+#[inline]
+#[must_use]
+pub fn is_allowed(path: &Path) -> bool {
     !path.components().any(|part| is_protected(part.as_os_str()))
 }

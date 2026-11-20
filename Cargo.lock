@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "tenet"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "annotate-snippets",
  "anyhow",
@@ -1468,6 +1468,8 @@ dependencies = [
  "sha2",
  "similar",
  "tempfile",
+ "tenet-adoption",
+ "tenet-checks",
  "tenet-contracts",
  "tenet-engine",
  "thiserror",
@@ -1477,8 +1479,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "tenet-adoption"
+version = "0.20.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tenet-contracts",
+ "tenet-engine",
+ "thiserror",
+]
+
+[[package]]
+name = "tenet-checks"
+version = "0.20.0"
+dependencies = [
+ "anyhow",
+ "globset",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "tempfile",
+ "tenet-contracts",
+ "tenet-engine",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "tenet-contracts"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "blake3",
  "globset",
@@ -1491,19 +1523,16 @@ dependencies = [
 
 [[package]]
 name = "tenet-engine"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "blake3",
  "ev-grep-core",
  "futures-util",
- "globset",
  "ignore",
  "memchr",
- "rustix",
  "serde",
  "serde_json",
- "sha2",
  "similar",
  "tempfile",
  "tenet-contracts",

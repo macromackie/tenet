@@ -1,21 +1,33 @@
-import { access, realpath, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { CheckerError } from '../checker-error.mts';
 import type { Check } from '../types.d.mts';
 import { type Execution, runFile } from './host-tool.mts';
-import { readRustTool } from './rust-tool.mts';
+import { createLinuxSandbox } from './linux-sandbox.mts';
+import { createMacosSandbox, type SandboxCommand } from './macos-sandbox.mts';
 
-type MountInput = Readonly<{ work: string; runtime: Check['runtime'] }>;
-type SandboxInput = Readonly<{ work: string; check: Check }>;
-type Probe = Readonly<{ check: Check; mounts: readonly string[] }>;
-type AssertionInput = Readonly<{ runtime: Check['runtime']; result: Execution }>;
-const BWRAP = '/usr/bin/bwrap';
-const PYTHON = '/usr/bin/python3';
-const PRLIMIT = '/usr/bin/prlimit';
-const SYSTEM_PATH = '/usr/bin:/bin';
-const PROBE_TIMEOUT_MS = 11_000;
+type SandboxInput = Readonly<{
+  check: Check;
+  files: ReadonlyMap<string, string>;
+  probeTmp: string;
+  work: string;
+}>;
+
+type Probe = Readonly<{ check: Check; command: SandboxCommand }>;
+
+type AssertionInput = Readonly<{ result: Execution; runtime: Check['runtime'] }>;
+
+type FailureInput = Readonly<{ base: string; stderr: string }>;
+
+const PROBE_TIMEOUT_MS = 15_000;
+const RUST_PROBE_TIMEOUT_MS = 30_000;
 const OUTPUT_BYTES = 65_536;
-const NODE = '/runtime/node';
+const DIAGNOSTIC_LINES = 2;
+const DIAGNOSTIC_CHARS = 240;
+const ASCII_SPACE = 32;
+const ASCII_DEL = 127;
+const DIAGNOSTIC_FOOTER = /^(?:error: aborting due to |For more information about this error)/v;
+const DIAGNOSTIC_ERROR = /^error(?:\[|:)/v;
 
 const PROBE_FILES = {
   node: '.tenet-observe.mjs',
@@ -23,152 +35,7 @@ const PROBE_FILES = {
   rust: '.tenet-observe.rs',
 } as const;
 
-const NODE_FLAGS = ['--disable-wasm-trap-handler', '--max-old-space-size=96'] as const;
-
-const LIMITS = [
-  PRLIMIT,
-  '--cpu=8',
-  '--as=1600000000',
-  '--nproc=64',
-  '--fsize=33554432',
-  '--nofile=128',
-  '--core=0',
-  '--',
-] as const;
-
-/** Compilation and execution share the sandbox's private temporary directory. */
-const RUST_COMMAND = [
-  '/bin/sh',
-  '-c',
-  '/toolchain/bin/rustc --edition=2021 --crate-name tenet_probe -C linker=/usr/bin/gcc .tenet-observe.rs -o /tmp/observe && exec /tmp/observe',
-] as const;
-
-const ISOLATION = [
-  ['--unshare-all', '--new-session', '--die-with-parent', '--clearenv'],
-  ['--cap-drop', 'ALL'],
-  ['--dir', '/usr'],
-  ['--ro-bind', '/usr/bin', '/usr/bin'],
-  ['--ro-bind', '/usr/lib', '/usr/lib'],
-  ['--ro-bind-try', '/usr/lib64', '/usr/lib64'],
-  ['--symlink', 'usr/bin', '/bin'],
-  ['--symlink', 'usr/lib', '/lib'],
-  ['--symlink', 'usr/lib64', '/lib64'],
-  ['--proc', '/proc'],
-  ['--dev', '/dev'],
-  ['--size', '67108864', '--tmpfs', '/tmp'],
-  ['--dir', '/runtime'],
-].flat();
-
-function probeFile(runtime: Check['runtime']): string {
-  return PROBE_FILES[runtime];
-}
-
-async function buildRuntimeMount(runtime: Check['runtime']): Promise<readonly string[]> {
-  switch (runtime) {
-    case 'node': {
-      return ['--ro-bind', await realpath(process.execPath), NODE];
-    }
-    case 'python': {
-      return [];
-    }
-    case 'rust': {
-      const sysroot = await readRustTool('--print=sysroot');
-
-      const toolchain = await realpath(sysroot);
-
-      return [
-        '--ro-bind',
-        toolchain,
-        '/toolchain',
-        '--ro-bind-try',
-        '/usr/libexec/gcc',
-        '/usr/libexec/gcc',
-      ];
-    }
-  }
-}
-
-async function buildSandboxMounts({ work, runtime }: MountInput): Promise<readonly string[]> {
-  if (process.platform !== 'linux') {
-    throw new CheckerError({
-      message: 'an isolated Linux runner with bubblewrap and prlimit is required',
-    });
-  }
-
-  await access(BWRAP);
-  await access(PRLIMIT);
-
-  const mounts = await buildRuntimeMount(runtime);
-
-  return [
-    ...ISOLATION,
-    ...mounts,
-    '--ro-bind',
-    work,
-    '/project',
-    '--chdir',
-    '/project',
-    '--setenv',
-    'PATH',
-    SYSTEM_PATH,
-    '--setenv',
-    'HOME',
-    '/tmp',
-    '--setenv',
-    'TMPDIR',
-    '/tmp',
-  ];
-}
-
-function buildProgram(check: Check): readonly string[] {
-  switch (check.runtime) {
-    case 'node': {
-      if (check.testFile !== undefined) {
-        return [NODE, ...NODE_FLAGS, '--test', '--test-reporter=tap', '--', `./${check.testFile}`];
-      }
-
-      return [NODE, ...NODE_FLAGS, `./${probeFile(check.runtime)}`];
-    }
-    case 'python': {
-      if (check.testFile !== undefined) {
-        return [
-          PYTHON,
-          '-B',
-          '-m',
-          'unittest',
-          'discover',
-          '-s',
-          `./${dirname(check.testFile)}`,
-          '-p',
-          basename(check.testFile),
-        ];
-      }
-
-      return [PYTHON, '-B', `./${probeFile(check.runtime)}`];
-    }
-    case 'rust': {
-      return RUST_COMMAND;
-    }
-  }
-}
-
-async function execute(probe: Probe): Promise<Execution> {
-  const command = buildProgram(probe.check);
-
-  return await runFile({
-    args: [...probe.mounts, '--', ...LIMITS, ...command],
-    file: BWRAP,
-    options: {
-      encoding: 'utf-8',
-      env: { PATH: SYSTEM_PATH },
-      killSignal: 'SIGKILL',
-      maxBuffer: OUTPUT_BYTES,
-      timeout: PROBE_TIMEOUT_MS,
-    },
-  });
-}
-
-type Markers = Readonly<{ passed: RegExp; failed: RegExp }>;
+type Markers = Readonly<{ failed: RegExp; passed: RegExp }>;
 
 const ASSERTION_MARKERS: ReadonlyMap<string, Markers> = new Map([
   [
@@ -187,7 +54,110 @@ const ASSERTION_MARKERS: ReadonlyMap<string, Markers> = new Map([
   ],
 ]);
 
-function isPassing({ runtime, result }: AssertionInput): boolean {
+function probeFile(runtime: Check['runtime']): string {
+  return PROBE_FILES[runtime];
+}
+
+function stripControlChars(text: string): string {
+  let clean = '';
+
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+
+    if (code >= ASCII_SPACE && code !== ASCII_DEL) {
+      clean += character;
+    } else {
+      clean += ' ';
+    }
+  }
+
+  return clean;
+}
+
+function selectDiagnosticLines(lines: readonly string[]): readonly string[] {
+  const highlighted = lines.filter((line) => DIAGNOSTIC_ERROR.test(line));
+
+  if (highlighted.length > 0) {
+    return highlighted.slice(0, DIAGNOSTIC_LINES);
+  }
+
+  return lines.slice(-DIAGNOSTIC_LINES);
+}
+
+function summarizeDiagnostic(stderr: string): string {
+  const lines = stderr
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !DIAGNOSTIC_FOOTER.test(line));
+
+  const selected = selectDiagnosticLines(lines).join(' | ');
+  const summary = stripControlChars(selected).trim();
+
+  if (summary.length <= DIAGNOSTIC_CHARS) {
+    return summary;
+  }
+
+  return summary.slice(0, DIAGNOSTIC_CHARS);
+}
+
+function formatFailure({ base, stderr }: FailureInput): string {
+  const detail = summarizeDiagnostic(stderr);
+
+  if (detail.length === 0) {
+    return base;
+  }
+
+  return `${base}: ${detail}`;
+}
+
+async function buildCommand({
+  check,
+  files,
+  probeTmp,
+  work,
+}: SandboxInput): Promise<SandboxCommand> {
+  const entry = probeFile(check.runtime);
+
+  if (process.platform === 'darwin') {
+    return await createMacosSandbox({ check, files, probeFile: entry, probeTmp, work });
+  }
+
+  if (process.platform === 'linux') {
+    return await createLinuxSandbox({ check, files, probeFile: entry, work });
+  }
+
+  throw new CheckerError({
+    message: 'an isolated Linux or macOS runner is required for behavior checks',
+  });
+}
+
+function readProbeTimeout(runtime: Check['runtime']): number {
+  if (runtime === 'rust') {
+    return RUST_PROBE_TIMEOUT_MS;
+  }
+
+  return PROBE_TIMEOUT_MS;
+}
+
+async function execute(probe: Probe): Promise<Execution> {
+  const { args, cwd, env, file } = probe.command;
+  const timeout = readProbeTimeout(probe.check.runtime);
+
+  return await runFile({
+    args,
+    file,
+    options: {
+      cwd,
+      encoding: 'utf-8',
+      env,
+      killSignal: 'SIGKILL',
+      maxBuffer: OUTPUT_BYTES,
+      timeout,
+    },
+  });
+}
+
+function isPassing({ result, runtime }: AssertionInput): boolean {
   const logs = [result.stdout, result.stderr].join('\n');
 
   if (runtime === 'node' && /^# (?:skipped|todo) [1-9]/mv.test(logs)) {
@@ -204,27 +174,47 @@ function isPassing({ runtime, result }: AssertionInput): boolean {
     return false;
   }
 
-  throw new CheckerError({
-    message: 'the selected native test produced no clear assertion result',
+  const message = formatFailure({
+    base: 'the selected native test produced no clear assertion result',
+    stderr: result.stderr,
   });
+
+  throw new CheckerError({ message });
 }
 
-async function runProbe(probe: Probe): Promise<unknown> {
-  const result = await execute(probe);
-
+function assertCompleted(result: Execution): void {
   if (result.status !== 0 && result.stderr.startsWith('bwrap: Unknown option --size')) {
     throw new CheckerError({
       message: 'install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit',
     });
   }
 
+  if (result.status !== 0) {
+    const code = String(result.status);
+
+    const message = formatFailure({
+      base: `the isolated test exited with status ${code}`,
+      stderr: result.stderr,
+    });
+
+    throw new CheckerError({ message });
+  }
+}
+
+async function runProbe(probe: Probe): Promise<unknown> {
+  const result = await execute(probe);
+
   if (probe.check.testFile !== undefined) {
+    if (result.status !== 0 && result.stderr.startsWith('bwrap: Unknown option --size')) {
+      throw new CheckerError({
+        message: 'install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit',
+      });
+    }
+
     return isPassing({ result, runtime: probe.check.runtime });
   }
 
-  if (result.status !== 0) {
-    throw new CheckerError({ message: 'the isolated test could not run to completion' });
-  }
+  assertCompleted(result);
 
   const observed: unknown = JSON.parse(result.stdout);
 
@@ -232,19 +222,17 @@ async function runProbe(probe: Probe): Promise<unknown> {
 }
 
 /** Stage the test and return an isolated observation that can be replayed against each control. */
-export async function createSandbox({
-  work,
-  check,
-}: SandboxInput): Promise<() => Promise<unknown>> {
+export async function createSandbox(input: SandboxInput): Promise<() => Promise<unknown>> {
+  const { check, work } = input;
+
   if (check.test !== undefined) {
     const entry = probeFile(check.runtime);
-
     const targetPath = join(work, entry);
 
     await writeFile(targetPath, check.test, { flag: 'wx' });
   }
 
-  const mounts = await buildSandboxMounts({ runtime: check.runtime, work });
+  const command = await buildCommand(input);
 
-  return async () => await runProbe({ check, mounts });
+  return async () => await runProbe({ check, command });
 }

@@ -8,10 +8,22 @@ use annotate_snippets::{AnnotationKind, Level, Renderer, Snippet};
 use tenet_contracts::Contract;
 use tenet_engine::Status;
 
-use crate::error::CommandError;
+use crate::{
+    error::CommandError,
+    output,
+    report_format::{format_display, format_painted},
+};
 
 /// The check results a contract's diagnostics list.
 const LISTED_STATUSES: [Status; 3] = [Status::Fail, Status::Error, Status::Incomplete];
+
+fn build_renderer() -> Renderer {
+    if output::is_stderr_styled() {
+        Renderer::styled()
+    } else {
+        Renderer::plain()
+    }
+}
 
 pub(crate) fn write_requirement(contract: &Contract, out: &mut impl Write) -> io::Result<()> {
     let path = contract.path.display().to_string();
@@ -22,7 +34,7 @@ pub(crate) fn write_requirement(contract: &Contract, out: &mut impl Write) -> io
                 .label("contract requirement"),
         ),
     );
-    writeln!(out, "{}", Renderer::plain().render(&[report]))?;
+    writeln!(out, "{}", build_renderer().render(&[report]))?;
     Ok(())
 }
 
@@ -77,9 +89,14 @@ pub(crate) fn write_error(
                     .path(&path)
                     .annotation(AnnotationKind::Primary.span(start..end)),
             );
-        writeln!(out, "{}", Renderer::plain().render(&[report]))?;
+        writeln!(out, "{}", build_renderer().render(&[report]))?;
     } else {
-        writeln!(out, "error: {}", tenet_engine::Causes(error))?;
+        writeln!(
+            out,
+            "{}: {}",
+            format_painted("error"),
+            tenet_engine::Causes(error)
+        )?;
     }
     Ok(())
 }
@@ -92,7 +109,15 @@ pub(crate) struct Failure {
 
 impl Failure {
     pub(crate) fn write(&self, contracts: &[Contract], out: &mut impl Write) -> io::Result<()> {
-        writeln!(out, "\n── Failed: {} ──\n", self.contract)?;
+        writeln!(
+            out,
+            "\n{} {} {}\n",
+            output::format_styled("\u{2500}\u{2500}").dim(),
+            output::format_styled(format!("Failed: {}", format_display(&self.contract)))
+                .red()
+                .bold(),
+            output::format_styled("\u{2500}\u{2500}").dim(),
+        )?;
         if let Some(contract) = contracts
             .iter()
             .find(|candidate| candidate.name == self.contract)

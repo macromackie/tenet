@@ -110,21 +110,6 @@ pub(super) async fn evaluate(
             deleted_contracts: plan.list_deleted_contracts(),
         }
     };
-    if check.no_model {
-        emit(Event::Begin {
-            run: begin(None, None),
-        })?;
-        let checked = tenet_engine::apply_review(&evidence, &review, &emit)?;
-        let request = CheckRequest {
-            context: &check.input.context,
-            contract_batch_size: usize::from(run.contract_batch_size),
-            min_confidence: None,
-            model: None,
-            selection: &selection,
-        };
-        let revision = review.commit(&evidence, &request, &checked)?;
-        return completion.finish(&emit, &checked, revision).await;
-    }
     let model = run.provider.select_model(run.model.as_deref())?;
     // The provider and model the revision names.
     let identity = format!("{}/{model}", run.provider);

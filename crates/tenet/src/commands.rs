@@ -1,10 +1,12 @@
 mod administration;
+mod doctor;
 mod documents;
 mod dry_run;
 mod evaluate;
 mod final_review;
 mod finish;
 mod fix;
+mod init;
 mod local;
 mod prepare;
 mod qualification;
@@ -29,6 +31,8 @@ use crate::{
 )]
 pub(crate) async fn execute(cli: &Cli) -> Result<ExitStatus, CommandError> {
     match &cli.command {
+        Command::Init(init_args) => init::run(&cli.root, init_args),
+        Command::Doctor { json } => doctor::run(&cli.root, &cli.resolve_state(), *json),
         Command::Validate { strict_adaptations } => validate(&cli.root, *strict_adaptations),
         Command::Skills { command } => execute_skills(&cli.root, command),
         Command::Contracts { command } => execute_contracts(&cli.root, command).await,

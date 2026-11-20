@@ -33,10 +33,10 @@ pub struct Revision {
     pub mode: Mode,
     pub base_oid: Option<String>,
     pub head_oid: Option<String>,
-    /// The provider and model that answered; absent for `check --no-model`.
+    /// The provider and model that answered; absent only for legacy revisions written without one.
     pub model: Option<String>,
     /// The confidence below which the model's answers were routed to unresolved; absent for
-    /// `check --no-model` and for revisions written before Tenet recorded it.
+    /// legacy revisions written before Tenet recorded it.
     pub min_confidence: Option<f64>,
     pub tenet: String,
     /// Every file this revision's assessments cover, each once. Format 1 listed them in each

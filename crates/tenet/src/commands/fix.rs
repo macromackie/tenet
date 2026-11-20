@@ -3,7 +3,8 @@ use std::{
     path::Path,
 };
 
-use tenet_engine::{Selection, fixes};
+use tenet_checks::fixes;
+use tenet_engine::Selection;
 
 use super::prepare::resolve_pr_base;
 use crate::{

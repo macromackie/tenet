@@ -14,7 +14,7 @@
   "scripts": {
     "bundle": "bash bundle.sh",
     "check:bundle": "bash bundle.sh --check",
-    "test": "node --test test/runtime.test.mts test/generation.test.mts test/pin-changes.test.mts test/record-cas.test.mts",
+    "test": "node --test test/runtime.test.mts test/generation.test.mts test/pin-changes.test.mts test/record-cas.test.mts test/sandbox-and-controls.test.mts test/sandbox-isolation-and-bundle.test.mts",
     "typecheck": "tsc -p tsconfig.json"
   }
 }

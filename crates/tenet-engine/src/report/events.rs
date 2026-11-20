@@ -13,7 +13,7 @@ use super::{CheckResult, ContractResult, ContractState, Stage, Summary};
 pub struct RunInfo {
     pub version: String,
     pub root: String,
-    /// Absent for `check --no-model`.
+    /// The configured provider; absent only for legacy revisions written without one.
     pub provider: Option<String>,
     pub model: Option<String>,
     pub mode: String,

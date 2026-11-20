@@ -1,13 +1,133 @@
+use alloc::collections::BTreeMap;
+
 use tenet_engine::{Coverage, Summary};
 
 use super::Reporter;
 use crate::{
     cli::ReporterKind,
     error::CommandError,
-    report_format::{self, format_contract_counts, format_counts},
+    report_format::{
+        format_contract_counts,
+        format_counts,
+        format_coverage,
+        format_dim,
+        format_duration,
+        format_painted,
+        quote_argument,
+    },
 };
 
+const fn describe_exit_code(exit_code: u8) -> &'static str {
+    match exit_code {
+        1 => " (exit 1: violation found)",
+        3 => " (exit 3: unresolved review)",
+        4 => " (exit 4: pending review)",
+        _ => "",
+    }
+}
+
+fn format_tally(counts: &BTreeMap<&'static str, usize>) -> String {
+    let total: usize = counts.values().sum();
+    let breakdown = counts
+        .iter()
+        .map(|(label, count)| format!("{count} {}", format_painted(label)))
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ");
+    format!("{breakdown} {}", format_dim(&format!("({total})")))
+}
+
 impl Reporter<'_> {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The summary renders coverage, tallies, timing, revision, and next-step hints in \
+                  one clear order."
+    )]
+    fn write_compact_summary(
+        &self,
+        summary: Summary,
+        revision: Option<u64>,
+        pending: &[String],
+        coverage: Option<&Coverage>,
+        exit_code: u8,
+    ) -> Result<(), CommandError> {
+        if !self.contract_statuses.is_empty() || !self.behavior_statuses.is_empty() {
+            self.term.write_line("")?;
+        }
+        if let Some(message) = coverage.and_then(format_coverage) {
+            self.term
+                .write_line(&format!("  {}", format_dim(&message)))?;
+        }
+        for path in &self.deleted {
+            self.term
+                .write_line(&format!("  Removed contract  {}", path.display()))?;
+        }
+        if summary.cancelled {
+            self.term
+                .write_line("  Cancelled. Remaining checks did not finish.")?;
+        }
+        match self.contract_statuses.is_empty() {
+            false => {
+                self.term.write_line(&format!(
+                    "  {}  {}",
+                    format_dim("Contracts"),
+                    format_tally(&self.contract_statuses)
+                ))?;
+            },
+            true if self.contracts.is_empty()
+                && coverage.is_none_or(|diff| diff.changed_files == 0) =>
+            {
+                self.term.write_line("No contracts to check.")?;
+            },
+            true => {},
+        }
+        if !self.behavior_statuses.is_empty() {
+            self.term.write_line(&format!(
+                "  {}  {}",
+                format_dim("   Checks"),
+                format_tally(&self.behavior_statuses)
+            ))?;
+        }
+        if !self.contract_statuses.is_empty() || !self.behavior_statuses.is_empty() {
+            self.term.write_line(&format!(
+                "  {}  {}",
+                format_dim(" Duration"),
+                format_duration(summary.elapsed_ms)
+            ))?;
+        }
+        if let Some(number) = revision {
+            let events = self.state.join("events.jsonl");
+            self.term.write_line(&format!(
+                "  {}  {}",
+                format_dim("   Review"),
+                format_dim(&format!("r{number} in {}", events.display()))
+            ))?;
+        }
+        let exit_note = format_dim(describe_exit_code(exit_code));
+        match (pending.first(), revision.is_some(), exit_note.is_empty()) {
+            (Some(name), true, _) => {
+                self.term.write_line(&format!(
+                    "  {}  tenet show {}{exit_note}",
+                    format_dim("     Next"),
+                    quote_argument(name),
+                ))?;
+            },
+            (Some(_), false, _) => {
+                self.term.write_line(&format!(
+                    "  {}  Run outside the snapshot to record a review.{exit_note}",
+                    format_dim("     Next"),
+                ))?;
+            },
+            (None, _, false) => {
+                self.term.write_line(&format!(
+                    "  {}  {exit_code}{exit_note}",
+                    format_dim("     Exit"),
+                ))?;
+            },
+            (None, _, true) => {},
+        }
+        Ok(())
+    }
+
     #[expect(
         clippy::as_conversions,
         clippy::cast_precision_loss,
@@ -33,11 +153,12 @@ impl Reporter<'_> {
         revision: Option<u64>,
         pending: &[String],
         coverage: Option<&Coverage>,
+        exit_code: u8,
     ) -> Result<(), CommandError> {
         self.running = false;
 
         if self.kind == ReporterKind::Default {
-            return self.write_compact_summary(summary, revision, pending, coverage);
+            return self.write_compact_summary(summary, revision, pending, coverage, exit_code);
         }
         for failure in &self.failures {
             failure.write(self.contracts, &mut self.term)?;
@@ -51,7 +172,7 @@ impl Reporter<'_> {
             "\n Contracts  {}{recorded}",
             format_contract_counts(&self.contract_statuses, self.contracts.len())
         ))?;
-        match coverage.and_then(report_format::format_coverage) {
+        match coverage.and_then(format_coverage) {
             Some(coverage_text) => self.term.write_line(&format!(" {coverage_text}"))?,
             None if self.diff && self.contracts.is_empty() => {
                 self.term

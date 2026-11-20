@@ -20,10 +20,60 @@
       "name": "tenet-engine",
       "manifest": "crates/tenet-engine/Cargo.toml",
       "manager": "cargo",
-      "ownership": "Contract execution, evidence, and review state.",
+      "ownership": "Scope discovery, evidence capture, model evaluation, and review state.",
       "dependencies": [
         {
           "manifest": "crates/tenet-contracts/Cargo.toml",
+          "testOnly": false
+        }
+      ],
+      "testSources": [
+        "test/**",
+        "tests/**",
+        "**/*.test.*",
+        "**/*.spec.*"
+      ],
+      "testSupport": false,
+      "tsconfig": "",
+      "builtins": []
+    },
+    {
+      "name": "tenet-adoption",
+      "manifest": "crates/tenet-adoption/Cargo.toml",
+      "manager": "cargo",
+      "ownership": "Catalog recommendation, shared contract and skill installation, and adoption lock management.",
+      "dependencies": [
+        {
+          "manifest": "crates/tenet-contracts/Cargo.toml",
+          "testOnly": false
+        },
+        {
+          "manifest": "crates/tenet-engine/Cargo.toml",
+          "testOnly": false
+        }
+      ],
+      "testSources": [
+        "test/**",
+        "tests/**",
+        "**/*.test.*",
+        "**/*.spec.*"
+      ],
+      "testSupport": false,
+      "tsconfig": "",
+      "builtins": []
+    },
+    {
+      "name": "tenet-checks",
+      "manifest": "crates/tenet-checks/Cargo.toml",
+      "manager": "cargo",
+      "ownership": "Executable behavior checks, local project checkers, qualification, receipts, and native fixes.",
+      "dependencies": [
+        {
+          "manifest": "crates/tenet-contracts/Cargo.toml",
+          "testOnly": false
+        },
+        {
+          "manifest": "crates/tenet-engine/Cargo.toml",
           "testOnly": false
         }
       ],
@@ -43,6 +93,14 @@
       "manager": "cargo",
       "ownership": "Command-line composition, reporting, and process exit.",
       "dependencies": [
+        {
+          "manifest": "crates/tenet-adoption/Cargo.toml",
+          "testOnly": false
+        },
+        {
+          "manifest": "crates/tenet-checks/Cargo.toml",
+          "testOnly": false
+        },
         {
           "manifest": "crates/tenet-contracts/Cargo.toml",
           "testOnly": false

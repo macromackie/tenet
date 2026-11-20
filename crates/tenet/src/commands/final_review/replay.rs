@@ -54,21 +54,17 @@ pub(super) fn build_command(
 }
 
 fn add_model_args(args: &mut Vec<String>, check: &Check) {
-    if check.no_model {
-        args.push("--no-model".into());
-    } else {
-        args.extend([
-            "--provider".into(),
-            check.run.provider.to_string(),
-            "--max-requests".into(),
-            check.run.max_requests.to_string(),
-            "--min-confidence".into(),
-            check.run.min_confidence.to_string(),
-            "--contract-batch-size".into(),
-            check.run.contract_batch_size.to_string(),
-        ]);
-        if let Some(model) = &check.run.model {
-            args.extend(["--model".into(), model.clone()]);
-        }
+    args.extend([
+        "--provider".into(),
+        check.run.provider.to_string(),
+        "--max-requests".into(),
+        check.run.max_requests.to_string(),
+        "--min-confidence".into(),
+        check.run.min_confidence.to_string(),
+        "--contract-batch-size".into(),
+        check.run.contract_batch_size.to_string(),
+    ]);
+    if let Some(model) = &check.run.model {
+        args.extend(["--model".into(), model.clone()]);
     }
 }

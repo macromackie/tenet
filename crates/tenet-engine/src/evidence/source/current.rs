@@ -50,7 +50,10 @@ impl MetadataIdentity {
     }
 }
 
-pub(crate) fn is_stable_metadata(before: &Metadata, after: &Metadata) -> bool {
+/// Return whether two filesystem metadata snapshots reflect an unmodified file.
+#[inline]
+#[must_use]
+pub fn is_stable_metadata(before: &Metadata, after: &Metadata) -> bool {
     let (Ok(before_identity), Ok(after_identity)) = (
         MetadataIdentity::read(before),
         MetadataIdentity::read(after),

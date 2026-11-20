@@ -141,7 +141,8 @@ pub struct CheckRequest<'plan> {
     pub contract_batch_size: usize,
     /// The confidence below which answers were routed to unresolved; absent without a model.
     pub min_confidence: Option<f64>,
-    /// The provider and model that answered; absent for `check --no-model`.
+    /// The provider and model that answered; absent only for legacy revisions captured without a
+    /// model.
     pub model: Option<&'plan str>,
     pub selection: &'plan Selection,
 }

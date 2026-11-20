@@ -8,6 +8,7 @@ pub use contracts::discover_contracts;
 use contracts::read_contracts;
 pub use error::DiscoveryError;
 pub use model::{Coverage, ExcludedPath, Exclusion, Plan, Selection};
-pub(crate) use paths::{is_allowed, is_contract, list_paths};
+pub(crate) use paths::is_contract;
+pub use paths::{is_allowed, list_paths};
 pub(crate) use selection::is_governing;
 pub use selection::plan;

@@ -1,22 +1,14 @@
 //! Scoped file selection and ordered, bounded contract evaluation.
 
-#![expect(
-    clippy::multiple_crate_versions,
-    reason = "SHA-256 and BLAKE3 pin different cpufeatures versions listed in deny.toml."
-)]
-
 extern crate alloc;
 
-pub mod adoption;
 mod change;
 mod check;
 mod discovery;
 mod evidence;
 mod failure;
-pub mod fixes;
 mod git;
 mod lock;
-pub mod mechanical;
 mod plan;
 mod report;
 pub mod review;
@@ -54,6 +46,8 @@ pub use discovery::{
     Plan,
     Selection,
     discover_contracts,
+    is_allowed,
+    list_paths,
     plan,
 };
 pub use ev_grep_core::{
@@ -75,9 +69,19 @@ pub use evidence::{
     HunkInput,
     InputError,
     classify_input_status,
+    is_stable_metadata,
 };
 pub use failure::{ClassifyRequest, FailureKind, RequestFailure};
-pub use git::{GitError, pull_request_base};
+pub use git::{
+    GitError,
+    Ignored,
+    configure_checkout,
+    find_ignored,
+    pull_request_base,
+    run_checkout_git,
+    run_git,
+};
+pub use lock::{LockFileError, read_lock};
 pub use plan::{ContextError, SpanError, SpanRequest};
 pub use report::{
     Answer,

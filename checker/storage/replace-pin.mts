@@ -4,13 +4,15 @@ import { Option } from 'effect';
 import { CheckerError } from '../checker-error.mts';
 import { readRecord, type RecordData } from './read-record.mts';
 import { resolveInside } from './resolve-inside.mts';
+import { resolveRoot } from './resolve-root.mts';
 import { writeAtomic, type WriteInput } from './write-atomic.mts';
 
 type ReplaceInput = WriteInput & Readonly<{ prior: Option.Option<RecordData> }>;
 const PRIVATE_FILE = 0o600;
 
 async function resolvePinLock(input: ReplaceInput): Promise<string> {
-  const lock = resolveInside({ ...input, path: `${input.path}.lock` });
+  const root = await resolveRoot(input.root);
+  const lock = resolveInside({ path: `${input.path}.lock`, root });
   const parent = dirname(lock);
 
   if ((await realpath(parent)) !== parent) {

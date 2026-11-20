@@ -9,13 +9,14 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use tenet_contracts::Contract;
-use tenet_engine::{Mode, Plan, fixes, review::Checked};
-
-use crate::{
-    agent_checks::{Finding, Outcome},
-    error::CommandError,
+use tenet_checks::{
+    behavior::{Finding, Outcome},
+    fixes,
 };
+use tenet_contracts::Contract;
+use tenet_engine::{Mode, Plan, review::Checked};
+
+use crate::error::CommandError;
 
 const DIRECTORY: &str = "native-checks";
 
@@ -126,6 +127,7 @@ fn build_finding(contract: String, tool: &str, outcome: Outcome, message: String
         check: format!("native-{tool}"),
         contract,
         cost_usd: None,
+        generation_requests: None,
         message,
         outcome,
         requested: false,

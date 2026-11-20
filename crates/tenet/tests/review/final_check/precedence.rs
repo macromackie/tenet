@@ -51,17 +51,13 @@ fi"#,
     approve_values(root)?;
     let local = run_tenet(root, &["check", "--local", "values/zero", "--json"])?;
     ensure!(local.status.code() == Some(1_i32));
-    for result in [
-        provider.run_tenet(root, &["check"])?,
-        run_tenet(root, &["check", "--no-model"])?,
-    ] {
-        assert_eq!(
-            result.status.code(),
-            Some(1_i32),
-            "{:?}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-    }
+    let result = provider.run_tenet(root, &["check"])?;
+    assert_eq!(
+        result.status.code(),
+        Some(1_i32),
+        "{:?}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     for (args, code, pointer) in [
         (vec!["status", "--json"], 1_i32, "/behavior_checks/0"),
         (

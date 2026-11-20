@@ -6,19 +6,6 @@ use ev_grep_jev::Provider;
 use tenet_engine::SpanRequest;
 
 #[derive(Args)]
-pub(crate) struct Fix {
-    /// Limit fixes to files changed since this commit.
-    #[arg(long)]
-    pub base: Option<String>,
-    /// Apply fixes for one adopted contract.
-    #[arg(long)]
-    pub contract: Option<String>,
-    #[arg(long)]
-    pub json: bool,
-    pub paths: Vec<PathBuf>,
-}
-
-#[derive(Args)]
 #[expect(
     clippy::arbitrary_source_item_ordering,
     reason = "The declared order is the help and argument order, and ExitStatus follows its exit \
@@ -43,7 +30,7 @@ pub(crate) struct Check {
         default_missing_value = "",
         value_name = "CONTRACT/NAME",
           conflicts_with_all = ["paths", "base", "snapshot", "patch", "contract", "context",
-                                "dry_run", "no_model", "context_profile", "max_requests", "jobs",
+                                "dry_run", "context_profile", "max_requests", "jobs",
                                 "contract_batch_size", "min_confidence", "reporter"])]
     pub local: Option<String>,
     /// Exercise a project checker against declared good, defective and refactored controls.
@@ -54,7 +41,7 @@ pub(crate) struct Check {
         value_name = "CONTRACT/NAME",
         conflicts_with = "final_check",
           conflicts_with_all = ["local", "paths", "base", "snapshot", "patch", "contract",
-                                "context", "dry_run", "no_model", "fresh", "context_profile",
+                                "context", "dry_run", "fresh", "context_profile",
                                 "max_requests", "jobs", "contract_batch_size", "min_confidence",
                                 "reporter"])]
     pub qualify: Option<String>,
@@ -71,17 +58,8 @@ pub(crate) struct Check {
     )]
     pub evidence: Option<PathBuf>,
     /// Show candidate pairs and predict requests without calling a model or updating the review.
-    #[arg(
-        hide_short_help = true,
-        help_heading = "Planning and replay",
-        long,
-        conflicts_with = "no_model"
-    )]
+    #[arg(hide_short_help = true, help_heading = "Planning and replay", long)]
     pub dry_run: bool,
-    /// Capture the change and reuse earlier conclusions for unchanged inputs; leave the rest
-    /// pending.
-    #[arg(long, conflicts_with = "fresh")]
-    pub no_model: bool,
     /// Rerun the selected checks even when their saved results can be reused.
     #[arg(hide_short_help = true, help_heading = "Planning and replay", long)]
     pub fresh: bool,
@@ -96,10 +74,11 @@ pub(crate) struct Check {
               codes."
 )]
 pub(crate) struct Record {
+    /// Name of the contract to settle.
     pub contract: String,
     /// The selected paths of the check to settle, when the contract stands in several.
     pub paths: Vec<PathBuf>,
-    /// One of the conclusions a check of this contract's mode and scope can reach.
+    /// Conclusion to record: verified, preserved, unaffected, clear, failed, or unresolved.
     #[arg(long)]
     pub conclusion: String,
     /// Code that supports the conclusion, as PATH, PATH:LINE, or PATH:START-END; repeat as needed.
@@ -130,6 +109,7 @@ pub(crate) struct Export {
               codes."
 )]
 pub(crate) struct Input {
+    /// Files or directories to check; checks all governed files when omitted.
     pub paths: Vec<PathBuf>,
     /// Bound assessment inputs for the standard or opt-in long context window.
     #[arg(
@@ -160,6 +140,7 @@ pub(crate) struct Input {
         conflicts_with = "base"
     )]
     pub snapshot: Option<PathBuf>,
+    /// Unified diff file to apply inside the snapshot directory.
     #[arg(
         hide_short_help = true,
         help_heading = "Planning and replay",
@@ -167,6 +148,7 @@ pub(crate) struct Input {
         requires = "snapshot"
     )]
     pub patch: Option<PathBuf>,
+    /// Limit the check to one contract by name.
     #[arg(long)]
     pub contract: Option<String>,
 }
@@ -178,6 +160,7 @@ pub(crate) struct Input {
               codes."
 )]
 pub(crate) struct Run {
+    /// Model provider backend (openrouter or typesafe).
     #[arg(
         hide_short_help = true,
         help_heading = "Model settings",
@@ -186,6 +169,7 @@ pub(crate) struct Run {
         default_value = "openrouter"
     )]
     pub provider: Provider,
+    /// Model identifier used for semantic contract assessment.
     #[arg(
         hide_short_help = true,
         help_heading = "Model settings",
@@ -203,6 +187,7 @@ pub(crate) struct Run {
         env = "TENET_ENDPOINT"
     )]
     pub endpoint: Option<String>,
+    /// Maximum number of concurrent model requests.
     #[arg(
         hide_short_help = true,
         help_heading = "Model settings",
@@ -230,6 +215,7 @@ pub(crate) struct Run {
         value_parser = parse_min_confidence
     )]
     pub min_confidence: f64,
+    /// Output format for check results (default, verbose, or jsonl).
     #[arg(
         hide_short_help = true,
         help_heading = "Output",

@@ -4583,7 +4583,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   let expiresAt = 0;
   let exit3;
   let current;
-  const join7 = (fiber3, run3) => {
+  const join10 = (fiber3, run3) => {
     run3.awaiters++;
     onExitUnsafe(fiber3, () => {
       if (--run3.awaiters > 0 || current !== run3) return;
@@ -4594,7 +4594,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   };
   return [withFiber((fiber3) => {
     if (current !== void 0) {
-      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join7(fiber3, current);
+      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join10(fiber3, current);
     }
     if (exit3 !== void 0 && (expiresAt === Infinity || fiber3.getRef(ClockRef).currentTimeMillisUnsafe() < expiresAt)) {
       return exit3;
@@ -4606,7 +4606,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
       awaiters: 0
     };
     current = run3;
-    const joined = join7(fiber3, run3);
+    const joined = join10(fiber3, run3);
     run3.fiber.evaluate(onExitPrimitive(self, (exit_) => {
       if (current !== run3) return;
       current = void 0;
@@ -5077,8 +5077,8 @@ var runPromiseExitWith = (context3) => {
   const runFork3 = runForkWith(context3);
   return (effect, options) => {
     const fiber3 = runFork3(effect, options);
-    return new Promise((resolve7) => {
-      fiber3.addObserver((exit3) => resolve7(exit3));
+    return new Promise((resolve6) => {
+      fiber3.addObserver((exit3) => resolve6(exit3));
     });
   };
 };
@@ -12973,10 +12973,10 @@ var InterpretedEntry = class {
 var CompilerEntry = class extends InterpretedEntry {
   compiled;
   resolve;
-  constructor(ast, compiled, resolve7) {
+  constructor(ast, compiled, resolve6) {
     super(ast);
     this.compiled = compiled;
-    this.resolve = resolve7;
+    this.resolve = resolve6;
   }
   save(key, value3) {
     Object.defineProperty(this, key, {
@@ -13025,8 +13025,8 @@ function withDecode(fastDecode, decodeEffect3) {
     return (detailed ??= decodeEffect3())(input, options);
   };
 }
-function lazyParser(resolve7, ast, operation) {
-  const entry = resolve7(ast);
+function lazyParser(resolve6, ast, operation) {
+  const entry = resolve6(ast);
   if (entry.compiled === void 0 || Object.hasOwn(entry, operation)) {
     return entry[operation];
   }
@@ -14975,9 +14975,9 @@ function toStandardSchemaV1(self, options) {
     if (exit3) {
       return makeStandardResult(exit3);
     }
-    return new Promise((resolve7) => {
+    return new Promise((resolve6) => {
       fiber3.addObserver((exit4) => {
-        resolve7(makeStandardResult(exit4));
+        resolve6(makeStandardResult(exit4));
       });
     });
   };
@@ -16593,10 +16593,10 @@ var labelPattern = /^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$/;
 var numericLabel = /^(?:\d+|0x[0-9a-f]*)$/;
 var validateDomainName = (name) => {
   if (name === ".") return void 0;
-  const relative2 = name.endsWith(".") ? name.slice(0, -1) : name;
-  if (relative2.length === 0) return "domain name must not be empty";
-  if (relative2.length > 253) return "domain name must be at most 253 characters";
-  const labels = relative2.split(".");
+  const relative3 = name.endsWith(".") ? name.slice(0, -1) : name;
+  if (relative3.length === 0) return "domain name must not be empty";
+  if (relative3.length > 253) return "domain name must be at most 253 characters";
+  const labels = relative3.split(".");
   for (const label of labels) {
     if (label.length === 0) return "domain name labels must not be empty";
     if (label.length > 63) return "domain name labels must be at most 63 characters";
@@ -20804,16 +20804,16 @@ function resolveAnnotationsKey(schema) {
 var CheckerError = class extends Data_exports.TaggedError("CheckerError") {
 };
 
-// review/review.mts
-import { realpath as realpath6 } from "node:fs/promises";
-import { resolve as resolve6 } from "node:path";
+// sandbox/preflight.mts
+import { access } from "node:fs/promises";
 
-// sandbox/runner-version.mts
-import { stat } from "node:fs/promises";
-
-// sandbox/rust-tool.mts
-import { tmpdir } from "node:os";
-import { env as hostEnvironment } from "node:process";
+// try-operation.mts
+function tryOperation(input) {
+  function fail7(cause) {
+    return new CheckerError({ cause, message: input.message });
+  }
+  return Effect_exports.tryPromise({ catch: fail7, try: input.run });
+}
 
 // sandbox/host-tool.mts
 import { execFile } from "node:child_process";
@@ -20856,11 +20856,150 @@ async function runFile({ file, args: args2, options }) {
   return await Effect_exports.runPromise(result3);
 }
 
+// sandbox/preflight.mts
+var BWRAP = "/usr/bin/bwrap";
+var PRLIMIT = "/usr/bin/prlimit";
+var SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+var PREFLIGHT_TIMEOUT_MS = 5e3;
+var OUTPUT_BYTES = 16384;
+var SYSTEM_PATH = "/usr/bin:/bin";
+var MACOS_PREFLIGHT_PROFILE = "(version 1)(deny default)(allow process-exec)(allow file-read*)(allow file-map-executable)(allow sysctl-read)(deny network*)";
+var LINUX_PREFLIGHT_ARGS = [
+  ["--unshare-all", "--new-session", "--die-with-parent", "--clearenv"],
+  ["--cap-drop", "ALL", "--ro-bind", "/", "/"],
+  ["--proc", "/proc", "--dev", "/dev"],
+  ["--size", "67108864", "--tmpfs", "/tmp"],
+  ["--", PRLIMIT, "--cpu=2", "--", "/usr/bin/true"]
+].flat();
+async function checkLinuxTools() {
+  await access(BWRAP);
+  await access(PRLIMIT);
+}
+async function ensureLinuxTools() {
+  const check2 = tryOperation({
+    message: "an isolated Linux runner with bubblewrap and prlimit is required",
+    run: checkLinuxTools
+  });
+  await Effect_exports.runPromise(check2);
+}
+async function verifyLinuxSandbox() {
+  await ensureLinuxTools();
+  const result3 = await runFile({
+    args: LINUX_PREFLIGHT_ARGS,
+    file: BWRAP,
+    options: {
+      encoding: "utf-8",
+      env: { PATH: SYSTEM_PATH },
+      killSignal: "SIGKILL",
+      maxBuffer: OUTPUT_BYTES,
+      timeout: PREFLIGHT_TIMEOUT_MS
+    }
+  });
+  if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
+    throw new CheckerError({
+      message: "install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit"
+    });
+  }
+  if (result3.status !== 0) {
+    throw new CheckerError({
+      message: "the Linux bubblewrap sandbox is unavailable in this environment"
+    });
+  }
+}
+async function checkMacosTool() {
+  await access(SANDBOX_EXEC);
+}
+async function ensureMacosTool() {
+  const check2 = tryOperation({
+    message: "macOS sandbox-exec is unavailable in this environment",
+    run: checkMacosTool
+  });
+  await Effect_exports.runPromise(check2);
+}
+async function verifyMacosSandbox() {
+  await ensureMacosTool();
+  const result3 = await runFile({
+    args: ["-p", MACOS_PREFLIGHT_PROFILE, "/usr/bin/true"],
+    file: SANDBOX_EXEC,
+    options: {
+      encoding: "utf-8",
+      env: { PATH: SYSTEM_PATH },
+      killSignal: "SIGKILL",
+      maxBuffer: OUTPUT_BYTES,
+      timeout: PREFLIGHT_TIMEOUT_MS
+    }
+  });
+  if (result3.status !== 0) {
+    throw new CheckerError({
+      message: "the macOS sandbox-exec runner is unavailable in this environment"
+    });
+  }
+}
+async function assertSandboxAvailable() {
+  if (process.platform === "linux") {
+    await verifyLinuxSandbox();
+    return;
+  }
+  if (process.platform === "darwin") {
+    await verifyMacosSandbox();
+    return;
+  }
+  throw new CheckerError({
+    message: "an isolated Linux or macOS runner is required for behavior checks"
+  });
+}
+
+// sandbox/runner.mts
+import { mkdir, mkdtemp, rm, writeFile as writeFile2 } from "node:fs/promises";
+import { tmpdir as tmpdir3 } from "node:os";
+import { dirname as dirname4, join as join3, resolve as resolve3, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+
+// sandbox/runner-sandbox.mts
+import { writeFile } from "node:fs/promises";
+import { join as join2 } from "node:path";
+
+// sandbox/linux-sandbox.mts
+import { access as access2, realpath } from "node:fs/promises";
+import { basename, dirname as dirname2 } from "node:path";
+
+// sandbox/python-paths.mts
+import { dirname, posix } from "node:path";
+var ROOT_SEGMENTS = /* @__PURE__ */ new Set([".", "/"]);
+function readSourceFolder(path) {
+  if (path.endsWith("/__init__.py")) {
+    const pkg = dirname(path);
+    const parent = dirname(pkg);
+    if (!ROOT_SEGMENTS.has(parent)) {
+      return Option_exports.some(parent);
+    }
+    return Option_exports.none();
+  }
+  if (path.startsWith("src/") && path.endsWith(".py")) {
+    return Option_exports.some("src");
+  }
+  return Option_exports.none();
+}
+function readPythonPaths({ files, root }) {
+  const extraFolders = /* @__PURE__ */ new Set();
+  for (const path of files.keys()) {
+    const folder = readSourceFolder(path);
+    if (Option_exports.isSome(folder)) {
+      extraFolders.add(folder.value);
+    }
+  }
+  const sorted = [...extraFolders].toSorted();
+  const resolved = sorted.map((folder) => posix.join(root, folder));
+  return [root, ...resolved].join(":");
+}
+
 // sandbox/rust-tool.mts
+import { tmpdir } from "node:os";
+import { env as hostEnvironment } from "node:process";
 var TOOL_TIMEOUT_MS = 5e3;
-var OUTPUT_BYTES = 65536;
+var OUTPUT_BYTES2 = 65536;
 async function readRustTool(arg) {
-  const env4 = {
+  const env6 = {
     CARGO_HOME: hostEnvironment.CARGO_HOME,
     HOME: hostEnvironment.HOME,
     PATH: hostEnvironment.PATH,
@@ -20874,9 +21013,9 @@ async function readRustTool(arg) {
     options: {
       cwd: cwd2,
       encoding: "utf-8",
-      env: env4,
+      env: env6,
       killSignal: "SIGKILL",
-      maxBuffer: OUTPUT_BYTES,
+      maxBuffer: OUTPUT_BYTES2,
       timeout: TOOL_TIMEOUT_MS
     }
   });
@@ -20886,64 +21025,24 @@ async function readRustTool(arg) {
   return result3.stdout.trim();
 }
 
-// sandbox/runner-version.mts
-var BWRAP = "/usr/bin/bwrap";
-var PYTHON = "/usr/bin/python3";
-var PRLIMIT = "/usr/bin/prlimit";
-var RUNNER_REVISION = 3;
-function readBinaryIdentity(path) {
-  const read = Effect_exports.tryPromise(async () => await stat(path));
-  function buildMissingIdentity() {
-    return [path, null];
-  }
-  function buildToolIdentity(info) {
-    return [path, info.size, info.mtimeMs];
-  }
-  return Effect_exports.match(read, { onFailure: buildMissingIdentity, onSuccess: buildToolIdentity });
-}
-async function readRunnerVersion() {
-  const identities = Effect_exports.forEach(
-    [BWRAP, PYTHON, PRLIMIT, "/usr/bin/gcc", process.execPath],
-    (path) => readBinaryIdentity(path),
-    { concurrency: 4 }
-  );
-  const binaries = await Effect_exports.runPromise(identities);
-  const tool = Effect_exports.tryPromise(async () => await readRustTool("-Vv"));
-  const version = Effect_exports.option(tool);
-  const installed = await Effect_exports.runPromise(version);
-  const rust = Option_exports.getOrNull(installed);
-  return JSON.stringify([RUNNER_REVISION, process.version, process.platform, binaries, rust]);
-}
-
-// sandbox/runner.mts
-import { mkdir, mkdtemp, rm, writeFile as writeFile2 } from "node:fs/promises";
-import { tmpdir as tmpdir2 } from "node:os";
-import { dirname as dirname2, join as join2, resolve as resolve3, sep } from "node:path";
-import { isDeepStrictEqual } from "node:util";
-
-// sandbox/runner-sandbox.mts
-import { access, realpath, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+// sandbox/linux-sandbox.mts
 var BWRAP2 = "/usr/bin/bwrap";
-var PYTHON2 = "/usr/bin/python3";
+var PYTHON = "/usr/bin/python3";
 var PRLIMIT2 = "/usr/bin/prlimit";
-var SYSTEM_PATH = "/usr/bin:/bin";
-var PROBE_TIMEOUT_MS = 11e3;
-var OUTPUT_BYTES2 = 65536;
+var SYSTEM_PATH2 = "/usr/bin:/bin";
 var NODE = "/runtime/node";
-var PROBE_FILES = {
-  node: ".tenet-observe.mjs",
-  python: ".tenet-observe.py",
-  rust: ".tenet-observe.rs"
-};
-var NODE_FLAGS = ["--disable-wasm-trap-handler", "--max-old-space-size=96"];
+var NODE_FLAGS = [
+  "--disable-wasm-trap-handler",
+  "--max-old-space-size=96",
+  "--v8-pool-size=2"
+];
 var LIMITS = [
   PRLIMIT2,
   "--cpu=8",
-  "--as=1600000000",
-  "--nproc=64",
+  "--as=4294967296",
+  "--nproc=512",
   "--fsize=33554432",
-  "--nofile=128",
+  "--nofile=256",
   "--core=0",
   "--"
 ];
@@ -20967,9 +21066,16 @@ var ISOLATION = [
   ["--size", "67108864", "--tmpfs", "/tmp"],
   ["--dir", "/runtime"]
 ].flat();
-function probeFile(runtime) {
-  return PROBE_FILES[runtime];
-}
+var BASE_ENV_FLAGS = [
+  ["--setenv", "PATH", SYSTEM_PATH2],
+  ["--setenv", "HOME", "/tmp"],
+  ["--setenv", "TMPDIR", "/tmp"],
+  ["--setenv", "UV_THREADPOOL_SIZE", "2"],
+  ["--setenv", "OMP_NUM_THREADS", "1"],
+  ["--setenv", "OPENBLAS_NUM_THREADS", "1"],
+  ["--setenv", "RAYON_NUM_THREADS", "2"],
+  ["--setenv", "PYTHONDONTWRITEBYTECODE", "1"]
+].flat();
 async function buildRuntimeMount(runtime) {
   switch (runtime) {
     case "node": {
@@ -20992,77 +21098,325 @@ async function buildRuntimeMount(runtime) {
     }
   }
 }
-async function buildSandboxMounts({ work, runtime }) {
-  if (process.platform !== "linux") {
-    throw new CheckerError({
-      message: "an isolated Linux runner with bubblewrap and prlimit is required"
-    });
+function buildPythonProgram({ check: check2, probeFile: probeFile2 }) {
+  if (check2.testFile === void 0) {
+    return [PYTHON, "-B", `./${probeFile2}`];
   }
-  await access(BWRAP2);
-  await access(PRLIMIT2);
-  const mounts = await buildRuntimeMount(runtime);
   return [
-    ...ISOLATION,
-    ...mounts,
-    "--ro-bind",
-    work,
-    "/project",
-    "--chdir",
-    "/project",
-    "--setenv",
-    "PATH",
-    SYSTEM_PATH,
-    "--setenv",
-    "HOME",
-    "/tmp",
-    "--setenv",
-    "TMPDIR",
-    "/tmp"
+    PYTHON,
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    `./${dirname2(check2.testFile)}`,
+    "-p",
+    basename(check2.testFile)
   ];
 }
-function buildProgram(check2) {
+function buildNodeProgram({ check: check2, probeFile: probeFile2 }) {
+  if (check2.testFile === void 0) {
+    return [NODE, ...NODE_FLAGS, `./${probeFile2}`];
+  }
+  return [NODE, ...NODE_FLAGS, "--test", "--test-reporter=tap", "--", `./${check2.testFile}`];
+}
+function buildProgram({ check: check2, probeFile: probeFile2 }) {
   switch (check2.runtime) {
     case "node": {
-      if (check2.testFile !== void 0) {
-        return [NODE, ...NODE_FLAGS, "--test", "--test-reporter=tap", "--", `./${check2.testFile}`];
-      }
-      return [NODE, ...NODE_FLAGS, `./${probeFile(check2.runtime)}`];
+      return buildNodeProgram({ check: check2, probeFile: probeFile2 });
     }
     case "python": {
-      if (check2.testFile !== void 0) {
-        return [
-          PYTHON2,
-          "-B",
-          "-m",
-          "unittest",
-          "discover",
-          "-s",
-          `./${dirname(check2.testFile)}`,
-          "-p",
-          basename(check2.testFile)
-        ];
-      }
-      return [PYTHON2, "-B", `./${probeFile(check2.runtime)}`];
+      return buildPythonProgram({ check: check2, probeFile: probeFile2 });
     }
     case "rust": {
       return RUST_COMMAND;
     }
   }
 }
-async function execute(probe) {
-  const command = buildProgram(probe.check);
-  return await runFile({
-    args: [...probe.mounts, "--", ...LIMITS, ...command],
-    file: BWRAP2,
+function buildEnvFlags({ files, runtime }) {
+  if (runtime !== "python") {
+    return BASE_ENV_FLAGS;
+  }
+  const pythonPath = readPythonPaths({ files, root: "/project" });
+  return [...BASE_ENV_FLAGS, "--setenv", "PYTHONPATH", pythonPath];
+}
+async function createLinuxSandbox({
+  check: check2,
+  files,
+  probeFile: probeFile2,
+  work
+}) {
+  await access2(BWRAP2);
+  await access2(PRLIMIT2);
+  const mounts = await buildRuntimeMount(check2.runtime);
+  const envFlags = buildEnvFlags({ files, runtime: check2.runtime });
+  const program = buildProgram({ check: check2, probeFile: probeFile2 });
+  return {
+    args: [
+      ...ISOLATION,
+      ...mounts,
+      "--ro-bind",
+      work,
+      "/project",
+      "--chdir",
+      "/project",
+      ...envFlags,
+      "--",
+      ...LIMITS,
+      ...program
+    ],
+    env: { PATH: SYSTEM_PATH2 },
+    file: BWRAP2
+  };
+}
+
+// sandbox/macos-sandbox.mts
+import { access as access4, realpath as realpath3 } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename as basename2, dirname as dirname3, join } from "node:path";
+
+// sandbox/python-tool.mts
+import { access as access3, realpath as realpath2 } from "node:fs/promises";
+import { tmpdir as tmpdir2 } from "node:os";
+import { env as hostEnvironment2 } from "node:process";
+
+// classify-result.mts
+async function classifyResult(input) {
+  const work = tryOperation(input);
+  const classified = Effect_exports.result(work);
+  return await Effect_exports.runPromise(classified);
+}
+
+// sandbox/python-tool.mts
+var SYSTEM_PYTHON = "/usr/bin/python3";
+var TOOL_TIMEOUT_MS2 = 5e3;
+var OUTPUT_BYTES3 = 8192;
+async function probeHostPython() {
+  const env6 = {
+    HOME: hostEnvironment2.HOME,
+    PATH: hostEnvironment2.PATH
+  };
+  const cwd2 = tmpdir2();
+  const result3 = await runFile({
+    args: ["-c", "import os, sys; print(os.path.realpath(sys.executable))"],
+    file: "python3",
     options: {
+      cwd: cwd2,
       encoding: "utf-8",
-      env: { PATH: SYSTEM_PATH },
+      env: env6,
       killSignal: "SIGKILL",
-      maxBuffer: OUTPUT_BYTES2,
-      timeout: PROBE_TIMEOUT_MS
+      maxBuffer: OUTPUT_BYTES3,
+      timeout: TOOL_TIMEOUT_MS2
     }
   });
+  if (result3.status !== 0) {
+    throw new CheckerError({ message: "python3 is unavailable" });
+  }
+  const executable = result3.stdout.trim();
+  if (executable.length === 0) {
+    throw new CheckerError({ message: "python3 returned an empty executable path" });
+  }
+  return await realpath2(executable);
 }
+async function readPythonTool() {
+  const probed = await classifyResult({
+    message: "python3 probe failed",
+    run: probeHostPython
+  });
+  if (Result_exports.isSuccess(probed)) {
+    return probed.success;
+  }
+  await access3(SYSTEM_PYTHON);
+  return await realpath2(SYSTEM_PYTHON);
+}
+
+// sandbox/macos-sandbox.mts
+var SANDBOX_EXEC2 = "/usr/bin/sandbox-exec";
+var SYSTEM_PATH3 = "/usr/bin:/bin";
+var NODE_FLAGS2 = [
+  "--disable-wasm-trap-handler",
+  "--max-old-space-size=96",
+  "--v8-pool-size=2"
+];
+function escapeScheme(value3) {
+  return value3.replaceAll("\\", String.raw`\\`).replaceAll('"', String.raw`\"`);
+}
+function assertBoundedRuntimeRoot(root) {
+  const userHome = homedir();
+  const forbiddenRoots = /* @__PURE__ */ new Set(["/", "/Users", "/private", "/var", userHome]);
+  if (forbiddenRoots.has(root)) {
+    throw new CheckerError({ message: "runtime installation path cannot be safely sandboxed" });
+  }
+  return root;
+}
+function readInstallRoot(binary) {
+  const binDir = dirname3(binary);
+  const installRoot = dirname3(binDir);
+  return assertBoundedRuntimeRoot(installRoot);
+}
+async function resolveNodeRuntime({ check: check2, probeFile: probeFile2 }) {
+  const binary = await realpath3(process.execPath);
+  const runtimeRoot = readInstallRoot(binary);
+  if (check2.testFile === void 0) {
+    return { command: [binary, ...NODE_FLAGS2, `./${probeFile2}`], runtimeRoot };
+  }
+  return {
+    command: [binary, ...NODE_FLAGS2, "--test", "--test-reporter=tap", "--", `./${check2.testFile}`],
+    runtimeRoot
+  };
+}
+async function resolvePythonRuntime({ check: check2, probeFile: probeFile2 }) {
+  const binary = await readPythonTool();
+  const runtimeRoot = readInstallRoot(binary);
+  if (check2.testFile === void 0) {
+    return { command: [binary, "-B", `./${probeFile2}`], runtimeRoot };
+  }
+  return {
+    command: [
+      binary,
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      `./${dirname3(check2.testFile)}`,
+      "-p",
+      basename2(check2.testFile)
+    ],
+    runtimeRoot
+  };
+}
+async function resolveRustRuntime({ probeFile: probeFile2, probeTmp }) {
+  const sysroot = await readRustTool("--print=sysroot");
+  const resolved = await realpath3(sysroot);
+  const runtimeRoot = assertBoundedRuntimeRoot(resolved);
+  const rustc = join(runtimeRoot, "bin", "rustc");
+  const output = join(probeTmp, "observe");
+  return {
+    command: [
+      "/bin/sh",
+      "-c",
+      '"$1" --edition=2021 --crate-name tenet_probe ./"$2" -o "$3" && exec "$3"',
+      "tenet-rust",
+      rustc,
+      probeFile2,
+      output
+    ],
+    runtimeRoot
+  };
+}
+async function resolveRuntime(input) {
+  switch (input.check.runtime) {
+    case "node": {
+      return await resolveNodeRuntime(input);
+    }
+    case "python": {
+      return await resolvePythonRuntime(input);
+    }
+    case "rust": {
+      return await resolveRustRuntime(input);
+    }
+  }
+}
+function buildSeatbeltProfile({ probeTmp, runtimeRoot, work }) {
+  const safeRuntime = escapeScheme(runtimeRoot);
+  const safeWork = escapeScheme(work);
+  const safeTmp = escapeScheme(probeTmp);
+  return [
+    "(version 1)",
+    "(deny default)",
+    "(allow process-fork process-exec)",
+    "(allow signal (target same-sandbox))",
+    "(allow process-info* (target same-sandbox))",
+    "(allow sysctl-read)",
+    "(allow mach-lookup)",
+    "(allow file-read*)",
+    "(allow file-map-executable)",
+    '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath "/private/var/folders"))',
+    `(allow file-read-data (subpath "${safeRuntime}") (subpath "${safeWork}") (subpath "${safeTmp}"))`,
+    `(allow file-write* (subpath "${safeTmp}") (literal "/dev/null") (literal "/dev/zero"))`,
+    "(deny network*)"
+  ].join("\n");
+}
+function buildSandboxEnv({
+  files,
+  probeTmp,
+  runtime,
+  work
+}) {
+  const commonEnv = {
+    HOME: probeTmp,
+    OMP_NUM_THREADS: "1",
+    OPENBLAS_NUM_THREADS: "1",
+    PATH: SYSTEM_PATH3,
+    PYTHONDONTWRITEBYTECODE: "1",
+    RAYON_NUM_THREADS: "2",
+    TMPDIR: probeTmp,
+    UV_THREADPOOL_SIZE: "2"
+  };
+  if (runtime !== "python") {
+    return commonEnv;
+  }
+  const pythonPath = readPythonPaths({ files, root: work });
+  return { ...commonEnv, PYTHONPATH: pythonPath };
+}
+async function createMacosSandbox({
+  check: check2,
+  files,
+  probeFile: probeFile2,
+  probeTmp,
+  work
+}) {
+  await access4(SANDBOX_EXEC2);
+  const canonicalWork = await realpath3(work);
+  const canonicalTmp = await realpath3(probeTmp);
+  const { command, runtimeRoot } = await resolveRuntime({
+    check: check2,
+    probeFile: probeFile2,
+    probeTmp: canonicalTmp
+  });
+  const profile = buildSeatbeltProfile({
+    probeTmp: canonicalTmp,
+    runtimeRoot,
+    work: canonicalWork
+  });
+  const env6 = buildSandboxEnv({
+    files,
+    probeTmp: canonicalTmp,
+    runtime: check2.runtime,
+    work: canonicalWork
+  });
+  return {
+    args: [
+      "-p",
+      profile,
+      "/bin/sh",
+      "-c",
+      'ulimit -t 8 -f 65536 -c 0 && exec "$@"',
+      "tenet-limit",
+      ...command
+    ],
+    cwd: canonicalWork,
+    env: env6,
+    file: SANDBOX_EXEC2
+  };
+}
+
+// sandbox/runner-sandbox.mts
+var PROBE_TIMEOUT_MS = 15e3;
+var RUST_PROBE_TIMEOUT_MS = 3e4;
+var OUTPUT_BYTES4 = 65536;
+var DIAGNOSTIC_LINES = 2;
+var DIAGNOSTIC_CHARS = 240;
+var ASCII_SPACE = 32;
+var ASCII_DEL = 127;
+var DIAGNOSTIC_FOOTER = new RegExp("^(?:error: aborting due to |For more information about this error)", "v");
+var DIAGNOSTIC_ERROR = new RegExp("^error(?:\\[|:)", "v");
+var PROBE_FILES = {
+  node: ".tenet-observe.mjs",
+  python: ".tenet-observe.py",
+  rust: ".tenet-observe.rs"
+};
 var ASSERTION_MARKERS = /* @__PURE__ */ new Map([
   [
     "node",
@@ -21079,7 +21433,84 @@ var ASSERTION_MARKERS = /* @__PURE__ */ new Map([
     }
   ]
 ]);
-function isPassing({ runtime, result: result3 }) {
+function probeFile(runtime) {
+  return PROBE_FILES[runtime];
+}
+function stripControlChars(text2) {
+  let clean = "";
+  for (const character of text2) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code >= ASCII_SPACE && code !== ASCII_DEL) {
+      clean += character;
+    } else {
+      clean += " ";
+    }
+  }
+  return clean;
+}
+function selectDiagnosticLines(lines) {
+  const highlighted = lines.filter((line) => DIAGNOSTIC_ERROR.test(line));
+  if (highlighted.length > 0) {
+    return highlighted.slice(0, DIAGNOSTIC_LINES);
+  }
+  return lines.slice(-DIAGNOSTIC_LINES);
+}
+function summarizeDiagnostic(stderr) {
+  const lines = stderr.split("\n").map((line) => line.trim()).filter((line) => line.length > 0 && !DIAGNOSTIC_FOOTER.test(line));
+  const selected = selectDiagnosticLines(lines).join(" | ");
+  const summary = stripControlChars(selected).trim();
+  if (summary.length <= DIAGNOSTIC_CHARS) {
+    return summary;
+  }
+  return summary.slice(0, DIAGNOSTIC_CHARS);
+}
+function formatFailure({ base, stderr }) {
+  const detail = summarizeDiagnostic(stderr);
+  if (detail.length === 0) {
+    return base;
+  }
+  return `${base}: ${detail}`;
+}
+async function buildCommand({
+  check: check2,
+  files,
+  probeTmp,
+  work
+}) {
+  const entry = probeFile(check2.runtime);
+  if (process.platform === "darwin") {
+    return await createMacosSandbox({ check: check2, files, probeFile: entry, probeTmp, work });
+  }
+  if (process.platform === "linux") {
+    return await createLinuxSandbox({ check: check2, files, probeFile: entry, work });
+  }
+  throw new CheckerError({
+    message: "an isolated Linux or macOS runner is required for behavior checks"
+  });
+}
+function readProbeTimeout(runtime) {
+  if (runtime === "rust") {
+    return RUST_PROBE_TIMEOUT_MS;
+  }
+  return PROBE_TIMEOUT_MS;
+}
+async function execute(probe) {
+  const { args: args2, cwd: cwd2, env: env6, file } = probe.command;
+  const timeout3 = readProbeTimeout(probe.check.runtime);
+  return await runFile({
+    args: args2,
+    file,
+    options: {
+      cwd: cwd2,
+      encoding: "utf-8",
+      env: env6,
+      killSignal: "SIGKILL",
+      maxBuffer: OUTPUT_BYTES4,
+      timeout: timeout3
+    }
+  });
+}
+function isPassing({ result: result3, runtime }) {
   const logs = [result3.stdout, result3.stderr].join("\n");
   if (runtime === "node" && new RegExp("^# (?:skipped|todo) [1-9]", "mv").test(logs)) {
     throw new CheckerError({ message: "the selected native test skipped an observation" });
@@ -21091,47 +21522,60 @@ function isPassing({ runtime, result: result3 }) {
   if (markers !== void 0 && result3.status === 1 && markers.failed.test(logs)) {
     return false;
   }
-  throw new CheckerError({
-    message: "the selected native test produced no clear assertion result"
+  const message = formatFailure({
+    base: "the selected native test produced no clear assertion result",
+    stderr: result3.stderr
   });
+  throw new CheckerError({ message });
 }
-async function runProbe(probe) {
-  const result3 = await execute(probe);
+function assertCompleted(result3) {
   if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
     throw new CheckerError({
       message: "install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit"
     });
   }
+  if (result3.status !== 0) {
+    const code = String(result3.status);
+    const message = formatFailure({
+      base: `the isolated test exited with status ${code}`,
+      stderr: result3.stderr
+    });
+    throw new CheckerError({ message });
+  }
+}
+async function runProbe(probe) {
+  const result3 = await execute(probe);
   if (probe.check.testFile !== void 0) {
+    if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
+      throw new CheckerError({
+        message: "install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit"
+      });
+    }
     return isPassing({ result: result3, runtime: probe.check.runtime });
   }
-  if (result3.status !== 0) {
-    throw new CheckerError({ message: "the isolated test could not run to completion" });
-  }
+  assertCompleted(result3);
   const observed = JSON.parse(result3.stdout);
   return observed;
 }
-async function createSandbox({
-  work,
-  check: check2
-}) {
+async function createSandbox(input) {
+  const { check: check2, work } = input;
   if (check2.test !== void 0) {
     const entry = probeFile(check2.runtime);
-    const targetPath = join(work, entry);
+    const targetPath = join2(work, entry);
     await writeFile(targetPath, check2.test, { flag: "wx" });
   }
-  const mounts = await buildSandboxMounts({ runtime: check2.runtime, work });
-  return async () => await runProbe({ check: check2, mounts });
+  const command = await buildCommand(input);
+  return async () => await runProbe({ check: check2, command });
 }
 
 // sandbox/runner.mts
-async function copySource({ work, path, source }) {
+async function copySource({ path, source, work }) {
   const file = resolve3(work, path);
-  const prefix = join2(work, sep);
+  const prefix = join3(work, sep);
   if (!file.startsWith(prefix)) {
     throw new CheckerError({ message: "a staged source path falls outside the checkout" });
   }
-  const parent = dirname2(file);
+  const parent = dirname4(file);
   await mkdir(parent, { recursive: true });
   await writeFile2(file, source, { flag: "wx" });
 }
@@ -21142,7 +21586,13 @@ async function prepareProject(project) {
     { concurrency: 16 }
   );
   await Effect_exports.runPromise(copies);
-  return { ...project, run: await createSandbox({ check: project.check, work: project.work }) };
+  const run3 = await createSandbox({
+    check: project.check,
+    files: project.files,
+    probeTmp: project.probeTmp,
+    work: project.work
+  });
+  return { ...project, run: run3 };
 }
 async function restoreSubject({ project, variant }) {
   const { check: check2, files, work } = project;
@@ -21151,7 +21601,7 @@ async function restoreSubject({ project, variant }) {
   if (source === void 0) {
     throw new CheckerError({ message: "the checker subject disappeared" });
   }
-  const targetPath = join2(work, check2.subject);
+  const targetPath = join3(work, check2.subject);
   await writeFile2(targetPath, source);
 }
 async function readObservation({ project, variant }) {
@@ -21174,7 +21624,9 @@ async function qualifyControl({ project, variant }) {
   const result3 = await readObservation({ project, variant });
   if (result3.passed !== (variant !== "defect")) {
     const name = JSON.stringify(variant);
-    const message = `test did not distinguish its ${name} control`;
+    const observed = JSON.stringify(result3.value);
+    const expected = JSON.stringify(project.check.expected);
+    const message = `test did not distinguish its ${name} control (expected ${expected}, observed ${observed})`;
     throw new CheckerError({ message });
   }
 }
@@ -21183,23 +21635,162 @@ async function verifyControls(project) {
   await qualifyControl({ project, variant: "defect" });
   await qualifyControl({ project, variant: "refactor" });
 }
-async function observe({ files, check: check2, qualify }) {
-  const temporary = tmpdir2();
-  const prefix = join2(temporary, "tenet-observe-");
-  const work = await mkdtemp(prefix);
+async function executeObservation({
+  check: check2,
+  project,
+  qualify,
+  skipActual
+}) {
+  if (qualify) {
+    await verifyControls(project);
+  }
+  if (skipActual) {
+    return { passed: true, value: check2.expected };
+  }
+  return await readObservation({ project, variant: "actual" });
+}
+async function observe({
+  check: check2,
+  files,
+  qualify,
+  skipActual = false
+}) {
+  const temporary = tmpdir3();
+  const workPrefix = join3(temporary, "tenet-observe-");
+  const tmpPrefix = join3(temporary, "tenet-probe-tmp-");
+  const work = await mkdtemp(workPrefix);
+  const probeTmp = await mkdtemp(tmpPrefix);
   try {
-    const project = await prepareProject({ check: check2, files, work });
-    if (qualify) {
-      await verifyControls(project);
-    }
-    return await readObservation({ project, variant: "actual" });
+    const project = await prepareProject({ check: check2, files, probeTmp, work });
+    return await executeObservation({ check: check2, project, qualify, skipActual });
   } finally {
     await rm(work, { force: true, recursive: true });
+    await rm(probeTmp, { force: true, recursive: true });
   }
 }
 
+// sandbox/runner-version.mts
+import { stat } from "node:fs/promises";
+var BWRAP3 = "/usr/bin/bwrap";
+var PYTHON2 = "/usr/bin/python3";
+var PRLIMIT3 = "/usr/bin/prlimit";
+var SANDBOX_EXEC3 = "/usr/bin/sandbox-exec";
+var RUNNER_REVISION = 4;
+function readBinaryIdentity(path) {
+  const read = Effect_exports.tryPromise(async () => await stat(path));
+  function buildMissingIdentity() {
+    return [path, null];
+  }
+  function buildToolIdentity(info) {
+    return [path, info.size, info.mtimeMs];
+  }
+  return Effect_exports.match(read, { onFailure: buildMissingIdentity, onSuccess: buildToolIdentity });
+}
+async function readToolPaths() {
+  if (process.platform === "darwin") {
+    const pythonProbe = Effect_exports.tryPromise(async () => await readPythonTool());
+    const pythonOption = Effect_exports.option(pythonProbe);
+    const pythonResult = await Effect_exports.runPromise(pythonOption);
+    const pythonPath = Option_exports.getOrElse(pythonResult, () => PYTHON2);
+    return [SANDBOX_EXEC3, pythonPath, process.execPath];
+  }
+  return [BWRAP3, PYTHON2, PRLIMIT3, "/usr/bin/gcc", process.execPath];
+}
+async function readRunnerVersion() {
+  const paths = await readToolPaths();
+  const identities = Effect_exports.forEach(paths, (path) => readBinaryIdentity(path), {
+    concurrency: 4
+  });
+  const binaries = await Effect_exports.runPromise(identities);
+  const tool = Effect_exports.tryPromise(async () => await readRustTool("-Vv"));
+  const version = Effect_exports.option(tool);
+  const installed = await Effect_exports.runPromise(version);
+  const rust = Option_exports.getOrNull(installed);
+  return JSON.stringify([RUNNER_REVISION, process.version, process.platform, binaries, rust]);
+}
+
+// sandbox/apply-control.mts
+var MAX_CONTROL_EDITS = 8;
+var MAX_EDIT_BYTES = 65536;
+function readEditText({ allowEmpty, value: value3 }) {
+  if (typeof value3 !== "string" || Buffer.byteLength(value3) > MAX_EDIT_BYTES) {
+    throw new CheckerError({
+      message: "a control edit has an invalid or oversized text field"
+    });
+  }
+  if (!allowEmpty && value3.length === 0) {
+    throw new CheckerError({ message: "a control edit find target must be non-empty" });
+  }
+  return value3;
+}
+function readEditMap(item) {
+  if (item === null || typeof item !== "object" || Array.isArray(item)) {
+    throw new CheckerError({ message: "each control edit must be a find/replace object" });
+  }
+  const entries3 = Object.entries(item);
+  return new Map(entries3);
+}
+function readControlEdit(item) {
+  const fields = readEditMap(item);
+  const rawFind = fields.get("find");
+  const rawReplace = fields.get("replace");
+  const find = readEditText({ allowEmpty: false, value: rawFind });
+  const replace = readEditText({ allowEmpty: true, value: rawReplace });
+  if (find === replace) {
+    throw new CheckerError({ message: "a control edit must change the matched source" });
+  }
+  return { find, replace };
+}
+function applySingleEdit({ current, edit }) {
+  const first = current.indexOf(edit.find);
+  if (first === -1) {
+    throw new CheckerError({
+      message: "a control edit target was not found in the subject file"
+    });
+  }
+  const second = current.indexOf(edit.find, first + 1);
+  if (second !== -1) {
+    throw new CheckerError({
+      message: "a control edit target matched multiple locations in the subject file"
+    });
+  }
+  const prefix = current.slice(0, first);
+  const suffix = current.slice(first + edit.find.length);
+  return `${prefix}${edit.replace}${suffix}`;
+}
+function applyEdits({ edits, limit, source }) {
+  if (edits.length > MAX_CONTROL_EDITS) {
+    throw new CheckerError({ message: "a control exceeds the maximum number of edits" });
+  }
+  let current = source;
+  for (const item of edits) {
+    const edit = readControlEdit(item);
+    current = applySingleEdit({ current, edit });
+    if (Buffer.byteLength(current) > limit) {
+      throw new CheckerError({ message: "materialized control exceeds the bounded source limit" });
+    }
+  }
+  return current;
+}
+function applyControl({ control, limit, source }) {
+  if (typeof control === "string") {
+    if (control.trim().length === 0 || Buffer.byteLength(control) > limit) {
+      throw new CheckerError({
+        message: "the generated checker is missing a bounded test, promise or control"
+      });
+    }
+    return control;
+  }
+  if (Array.isArray(control)) {
+    return applyEdits({ edits: control, limit, source });
+  }
+  throw new CheckerError({
+    message: "a control must be a full source string or an array of find/replace edits"
+  });
+}
+
 // sandbox/validate-check.mts
-var MAX_FIELD_BYTES = 65536;
+var MAX_FIELD_BYTES = 131072;
 var ID_PATTERN = new RegExp("^[a-z][a-z0-9\\-]{0,63}$", "v");
 function readFields(candidate) {
   if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
@@ -21250,18 +21841,19 @@ function readTarget({ fields, files }) {
     subject
   };
 }
-function readControls(fields) {
-  const good = readField({ fields, key: "good" });
-  const defect = readField({ fields, key: "defect" });
-  const refactor = readField({ fields, key: "refactor" });
+function readControls({ fields, source }) {
+  const rawGood = fields.get("good");
+  const rawDefect = fields.get("defect");
+  const rawRefactor = fields.get("refactor");
+  const good = applyControl({ control: rawGood, limit: MAX_FIELD_BYTES, source });
+  const defect = applyControl({ control: rawDefect, limit: MAX_FIELD_BYTES, source });
+  const refactor = applyControl({ control: rawRefactor, limit: MAX_FIELD_BYTES, source });
   if (good === defect || refactor === defect || good === refactor) {
     throw new CheckerError({ message: "qualification requires three distinct alternatives" });
   }
   return { defect, good, refactor };
 }
-function validate3({ check: check2, files }) {
-  const fields = readFields(check2);
-  const base = { ...readTarget({ fields, files }), ...readControls(fields) };
+function attachEntry({ base, fields, files }) {
   if (!fields.has("testFile")) {
     return { ...base, test: readField({ fields, key: "test" }) };
   }
@@ -21275,20 +21867,165 @@ function validate3({ check: check2, files }) {
   }
   return { ...base, testFile };
 }
-
-// try-operation.mts
-function tryOperation(input) {
-  function fail7(cause) {
-    return new CheckerError({ cause, message: input.message });
+function validate3({ check: check2, files }) {
+  const fields = readFields(check2);
+  const target = readTarget({ fields, files });
+  const source = files.get(target.subject);
+  if (source === void 0) {
+    throw new CheckerError({ message: "the generated checker target is missing from source" });
   }
-  return Effect_exports.tryPromise({ catch: fail7, try: input.run });
+  const base = { ...target, ...readControls({ fields, source }) };
+  return attachEntry({ base, fields, files });
 }
 
-// classify-result.mts
-async function classifyResult(input) {
-  const work = tryOperation(input);
-  const classified = Effect_exports.result(work);
-  return await Effect_exports.runPromise(classified);
+// wire.mts
+var Paths = Schema_exports.Array(Schema_exports.String);
+var OptionalPaths = Schema_exports.OptionFromOptionalKey(Paths);
+var OptionalText = Schema_exports.OptionFromOptionalKey(Schema_exports.String);
+var NullableText = Schema_exports.OptionFromNullOr(Schema_exports.String);
+var FileDecisions = Schema_exports.Record(Schema_exports.String, Schema_exports.String);
+var Outcome = Schema_exports.Literals(["passed", "failed", "unresolved"]);
+var NullableCost = Schema_exports.OptionFromNullOr(Schema_exports.Number);
+var OptionalCount = Schema_exports.OptionFromOptionalKey(Schema_exports.Int);
+var FindingFields = Schema_exports.Struct({
+  check: Schema_exports.String,
+  contract: Schema_exports.String,
+  cost_usd: NullableCost,
+  generation_requests: OptionalCount,
+  message: Schema_exports.String,
+  outcome: Outcome,
+  requested: Schema_exports.Boolean,
+  reused: Schema_exports.Boolean,
+  subject: NullableText
+});
+var Finding = Schema_exports.toEncoded(FindingFields);
+var Findings = Schema_exports.Array(Finding);
+var OptionalFileDecisions = Schema_exports.OptionFromOptionalNullOr(FileDecisions);
+var OptionalFindings = Schema_exports.OptionFromOptionalKey(Findings);
+var ContractFields = Schema_exports.Struct({
+  assets: OptionalPaths,
+  checks: OptionalPaths,
+  decisions: OptionalFileDecisions,
+  document: Schema_exports.String,
+  hash: Schema_exports.String,
+  mechanical: OptionalFindings,
+  name: Schema_exports.String,
+  path: Schema_exports.String,
+  paths: Paths
+});
+var Contract = Schema_exports.toEncoded(ContractFields);
+var OptionalBase = Schema_exports.OptionFromOptionalNullOr(Schema_exports.String);
+var ContractList = Schema_exports.Array(Contract);
+var OptionalFlag = Schema_exports.OptionFromOptionalKey(Schema_exports.Boolean);
+var RequestFields = Schema_exports.Struct({
+  base: OptionalBase,
+  contracts: ContractList,
+  fresh: OptionalFlag,
+  inspect: OptionalFlag,
+  maxGenerations: Schema_exports.Int,
+  progressFile: OptionalText,
+  root: Schema_exports.String,
+  state: Schema_exports.String
+});
+var Request = Schema_exports.toEncoded(RequestFields);
+var ReceiptFields = Schema_exports.Struct({
+  base: NullableText,
+  observed: Schema_exports.String,
+  qualifications: Paths,
+  rows: Findings,
+  shape: Schema_exports.String,
+  signature: OptionalText,
+  tools: Schema_exports.String
+});
+var Receipt = Schema_exports.toEncoded(ReceiptFields);
+var Runtime = Schema_exports.Literals(["node", "python", "rust"]);
+var CheckFields = Schema_exports.Struct({
+  defect: Schema_exports.String,
+  expected: Schema_exports.Unknown,
+  good: Schema_exports.String,
+  id: Schema_exports.String,
+  promise: Schema_exports.String,
+  refactor: Schema_exports.String,
+  runtime: Runtime,
+  subject: Schema_exports.String,
+  test: OptionalText,
+  testFile: OptionalText
+});
+var Check = Schema_exports.toEncoded(CheckFields);
+var CheckList = Schema_exports.Array(Check);
+var Bundle = Schema_exports.Struct({ checks: CheckList, open: Paths });
+var PinProtocol = Schema_exports.Literal(1);
+var PinFields = Schema_exports.Struct({
+  bundle: Bundle,
+  contractHash: OptionalText,
+  protocol: PinProtocol,
+  shape: Schema_exports.String
+});
+var Pin = Schema_exports.toEncoded(PinFields);
+
+// schema.mts
+var decodeBundle = Schema_exports.decodeUnknownOption(Bundle, { onExcessProperty: "error" });
+var MAX_CHECKS = 12;
+function readBundle(value3) {
+  const decoded = decodeBundle(value3);
+  if (Option_exports.isNone(decoded)) {
+    throw new CheckerError({ message: "the checker plan has invalid fields" });
+  }
+  return decoded.value;
+}
+function parseBundle({ value: value3, files }) {
+  const { checks, open: open4 } = readBundle(value3);
+  if (checks.length > MAX_CHECKS || open4.length > MAX_CHECKS) {
+    throw new CheckerError({ message: "checker plan exceeds the number of allowed checks" });
+  }
+  const verified = checks.map((check2) => validate3({ check: check2, files }));
+  const identifiers = verified.map((check2) => check2.id);
+  const names = new Set(identifiers);
+  if (names.size !== verified.length || names.size + open4.length === 0) {
+    throw new CheckerError({ message: "checker plan has missing or duplicate checks" });
+  }
+  return { checks: verified, open: open4 };
+}
+
+// review/pin/has-check-inputs.mts
+function hasCheckInputs({ check: check2, files }) {
+  return files.has(check2.subject) && (check2.testFile === void 0 || files.has(check2.testFile));
+}
+
+// review/pin/is-matching.mts
+function isMatching({ current, contractHash, pin }) {
+  if (pin.shape !== current.shape || pin.contractHash !== void 0 && pin.contractHash !== contractHash) {
+    return false;
+  }
+  const { runtimeFiles: files } = current;
+  return pin.bundle.checks.every((check2) => hasCheckInputs({ check: check2, files }));
+}
+
+// review/pin/parse-pin.mts
+var decodePin = Schema_exports.decodeUnknownOption(Pin, { onExcessProperty: "error" });
+function readPin(record2) {
+  const decoded = decodePin(record2.json);
+  if (Option_exports.isNone(decoded)) {
+    throw new CheckerError({ message: "the saved checker has an unsupported format" });
+  }
+  return decoded.value;
+}
+function parsePin({ value: value3, current, contractHash }) {
+  if (Option_exports.isNone(value3)) {
+    return { matching: false };
+  }
+  const prior = readPin(value3.value);
+  if (!isMatching({ contractHash, current, pin: prior })) {
+    return { matching: false, pin: prior };
+  }
+  const bundle = parseBundle({ files: current.runtimeFiles, value: prior.bundle });
+  const pin = {
+    bundle,
+    contractHash: prior.contractHash,
+    protocol: prior.protocol,
+    shape: prior.shape
+  };
+  return { matching: true, pin };
 }
 
 // review/build-finding.mts
@@ -21310,32 +22047,212 @@ function buildOpenFinding({ contract, reason }) {
   return buildFinding({ check: "discovery", contract, message: reason, outcome: "unresolved" });
 }
 
-// review/read-reason.mts
-function readReason(error) {
-  if (error instanceof SyntaxError) {
-    return "The checker response was not valid JSON.";
-  }
+// review/pin/qualify-bundle.mts
+var MAX_CHECKS2 = 12;
+var MAX_OPEN_LENGTH = 400;
+var RawChecks = Schema_exports.Array(Schema_exports.Unknown);
+var OpenItems = Schema_exports.Array(Schema_exports.String);
+var RawBundle = Schema_exports.Struct({ checks: RawChecks, open: OpenItems });
+var decodeRawBundle = Schema_exports.decodeUnknownOption(RawBundle, { onExcessProperty: "error" });
+function readCandidateError(error) {
   if (error instanceof Error) {
     return error.message;
   }
-  return "Could not complete the check.";
+  return "candidate check could not be qualified";
+}
+function readCheckLabel({ candidate, index: index2 }) {
+  if (candidate !== null && typeof candidate === "object" && "id" in candidate) {
+    const { id: id2 } = candidate;
+    if (typeof id2 === "string" && id2.trim().length > 0) {
+      return id2.trim();
+    }
+  }
+  return `candidate-${String(index2 + 1)}`;
+}
+function buildEmptyError({ contractName, message }) {
+  const warning = buildOpenFinding({ contract: contractName, reason: message });
+  return { errors: [message], extraUnresolved: [warning], open: [], qualified: [] };
+}
+function isValidOpenItem(item) {
+  const trimmed = item.trim();
+  return trimmed.length > 0 && trimmed.length <= MAX_OPEN_LENGTH;
+}
+function findBundleProblem({ checks, open: open4 }) {
+  if (checks.length > MAX_CHECKS2 || open4.length > MAX_CHECKS2) {
+    return Option_exports.some("checker plan exceeds the number of allowed checks");
+  }
+  if (checks.length === 0 && open4.length === 0) {
+    return Option_exports.some("checker plan returned neither checks nor open items");
+  }
+  if (!open4.every((item) => isValidOpenItem(item))) {
+    return Option_exports.some(
+      "checker plan open items must be non-empty strings of at most 400 characters"
+    );
+  }
+  return Option_exports.none();
+}
+function parseSingle({ files, raw }) {
+  function runValidate() {
+    return validate3({ check: raw, files });
+  }
+  return Result_exports.try({ catch: readCandidateError, try: runValidate });
+}
+async function qualifySingle({
+  check: check2,
+  files
+}) {
+  async function runQualification() {
+    await observe({ check: check2, files, qualify: true, skipActual: true });
+    return check2;
+  }
+  return await classifyResult({ message: "qualification failed", run: runQualification });
+}
+function failCandidate({
+  check: check2,
+  contractName,
+  detail,
+  subject
+}) {
+  const finding = buildFinding({
+    check: check2,
+    contract: contractName,
+    message: detail,
+    outcome: "unresolved",
+    subject
+  });
+  return { error: `${check2}: ${detail}`, finding, kind: "failed" };
+}
+async function runCheckQualification({
+  candidate,
+  contractName,
+  files
+}) {
+  const result3 = await qualifySingle({ check: candidate, files });
+  if (Result_exports.isSuccess(result3)) {
+    return { check: result3.success, kind: "qualified" };
+  }
+  const detail = readCandidateError(result3.failure.cause);
+  return failCandidate({
+    check: candidate.id,
+    contractName,
+    detail,
+    subject: candidate.subject
+  });
+}
+async function checkCandidate({
+  contractName,
+  current,
+  index: index2,
+  raw,
+  seenIds
+}) {
+  const label = readCheckLabel({ candidate: raw, index: index2 });
+  const parsed = parseSingle({ files: current.files, raw });
+  if (Result_exports.isFailure(parsed)) {
+    return failCandidate({ check: label, contractName, detail: parsed.failure });
+  }
+  const candidate = parsed.success;
+  if (seenIds.has(candidate.id)) {
+    return failCandidate({
+      check: candidate.id,
+      contractName,
+      detail: "duplicate check identifier",
+      subject: candidate.subject
+    });
+  }
+  return await runCheckQualification({ candidate, contractName, files: current.runtimeFiles });
+}
+function recordOutcome({ outcome, state }) {
+  if (outcome.kind === "qualified") {
+    const nextIds = /* @__PURE__ */ new Set([...state.seenIds, outcome.check.id]);
+    return {
+      ...state,
+      qualified: [...state.qualified, outcome.check],
+      seenIds: nextIds
+    };
+  }
+  return {
+    ...state,
+    errors: [...state.errors, outcome.error],
+    extraUnresolved: [...state.extraUnresolved, outcome.finding]
+  };
+}
+async function qualifyList({
+  contractName,
+  current,
+  open: open4,
+  rawChecks
+}) {
+  let state = {
+    errors: [],
+    extraUnresolved: [],
+    qualified: [],
+    seenIds: /* @__PURE__ */ new Set()
+  };
+  for (const [index2, raw] of rawChecks.entries()) {
+    const outcome = await checkCandidate({
+      contractName,
+      current,
+      index: index2,
+      raw,
+      seenIds: state.seenIds
+    });
+    state = recordOutcome({ outcome, state });
+  }
+  return {
+    errors: state.errors,
+    extraUnresolved: state.extraUnresolved,
+    open: open4,
+    qualified: state.qualified
+  };
+}
+async function qualifyBundle({
+  contractName,
+  current,
+  value: value3
+}) {
+  const decoded = decodeRawBundle(value3);
+  if (Option_exports.isNone(decoded)) {
+    return buildEmptyError({
+      contractName,
+      message: "the checker plan has invalid top-level fields; return { checks: [...], open: [...] }"
+    });
+  }
+  const problem = findBundleProblem(decoded.value);
+  if (Option_exports.isSome(problem)) {
+    return buildEmptyError({ contractName, message: problem.value });
+  }
+  const { checks: rawChecks, open: open4 } = decoded.value;
+  return await qualifyList({ contractName, current, open: open4, rawChecks });
 }
 
-// review/report-coverage.mts
-function reportCoverage({ omitted, contract }) {
-  if (omitted.length === 0) {
-    return [];
+// review/pin/update-pin.mts
+function canKeep({ check: check2, next, files }) {
+  if (!hasCheckInputs({ check: check2, files })) {
+    return false;
   }
-  const count = String(omitted.length);
-  return [
-    buildFinding({
-      check: "coverage",
-      contract: contract.name,
-      message: `${count} source files could not be covered. First: ${omitted[0]}`,
-      outcome: "unresolved"
-    })
-  ];
+  const assigned = next.bundle.checks.find((item) => item.id === check2.id);
+  if (assigned === void 0) {
+    return true;
+  }
+  const sameEntry = assigned.subject === check2.subject && assigned.testFile === check2.testFile;
+  return sameEntry && assigned.runtime === check2.runtime && assigned.promise === check2.promise;
 }
+function updatePin({ prior, next, files }) {
+  if (next.contractHash === void 0 || prior.contractHash !== next.contractHash) {
+    return next;
+  }
+  const kept = prior.bundle.checks.filter((check2) => canKeep({ check: check2, files, next }));
+  const previous = kept.map((check2) => check2.id);
+  const ids = new Set(previous);
+  const additions = next.bundle.checks.filter((check2) => !ids.has(check2.id));
+  const value3 = { checks: [...kept, ...additions], open: next.bundle.open };
+  const bundle = parseBundle({ files, value: value3 });
+  return { ...next, bundle };
+}
+
+// review/review.mts
+import { realpath as realpath9 } from "node:fs/promises";
 
 // storage/hash-source.mts
 import { createHash } from "node:crypto";
@@ -21347,18 +22264,49 @@ function hashSource(data) {
 
 // storage/read-regular.mts
 import { constants } from "node:fs";
-import { lstat, open, realpath as realpath2 } from "node:fs/promises";
+import { lstat, open, realpath as realpath5 } from "node:fs/promises";
 
 // storage/resolve-inside.mts
-import { isAbsolute, join as join3, resolve as resolve4, sep as sep2 } from "node:path";
+import { isAbsolute, join as join4, resolve as resolve4, sep as sep2 } from "node:path";
 function resolveInside({ root, path }) {
   const target = resolve4(root, path);
-  const prefix = join3(root, sep2);
+  const prefix = join4(root, sep2);
   const components = path.split(sep2);
   if (isAbsolute(path) || components.includes("..") || !target.startsWith(prefix)) {
     throw new CheckerError({ message: "input falls outside the checkout." });
   }
   return target;
+}
+
+// storage/resolve-root.mts
+import { realpath as realpath4 } from "node:fs/promises";
+import { basename as basename3, dirname as dirname5, join as join5, resolve as resolve5 } from "node:path";
+function readErrorCode(value3) {
+  if (value3 instanceof Error && "code" in value3 && typeof value3.code === "string") {
+    return value3.code;
+  }
+  return "";
+}
+async function readRealPath(path) {
+  async function run3() {
+    return await realpath4(path);
+  }
+  const inspect = tryOperation({ message: "resolve canonical root path", run: run3 });
+  return await inspect.pipe(Effect_exports.result, Effect_exports.runPromise);
+}
+async function resolveRoot(path) {
+  const absolute = resolve5(path);
+  const resolved = await readRealPath(absolute);
+  if (Result_exports.isSuccess(resolved)) {
+    return resolved.success;
+  }
+  const parent = dirname5(absolute);
+  if (readErrorCode(resolved.failure.cause) !== "ENOENT" || parent === absolute) {
+    throw resolved.failure;
+  }
+  const trusted = await resolveRoot(parent);
+  const child = basename3(absolute);
+  return join5(trusted, child);
 }
 
 // storage/read-regular.mts
@@ -21386,15 +22334,16 @@ async function readText2({ handle, limit, preserveBom }) {
 async function readOpened(input) {
   const { handle, prior, file } = input;
   const stat2 = await handle.stat();
-  if (stat2.dev !== prior.dev || stat2.ino !== prior.ino || await realpath2(file) !== file) {
+  if (stat2.dev !== prior.dev || stat2.ino !== prior.ino || await realpath5(file) !== file) {
     throw new CheckerError({ message: "input changed while opening it." });
   }
   return await readText2(input);
 }
 async function readRegular(input) {
-  const file = resolveInside(input);
+  const root = await resolveRoot(input.root);
+  const file = resolveInside({ path: input.path, root });
   const prior = await lstat(file);
-  if (!prior.isFile() || prior.size > input.limit || await realpath2(file) !== file) {
+  if (!prior.isFile() || prior.size > input.limit || await realpath5(file) !== file) {
     throw new CheckerError({ message: "input unavailable." });
   }
   const handle = await open(file, OPEN_FLAGS);
@@ -21412,7 +22361,7 @@ async function readRegular(input) {
 }
 
 // storage/read-record.mts
-var RECORD_LIMIT = 2097152;
+var RECORD_LIMIT = 4194304;
 function parseRecord(text2) {
   const contents = text2.replace(new RegExp("^\\uFEFF", "v"), "");
   const json = JSON.parse(contents);
@@ -21443,23 +22392,31 @@ async function readExisting(location) {
 }
 
 // storage/replace-pin.mts
-import { open as open3, realpath as realpath4, rm as rm3 } from "node:fs/promises";
-import { dirname as dirname4 } from "node:path";
+import { open as open3, realpath as realpath7, rm as rm3 } from "node:fs/promises";
+import { dirname as dirname7 } from "node:path";
 
 // storage/write-atomic.mts
 import { randomUUID } from "node:crypto";
-import { link as link2, mkdir as mkdir2, open as open2, realpath as realpath3, rename, rm as rm2 } from "node:fs/promises";
-import { dirname as dirname3, join as join4 } from "node:path";
+import { link as link2, mkdir as mkdir2, open as open2, realpath as realpath6, rename, rm as rm2 } from "node:fs/promises";
+import { dirname as dirname6, join as join6, relative, sep as sep3 } from "node:path";
 var PRIVATE_FILE = 384;
 var PRIVATE_DIR = 448;
-async function ensureDirectory(path) {
-  const parent = dirname3(path);
-  if (parent !== path) {
-    await ensureDirectory(parent);
-    await mkdir2(path, { mode: PRIVATE_DIR, recursive: true });
-  }
-  if (await realpath3(path) !== path) {
+async function ensureSegment(path) {
+  await mkdir2(path, { mode: PRIVATE_DIR, recursive: true });
+  if (await realpath6(path) !== path) {
     throw new CheckerError({ message: "output directory is a symbolic link." });
+  }
+}
+async function ensureDirectory({ directory, root }) {
+  await ensureSegment(root);
+  const nested = relative(root, directory);
+  if (nested.length === 0) {
+    return;
+  }
+  let current = root;
+  for (const part of nested.split(sep3)) {
+    current = join6(current, part);
+    await ensureSegment(current);
   }
 }
 async function installRecord({ first, target, temp }) {
@@ -21478,27 +22435,32 @@ async function storeRecord({ handle, record: record2 }) {
     await handle.close();
   }
 }
-async function writeAtomic(input) {
-  const target = resolveInside(input);
-  const parent = dirname3(target);
-  await ensureDirectory(parent);
+async function writeTempRecord({ first, parent, target, value: value3 }) {
   const nonce = randomUUID();
-  const temp = join4(parent, `.tenet-${nonce}.tmp`);
+  const temp = join6(parent, `.tenet-${nonce}.tmp`);
   const handle = await open2(temp, "wx", PRIVATE_FILE);
   try {
-    await storeRecord({ handle, record: input.value });
-    await installRecord({ first: input.first === true, target, temp });
+    await storeRecord({ handle, record: value3 });
+    await installRecord({ first, target, temp });
   } finally {
     await rm2(temp, { force: true });
   }
+}
+async function writeAtomic(input) {
+  const root = await resolveRoot(input.root);
+  const target = resolveInside({ path: input.path, root });
+  const parent = dirname6(target);
+  await ensureDirectory({ directory: parent, root });
+  await writeTempRecord({ first: input.first === true, parent, target, value: input.value });
 }
 
 // storage/replace-pin.mts
 var PRIVATE_FILE2 = 384;
 async function resolvePinLock(input) {
-  const lock = resolveInside({ ...input, path: `${input.path}.lock` });
-  const parent = dirname4(lock);
-  if (await realpath4(parent) !== parent) {
+  const root = await resolveRoot(input.root);
+  const lock = resolveInside({ path: `${input.path}.lock`, root });
+  const parent = dirname7(lock);
+  if (await realpath7(parent) !== parent) {
     throw new CheckerError({ message: "output directory is a symbolic link." });
   }
   return lock;
@@ -21518,455 +22480,78 @@ async function replacePin(input) {
   }
 }
 
-// review/save-receipt.mts
-async function saveReceipt({ ctx, rows, pin }) {
-  const {
-    evaluation: { base, tools, current },
-    job: { request: request3 }
-  } = ctx;
-  const qualifications = rows.filter((row) => row.outcome !== "unresolved").map((row) => row.check);
-  const candidate = Option_exports.fromUndefinedOr(pin);
-  const serialized = Option_exports.map(candidate, (recipe) => JSON.stringify(recipe));
-  const signature = Option_exports.map(serialized, hashSource);
-  const value3 = {
-    base,
-    observed: current.observed,
-    qualifications,
-    rows,
-    shape: current.shape,
-    signature: Option_exports.getOrUndefined(signature),
-    tools
-  };
-  await writeAtomic({ path: ctx.receipt, root: request3.state, value: value3 });
-}
-
-// discovery/base.mts
-import { execFile as execFile2 } from "node:child_process";
-import { env } from "node:process";
-import { promisify as promisify2 } from "node:util";
-var execute2 = promisify2(execFile2);
-var OBJECT_ID = new RegExp("^(?:[a-f0-9]{40}|[a-f0-9]{64})$", "v");
-var FILE_LIMIT = 524288;
-var GIT_TIMEOUT = 3e3;
-async function runGit({ root, args: args2 }) {
-  const result3 = await execute2(
-    "git",
-    ["--no-replace-objects", "--literal-pathspecs", "-C", root, ...args2],
-    {
-      env: { GIT_CONFIG_NOSYSTEM: "1", PATH: env.PATH },
-      maxBuffer: FILE_LIMIT,
-      timeout: GIT_TIMEOUT
-    }
-  );
-  return result3.stdout;
-}
-async function readBaseInputs({
-  base,
-  files,
-  root
+// progress-log.mts
+import { writeFile as writeFile3 } from "node:fs/promises";
+async function reportProgress({
+  contract,
+  phase,
+  progressFile
 }) {
-  if (!OBJECT_ID.test(base)) {
-    throw new CheckerError({ message: "no pinned PR base is available." });
+  if (progressFile === void 0 || progressFile.length === 0) {
+    return;
   }
-  const priorFiles = /* @__PURE__ */ new Map();
-  for (const path of files.keys()) {
-    const entry = await runGit({ args: ["ls-tree", "-z", base, "--", path], root });
-    if (entry.length === 0) {
-      continue;
-    }
-    const content = await runGit({ args: ["cat-file", "blob", `${base}:${path}`], root });
-    priorFiles.set(path, content);
+  const target = progressFile;
+  async function writePhase() {
+    await writeFile3(target, `${contract}	${phase}
+`, "utf-8");
   }
-  return priorFiles;
+  await classifyResult({ message: "progress update ignored", run: writePhase });
 }
 
-// discovery/discovery.mts
-import { basename as basename3, dirname as dirname5, extname } from "node:path";
+// fx/explain-findings.mts
+import { env as env4 } from "node:process";
 
-// discovery/hash-surface.mts
-import { basename as basename2 } from "node:path";
-
-// discovery/manifests.mts
-var MANIFESTS = /* @__PURE__ */ new Set([
-  "package.json",
-  "Cargo.toml",
-  "pyproject.toml",
-  "tsconfig.json"
-]);
-
-// discovery/hash-surface.mts
-var SURFACE_VERSION = 2;
-var CONTROL_WORDS = /* @__PURE__ */ new Set([
-  "if",
-  "switch",
-  "for",
-  "while",
-  "catch",
-  "function"
-]);
-var DECLARATION = new RegExp("(?:^|\\n)\\s*(?:export\\s+(?:(?:default|async)\\s+)*(?:class|function|const|let|enum|type|interface)?\\s*|(?:pub\\s+(?:async\\s+)?(?:fn|struct|trait|enum|type|mod)|(?:async\\s+)?def|class)\\s+)(?<name>[\\w$]+)", "gv");
-var MEMBER = new RegExp("(?:^|[\\{\\};\\n])\\s*(?:(?:public|static|async|readonly|abstract|get|set)\\s+)*(?<name>[A-Za-z_$][\\w$]*)\\s*\\([^\\(\\)\\{\\};]*\\)\\s*(?::[^=\\{\\};]+)?\\s*\\{", "gv");
-var EXPORT = new RegExp("(?:^|\\n)\\s*(?:export\\s+(?:type\\s+)?\\{[^\\}]+\\}(?:\\s+from\\s+[^;\\n]+)?|export\\s+\\*\\s+from\\s+[^;\\n]+|pub\\s+use\\s+[^;]+);?", "gv");
-function readSurface([path, source]) {
-  const name = basename2(path);
-  if (MANIFESTS.has(name)) {
-    return [path, hashSource(source)];
-  }
-  const declarationMatches = source.matchAll(DECLARATION);
-  const declared = Array.from(declarationMatches, (match7) => match7[1]);
-  const memberMatches = source.matchAll(MEMBER);
-  const members = Array.from(memberMatches, (match7) => match7[1]).filter(
-    (member) => !CONTROL_WORDS.has(member)
-  );
-  const exportMatches = source.matchAll(EXPORT);
-  const exported = Array.from(exportMatches, (match7) => match7[0].trim());
-  return [path, [...declared, ...members, ...exported].toSorted()];
-}
-function hashSurface({ contract, source, assets, omitted }) {
-  const names = source.map((entry) => readSurface(entry));
-  const hints = Object.entries(assets);
-  const missing2 = omitted.toSorted();
-  const identity2 = JSON.stringify([SURFACE_VERSION, contract.hash, names, hints, missing2]);
-  return hashSource(identity2);
-}
-
-// discovery/discovery.mts
-var EXECUTION = { bytes: 16777216, files: 1024, source: 524288 };
-var MAX_FILES = 160;
-var MAX_BYTES = 196608;
-var MAX_SOURCE = 49152;
-var MAX_SAMPLES = 32768;
-var MAX_SAMPLE = 8192;
-var EXTENSIONS = /* @__PURE__ */ new Set([
-  ".js",
-  ".cjs",
-  ".mjs",
-  ".ts",
-  ".mts",
-  ".cts",
-  ".tsx",
-  ".jsx",
-  ".py",
-  ".rs"
-]);
-var UNSUPPORTED_EXTENSIONS = /* @__PURE__ */ new Set([
-  ".go",
-  ".java",
-  ".c",
-  ".cc",
-  ".cpp",
-  ".swift",
-  ".rb",
-  ".cs",
-  ".kt"
-]);
-var PACKAGE_DATA_EXTENSIONS = /* @__PURE__ */ new Set([".txt", ".json", ".csv"]);
-function classifyPath({
-  path,
-  decision,
-  packageRoots
-}) {
-  const extension = extname(path);
-  const name = basename3(path);
-  if (EXTENSIONS.has(extension) || MANIFESTS.has(name)) {
-    return "read";
-  }
-  if (PACKAGE_DATA_EXTENSIONS.has(extension) && packageRoots.some((root) => path.startsWith(`${root}/`))) {
-    return "read";
-  }
-  if (UNSUPPORTED_EXTENSIONS.has(extension) && decision !== "not_applicable" || decision === "fail") {
-    return "omitted";
-  }
-  return "skip";
-}
-async function readSample(input) {
-  async function runRead() {
-    return await readRegular(input);
-  }
-  const result3 = await classifyResult({ message: "bounded source unavailable", run: runRead });
-  return Result_exports.getSuccess(result3);
-}
-var enumRank = { failure: 1, manifest: 0, other: 3, source: 2, unrelated: 4 };
-function rankPath({ path, decision }) {
-  const name = basename3(path);
-  if (MANIFESTS.has(name)) {
-    return enumRank.manifest;
-  }
-  if (decision === "fail") {
-    return enumRank.failure;
-  }
-  if (decision === "not_applicable") {
-    return enumRank.unrelated;
-  }
-  if (path.startsWith("src/") || path.startsWith("lib/")) {
-    return enumRank.source;
-  }
-  return enumRank.other;
-}
-function listPaths(contract) {
-  const paths = contract.paths.toSorted();
-  const groups = [
-    enumRank.manifest,
-    enumRank.failure,
-    enumRank.source,
-    enumRank.other,
-    enumRank.unrelated
-  ];
-  return groups.flatMap(
-    (group) => paths.filter((path) => rankPath({ decision: contract.decisions?.[path], path }) === group)
-  );
-}
-function createCapture({ root, budget }) {
-  const files = /* @__PURE__ */ new Map();
-  const omitted = [];
-  let remaining = budget.bytes;
-  async function capture(path) {
-    if (files.size >= budget.files || remaining <= 0) {
-      omitted.push(path);
-      return;
-    }
-    const limit = Math.min(remaining, budget.source);
-    const result3 = await readSample({ limit, path, root });
-    if (Option_exports.isNone(result3)) {
-      omitted.push(path);
-      return;
-    }
-    files.set(path, result3.value);
-    remaining -= Buffer.byteLength(result3.value);
-  }
-  function markOmitted(path) {
-    omitted.push(path);
-  }
-  return { capture, files, markOmitted, omitted };
-}
-async function readSamples({ root, paths }) {
-  const budget = { bytes: MAX_SAMPLES, files: paths.length, source: MAX_SAMPLE };
-  const pool = createCapture({ budget, root });
-  for (const path of paths.toSorted()) {
-    await pool.capture(path);
-  }
-  return Object.fromEntries(pool.files);
-}
-function listPackageRoots(input) {
-  if (input.budget !== EXECUTION) {
-    return [];
-  }
-  const packageModules = input.contract.paths.filter((path) => path.endsWith("/__init__.py"));
-  return packageModules.map((path) => dirname5(path));
-}
-async function select(input) {
-  const packageRoots = listPackageRoots(input);
-  const pool = createCapture(input);
-  for (const path of listPaths(input.contract)) {
-    const decision = input.contract.decisions?.[path];
-    const kind = classifyPath({ decision, packageRoots, path });
-    if (kind === "omitted") {
-      pool.markOmitted(path);
-    }
-    if (kind === "read") {
-      await pool.capture(path);
-    }
-  }
-  return pool;
-}
-function listEntries(files) {
-  const result3 = [];
-  for (const path of [...files.keys()].toSorted()) {
-    const value3 = files.get(path);
-    if (value3 !== void 0) {
-      result3.push([path, value3]);
-    }
-  }
-  return result3;
-}
-function hashContents(files) {
-  const contents = listEntries(files);
-  const serialized = JSON.stringify(contents);
-  return hashSource(serialized);
-}
-var PROMPT = { bytes: MAX_BYTES, files: MAX_FILES, source: MAX_SOURCE };
-async function readInventory(input) {
-  const { contract, root } = input;
-  const { files, omitted: unprompted } = await select({ ...input, budget: PROMPT });
-  const dependencies = await select({ ...input, budget: EXECUTION });
-  const omittedPaths = /* @__PURE__ */ new Set([...unprompted, ...dependencies.omitted]);
-  const omitted = [...omittedPaths];
-  const assets = await readSamples({ paths: contract.assets ?? [], root });
-  const source = listEntries(files);
-  const shape = hashSurface({ assets, contract, omitted, source });
-  const observed = hashContents(dependencies.files);
-  return {
-    assets,
-    decisions: contract.decisions ?? {},
-    files,
-    observed,
-    omitted,
-    runtimeFiles: dependencies.files,
-    shape
-  };
-}
-
-// review/evidence.mts
-async function isFailingAtBase({ evaluation, check: check2 }) {
-  if (evaluation.base === null) {
-    return false;
-  }
-  const base = await readBaseInputs({
-    base: evaluation.base,
-    files: evaluation.current.runtimeFiles,
-    root: evaluation.root
-  });
-  if (!base.has(check2.subject)) {
-    return false;
-  }
-  const old = await observe({ check: check2, files: base, qualify: false });
-  return !old.passed;
-}
-async function observeOne(input) {
-  const { evaluation, check: check2, qualified } = input;
-  const context3 = {
-    check: check2.id,
-    contract: evaluation.contract,
-    reused: qualified,
-    subject: check2.subject
-  };
-  const result3 = await observe({
-    check: check2,
-    files: evaluation.current.runtimeFiles,
-    qualify: !qualified
-  });
-  if (result3.passed) {
-    return buildFinding({ ...context3, message: check2.promise, outcome: "passed" });
-  }
-  if (await isFailingAtBase(input)) {
-    return buildFinding({
-      ...context3,
-      message: "Also fails on the PR base. Review whether the change worsens the existing behavior.",
-      outcome: "unresolved"
-    });
-  }
-  const message = `${check2.promise} — expected ${JSON.stringify(check2.expected)}, observed ${JSON.stringify(result3.value)}`;
-  return buildFinding({ ...context3, message, outcome: "failed" });
-}
-function readErrorMessage(error) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "The observation is unavailable.";
-}
-async function observeCheck(input) {
-  async function runObservation() {
-    return await observeOne(input);
-  }
-  const result3 = await classifyResult({
-    message: "observation unavailable",
-    run: runObservation
-  });
-  if (Result_exports.isSuccess(result3)) {
-    return result3.success;
-  }
-  const message = readErrorMessage(result3.failure.cause);
-  return buildFinding({
-    check: input.check.id,
-    contract: input.evaluation.contract,
-    message,
-    outcome: "unresolved",
-    subject: input.check.subject
-  });
-}
-function readQualifications({ pin, evaluation }) {
-  const { saved, current, tools } = evaluation;
-  const serializedPin = JSON.stringify(pin);
-  if (saved?.signature !== hashSource(serializedPin) || saved.tools !== tools || saved.observed !== current.observed) {
-    return /* @__PURE__ */ new Set();
-  }
-  return new Set(saved.qualifications);
-}
-async function evaluate2(input) {
-  const { pin, evaluation } = input;
-  const prior = readQualifications(input);
-  const rows = pin.bundle.open.map(
-    (reason) => buildOpenFinding({ contract: evaluation.contract, reason })
-  );
-  for (const check2 of pin.bundle.checks) {
-    const qualified = prior.has(check2.id);
-    const row = await observeCheck({ check: check2, evaluation, qualified });
-    rows.push(row);
-  }
-  return rows;
-}
-
-// generation.mts
-import { readFile } from "node:fs/promises";
+// fx/fx-json.mts
 import { env as env3 } from "node:process";
 
-// fx-library.mts
+// fx/fx-library.mts
 import { pathToFileURL } from "node:url";
 
-// fx-cache.mts
+// fx/fx-cache.mts
+import { access as access6, mkdir as mkdir3, mkdtemp as mkdtemp2, realpath as realpath8, rename as rename2, rm as rm4 } from "node:fs/promises";
+import { homedir as homedir2 } from "node:os";
+import { isAbsolute as isAbsolute2, join as join8, relative as relative2, sep as sep4 } from "node:path";
+import { cwd, env as env2 } from "node:process";
+
+// fx/install-fx.mts
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { access as access2, cp, mkdir as mkdir3, mkdtemp as mkdtemp2, realpath as realpath5, rename as rename2, rm as rm4 } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename as basename4, dirname as dirname6, isAbsolute as isAbsolute2, join as join5, relative, resolve as resolve5, sep as sep3 } from "node:path";
-import { cwd, env as env2 } from "node:process";
-var LIBFX_VERSION = "0.0.17";
+import { cp } from "node:fs/promises";
+import { join as join7 } from "node:path";
+import { env } from "node:process";
+
+// fx/resolve-asset.mts
+import { access as access5 } from "node:fs/promises";
+async function resolveWorkerAsset(name) {
+  const local = new URL(name, import.meta.url);
+  async function probeLocal() {
+    await access5(local);
+  }
+  const found = await classifyResult({ message: "missing local worker asset", run: probeLocal });
+  if (Result_exports.isSuccess(found)) {
+    return local;
+  }
+  return new URL(`../${name}`, import.meta.url);
+}
+
+// fx/install-fx.mts
 var INSTALL_TIMEOUT_MS = 9e4;
-var alreadyPublishedCodes = ["EEXIST", "ENOTEMPTY"];
-var publishedCodes = new Set(alreadyPublishedCodes);
-function readCode(value3) {
-  if (value3 instanceof Error && "code" in value3 && typeof value3.code === "string") {
-    return value3.code;
-  }
-  return "";
-}
-async function readRealPath(path) {
-  async function run3() {
-    return await realpath5(path);
-  }
-  const inspect = tryOperation({ message: "resolve the fx cache path", run: run3 });
-  return await inspect.pipe(Effect_exports.result, Effect_exports.runPromise);
-}
-async function resolveDestination(path) {
-  const resolved = await readRealPath(path);
-  if (Result_exports.isSuccess(resolved)) {
-    return resolved.success;
-  }
-  if (readCode(resolved.failure.cause) !== "ENOENT") {
-    throw resolved.failure;
-  }
-  const parent = dirname6(path);
-  const trusted = await resolveDestination(parent);
-  const child = basename4(path);
-  return join5(trusted, child);
-}
-async function resolveTrustedPath(path) {
-  const sourceRoot = env2.TENET_WORKER_SOURCE_ROOT ?? cwd();
-  const source = await realpath5(sourceRoot);
-  const absolute = resolve5(path);
-  const destination = await resolveDestination(absolute);
-  const relation = relative(source, destination);
-  if (isAbsolute2(relation) || relation === ".." || relation.startsWith(`..${sep3}`)) {
-    return destination;
-  }
-  throw new CheckerError({ message: "move the fx cache outside the reviewed repository" });
-}
 async function copyManifest(input) {
-  const source = new URL(input.directory, import.meta.url);
-  const target = join5(input.destination, input.directory);
+  const source = await resolveWorkerAsset(input.directory);
+  const target = join7(input.destination, input.directory);
   await cp(source, target);
 }
-async function install(directory) {
+async function installFxRuntime(directory) {
   await copyManifest({ destination: directory, directory: "package.json" });
   await copyManifest({ destination: directory, directory: "package-lock.json" });
   const options = {
-    HOME: env2.HOME,
-    HTTPS_PROXY: env2.HTTPS_PROXY,
-    HTTP_PROXY: env2.HTTP_PROXY,
-    NODE_EXTRA_CA_CERTS: env2.NODE_EXTRA_CA_CERTS,
-    NO_PROXY: env2.NO_PROXY,
-    PATH: env2.PATH,
-    SSL_CERT_FILE: env2.SSL_CERT_FILE,
+    HOME: env.HOME,
+    HTTPS_PROXY: env.HTTPS_PROXY,
+    HTTP_PROXY: env.HTTP_PROXY,
+    NODE_EXTRA_CA_CERTS: env.NODE_EXTRA_CA_CERTS,
+    NO_PROXY: env.NO_PROXY,
+    PATH: env.PATH,
+    SSL_CERT_FILE: env.SSL_CERT_FILE,
     npm_config_userconfig: "/dev/null"
   };
   const child = spawn("npm", ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], {
@@ -21979,6 +22564,27 @@ async function install(directory) {
   if (values2.at(0) !== 0) {
     throw new CheckerError({ message: "npm could not install the pinned fx runtime" });
   }
+}
+
+// fx/fx-cache.mts
+var LIBFX_VERSION = "0.0.17";
+var alreadyPublishedCodes = ["EEXIST", "ENOTEMPTY"];
+var publishedCodes = new Set(alreadyPublishedCodes);
+function readCode(value3) {
+  if (value3 instanceof Error && "code" in value3 && typeof value3.code === "string") {
+    return value3.code;
+  }
+  return "";
+}
+async function resolveTrustedPath(path) {
+  const sourceRoot = env2.TENET_WORKER_SOURCE_ROOT ?? cwd();
+  const source = await realpath8(sourceRoot);
+  const destination = await resolveRoot(path);
+  const relation = relative2(source, destination);
+  if (isAbsolute2(relation) || relation === ".." || relation.startsWith(`..${sep4}`)) {
+    return destination;
+  }
+  throw new CheckerError({ message: "move the fx cache outside the reviewed repository" });
 }
 async function publish({ directory, destination }) {
   async function run3() {
@@ -21995,27 +22601,27 @@ async function publish({ directory, destination }) {
 }
 async function ensureInstallation({ cache: cache2, destination }) {
   await mkdir3(cache2, { mode: 448, recursive: true });
-  const prefix = join5(cache2, "install-");
+  const prefix = join8(cache2, "install-");
   const temporary = await mkdtemp2(prefix);
   try {
-    await install(temporary);
+    await installFxRuntime(temporary);
     await publish({ destination, directory: temporary });
   } finally {
     await rm4(temporary, { force: true, recursive: true });
   }
 }
 async function resolveInstallation() {
-  const userHome = homedir();
-  const home = env2.XDG_CACHE_HOME ?? join5(userHome, ".cache");
-  const directory = join5(home, "tenet", "libfx");
+  const userHome = homedir2();
+  const home = env2.XDG_CACHE_HOME ?? join8(userHome, ".cache");
+  const directory = join8(home, "tenet", "libfx");
   const cache2 = await resolveTrustedPath(directory);
-  const destination = join5(cache2, LIBFX_VERSION);
-  const entry = join5(destination, "node_modules", "libfx", "node.js");
+  const destination = join8(cache2, LIBFX_VERSION);
+  const entry = join8(destination, "node_modules", "libfx", "node.js");
   return { cache: cache2, destination, entry };
 }
 async function isCached(trusted) {
   async function run3() {
-    await access2(trusted);
+    await access6(trusted);
   }
   const read = tryOperation({ message: "inspect the fx cache", run: run3 });
   const cached3 = await read.pipe(Effect_exports.result, Effect_exports.runPromise);
@@ -22038,7 +22644,7 @@ async function resolveLibraryPath() {
   return await resolveTrustedPath(entry);
 }
 
-// fx-library.mts
+// fx/fx-library.mts
 function isLibrary(value3) {
   if (typeof value3 !== "object" || value3 === null) {
     return false;
@@ -22058,19 +22664,19 @@ async function readLibrary() {
   return library;
 }
 
-// openrouter.mts
+// fx/openrouter.mts
 import { Buffer as Buffer2 } from "node:buffer";
 
-// http-method.mts
+// fx/http-method.mts
 var HttpMethod = { Post: "POST" };
 
-// openrouter.mts
+// fx/openrouter.mts
 var ROUTER_BASE = "https://openrouter.ai/api/v1";
 var CHAT_ENDPOINT = `${ROUTER_BASE}/chat/completions`;
 var MAX_RESPONSE_BYTES = 2097152;
 var MAX_REQUEST_BYTES = 1048576;
-var REQUEST_TIMEOUT_MS = 85e3;
-var OUTPUT_TOKENS = 8192;
+var REQUEST_TIMEOUT_MS = 11e4;
+var OUTPUT_TOKENS = 16384;
 var JsonObject2 = Schema_exports.Record(Schema_exports.String, Schema_exports.Unknown);
 var JsonText = Schema_exports.fromJsonString(JsonObject2);
 var decodeInput = Schema_exports.decodeUnknownOption(JsonText, { onExcessProperty: "error" });
@@ -22215,24 +22821,12 @@ var OpenRouterTurn = class {
   }
 };
 
-// generation.mts
-var TURN_TIMEOUT_MS = 95e3;
+// fx/fx-json.mts
+var TURN_TIMEOUT_MS = 12e4;
 var CONTEXT_WINDOW = 128e3;
 var CheckerObject = Schema_exports.Record(Schema_exports.String, Schema_exports.Unknown);
 var CheckerJson = Schema_exports.fromJsonString(CheckerObject);
 var decodeJson = Schema_exports.decodeUnknownOption(CheckerJson, { onExcessProperty: "error" });
-function encodeInput(request3) {
-  const { contract, inventory } = request3;
-  const files = Object.fromEntries(inventory.files);
-  return JSON.stringify({
-    applicability_hints: inventory.decisions,
-    contract: contract.document,
-    files,
-    mechanical: contract.mechanical,
-    previously_checked: contract.checks,
-    reference_samples: inventory.assets
-  });
-}
 function decodeAnswer(text2) {
   const content = text2.trim().replaceAll(new RegExp("^```(?:json)?\\s*|\\s*```$", "gv"), "");
   const decoded = decodeJson(content);
@@ -22261,10 +22855,8 @@ function readCredentials() {
   }
   return key;
 }
-async function createAgent(router) {
+async function createAgent({ instructions, router }) {
   const { createFxAgent, memory } = await readLibrary();
-  const promptUrl = new URL("checker-prompt.md", import.meta.url);
-  const instructions = await readFile(promptUrl, "utf-8");
   const model = env3.TENET_AGENT_MODEL ?? "openai/gpt-6-luna";
   const durability = memory();
   const send = async (url, init) => await router.send({ init, url });
@@ -22283,8 +22875,13 @@ async function createAgent(router) {
   };
   return createFxAgent(settings);
 }
-async function runGeneration({ agent, router, request: request3 }) {
-  const source = encodeInput(request3);
+async function runTurn({
+  agent,
+  onRequest,
+  router,
+  source,
+  timeoutMs
+}) {
   function fail7(cause) {
     const message = Option_exports.getOrElse(router.failure, () => "could not return a usable checker");
     return new CheckerError({ cause, message });
@@ -22296,259 +22893,570 @@ async function runGeneration({ agent, router, request: request3 }) {
   }
   async function finish() {
     if (router.attempted) {
-      request3.onRequest(router.cost);
+      onRequest(router.cost);
     }
     await agent.close();
   }
   const operation = Effect_exports.tryPromise({ catch: fail7, try: run3 });
   const close2 = tryOperation({ message: "close fx generation", run: finish });
   const release = Effect_exports.orDie(close2);
-  const result3 = operation.pipe(Effect_exports.timeout(TURN_TIMEOUT_MS), Effect_exports.ensuring(release));
+  const result3 = operation.pipe(Effect_exports.timeout(timeoutMs), Effect_exports.ensuring(release));
   return await Effect_exports.runPromise(result3);
 }
-async function generate(request3) {
+async function runFxJson({
+  instructions,
+  onRequest,
+  source,
+  timeoutMs = TURN_TIMEOUT_MS
+}) {
   const key = readCredentials();
   const router = new OpenRouterTurn(key);
-  const agent = await createAgent(router);
-  return await runGeneration({ agent, request: request3, router });
+  const agent = await createAgent({ instructions, router });
+  return await runTurn({ agent, onRequest, router, source, timeoutMs });
 }
 
-// wire.mts
-var Paths = Schema_exports.Array(Schema_exports.String);
-var OptionalPaths = Schema_exports.OptionFromOptionalKey(Paths);
-var OptionalText = Schema_exports.OptionFromOptionalKey(Schema_exports.String);
-var NullableText = Schema_exports.OptionFromNullOr(Schema_exports.String);
-var FileDecisions = Schema_exports.Record(Schema_exports.String, Schema_exports.String);
-var Outcome = Schema_exports.Literals(["passed", "failed", "unresolved"]);
-var NullableCost = Schema_exports.OptionFromNullOr(Schema_exports.Number);
-var FindingFields = Schema_exports.Struct({
-  check: Schema_exports.String,
-  contract: Schema_exports.String,
-  cost_usd: NullableCost,
-  message: Schema_exports.String,
-  outcome: Outcome,
-  requested: Schema_exports.Boolean,
-  reused: Schema_exports.Boolean,
-  subject: NullableText
+// fx/explain-findings.mts
+var EXPLAIN_TIMEOUT_MS = 3e4;
+var MAX_EXPLANATION_CHARS = 480;
+var ASCII_SPACE2 = 32;
+var ASCII_DEL2 = 127;
+var EXPLAINABLE_OUTCOMES = /* @__PURE__ */ new Set(["failed", "unresolved"]);
+var ExplanationMap = Schema_exports.Record(Schema_exports.String, Schema_exports.String);
+var ExplanationPayload = Schema_exports.Struct({ explanations: ExplanationMap });
+var decodeExplanations = Schema_exports.decodeUnknownOption(ExplanationPayload, {
+  onExcessProperty: "error"
 });
-var Finding = Schema_exports.toEncoded(FindingFields);
-var Findings = Schema_exports.Array(Finding);
-var OptionalFileDecisions = Schema_exports.OptionFromOptionalNullOr(FileDecisions);
-var OptionalFindings = Schema_exports.OptionFromOptionalKey(Findings);
-var ContractFields = Schema_exports.Struct({
-  assets: OptionalPaths,
-  checks: OptionalPaths,
-  decisions: OptionalFileDecisions,
-  document: Schema_exports.String,
-  hash: Schema_exports.String,
-  mechanical: OptionalFindings,
-  name: Schema_exports.String,
-  path: Schema_exports.String,
-  paths: Paths
-});
-var Contract = Schema_exports.toEncoded(ContractFields);
-var OptionalBase = Schema_exports.OptionFromOptionalNullOr(Schema_exports.String);
-var ContractList = Schema_exports.Array(Contract);
-var OptionalFlag = Schema_exports.OptionFromOptionalKey(Schema_exports.Boolean);
-var RequestFields = Schema_exports.Struct({
-  base: OptionalBase,
-  contracts: ContractList,
-  fresh: OptionalFlag,
-  inspect: OptionalFlag,
-  maxGenerations: Schema_exports.Int,
-  root: Schema_exports.String,
-  state: Schema_exports.String
-});
-var Request = Schema_exports.toEncoded(RequestFields);
-var ReceiptFields = Schema_exports.Struct({
-  base: NullableText,
-  observed: Schema_exports.String,
-  qualifications: Paths,
-  rows: Findings,
-  shape: Schema_exports.String,
-  signature: OptionalText,
-  tools: Schema_exports.String
-});
-var Receipt = Schema_exports.toEncoded(ReceiptFields);
-var Runtime = Schema_exports.Literals(["node", "python", "rust"]);
-var CheckFields = Schema_exports.Struct({
-  defect: Schema_exports.String,
-  expected: Schema_exports.Unknown,
-  good: Schema_exports.String,
-  id: Schema_exports.String,
-  promise: Schema_exports.String,
-  refactor: Schema_exports.String,
-  runtime: Runtime,
-  subject: Schema_exports.String,
-  test: OptionalText,
-  testFile: OptionalText
-});
-var Check = Schema_exports.toEncoded(CheckFields);
-var CheckList = Schema_exports.Array(Check);
-var Bundle = Schema_exports.Struct({ checks: CheckList, open: Paths });
-var PinProtocol = Schema_exports.Literal(1);
-var PinFields = Schema_exports.Struct({
-  bundle: Bundle,
-  contractHash: OptionalText,
-  protocol: PinProtocol,
-  shape: Schema_exports.String
-});
-var Pin = Schema_exports.toEncoded(PinFields);
-
-// schema.mts
-var decodeBundle = Schema_exports.decodeUnknownOption(Bundle, { onExcessProperty: "error" });
-var MAX_CHECKS = 12;
-function readBundle(value3) {
-  const decoded = decodeBundle(value3);
-  if (Option_exports.isNone(decoded)) {
-    throw new CheckerError({ message: "the checker plan has invalid fields" });
+var EXPLAIN_INSTRUCTIONS = [
+  "You write concise, situation-specific CLI diagnostic messages for Tenet contract checks.",
+  "Input JSON contains a contract and a list of failed or unresolved behavior-check findings.",
+  'Return JSON: {"explanations": {"<index>": "<1-2 concise plain-English sentences>"}}.',
+  "For each failed finding: state clearly what the code did vs what the contract requires, citing the exact observed and expected values from raw_message without dumping raw JSON blobs when a short summary is clearer.",
+  "For each unresolved finding: explain the concrete blocker (missing sandbox/runtime, qualification mismatch, PR base failure, or coverage gap) and the single clearest next step.",
+  "Never invent files, line numbers, APIs, or behaviors not present in the input. Never contradict the outcome. Plain text only (no markdown headings or code fences)."
+].join("\n");
+function mapPrintableChar(character) {
+  const code = character.codePointAt(0) ?? 0;
+  if (code < ASCII_SPACE2 || code === ASCII_DEL2) {
+    return " ";
   }
-  return decoded.value;
+  return character;
 }
-function parseBundle({ value: value3, files }) {
-  const { checks, open: open4 } = readBundle(value3);
-  if (checks.length > MAX_CHECKS || open4.length > MAX_CHECKS) {
-    throw new CheckerError({ message: "checker plan exceeds the number of allowed checks" });
+function cleanText(text2) {
+  const characters = Array.from(text2, (character) => mapPrintableChar(character));
+  const collapsed = characters.join("").replaceAll(new RegExp("\\s+", "gv"), " ").trim();
+  if (collapsed.length <= MAX_EXPLANATION_CHARS) {
+    return collapsed;
   }
-  const verified = checks.map((check2) => validate3({ check: check2, files }));
-  const identifiers = verified.map((check2) => check2.id);
-  const names = new Set(identifiers);
-  if (names.size !== verified.length || names.size + open4.length === 0) {
-    throw new CheckerError({ message: "checker plan has missing or duplicate checks" });
-  }
-  return { checks: verified, open: open4 };
+  return collapsed.slice(0, MAX_EXPLANATION_CHARS);
 }
-
-// review/has-check-inputs.mts
-function hasCheckInputs({ check: check2, files }) {
-  return files.has(check2.subject) && (check2.testFile === void 0 || files.has(check2.testFile));
+function collectCandidates(rows) {
+  const candidates = [];
+  for (const [index2, row] of rows.entries()) {
+    if (EXPLAINABLE_OUTCOMES.has(row.outcome)) {
+      candidates.push({
+        check: row.check,
+        index: index2,
+        outcome: row.outcome,
+        raw_message: row.message,
+        subject: row.subject
+      });
+    }
+  }
+  return candidates;
 }
-
-// review/update-pin.mts
-function canKeep({ check: check2, next, files }) {
-  if (!hasCheckInputs({ check: check2, files })) {
-    return false;
-  }
-  const assigned = next.bundle.checks.find((item) => item.id === check2.id);
-  if (assigned === void 0) {
-    return true;
-  }
-  const sameEntry = assigned.subject === check2.subject && assigned.testFile === check2.testFile;
-  return sameEntry && assigned.runtime === check2.runtime && assigned.promise === check2.promise;
+function hasApiKey() {
+  const key = env4.OPENROUTER_API_KEY;
+  return key !== void 0 && key.length > 0;
 }
-function updatePin({ prior, next, files }) {
-  if (next.contractHash === void 0 || prior.contractHash !== next.contractHash) {
-    return next;
+function updateRow({ explanations, index: index2, row }) {
+  const key = String(index2);
+  if (row.outcome === "passed" || !Object.hasOwn(explanations, key)) {
+    return row;
   }
-  const kept = prior.bundle.checks.filter((check2) => canKeep({ check: check2, files, next }));
-  const previous = kept.map((check2) => check2.id);
-  const ids = new Set(previous);
-  const additions = next.bundle.checks.filter((check2) => !ids.has(check2.id));
-  const value3 = { checks: [...kept, ...additions], open: next.bundle.open };
-  const bundle = parseBundle({ files, value: value3 });
-  return { ...next, bundle };
+  const message = cleanText(explanations[key] ?? "");
+  if (message.length === 0) {
+    return row;
+  }
+  return { ...row, message };
 }
-
-// review/select-pin.mts
-async function generatePin(input) {
-  const { ctx, attempt } = input;
-  const {
-    job: { contract, canSpendRequest },
-    evaluation: { current }
-  } = ctx;
-  if (!canSpendRequest()) {
-    throw new CheckerError({ message: "no saved checker. Generation needs a model request." });
+function applyExplanations({ explanations, rows }) {
+  const updated = [];
+  for (const [index2, row] of rows.entries()) {
+    const nextRow = updateRow({ explanations, index: index2, row });
+    updated.push(nextRow);
   }
-  function onRequest(cost) {
-    Object.assign(attempt, { cost, requested: true });
-  }
-  const value3 = await generate({ contract, inventory: current, onRequest });
-  return {
-    bundle: parseBundle({ files: current.files, value: value3 }),
-    contractHash: contract.hash,
-    protocol: 1,
-    shape: current.shape
-  };
+  return updated;
 }
-async function selectPin(input) {
-  const { ctx } = input;
-  if (ctx.evaluation.current.files.size === 0) {
-    throw new CheckerError({ message: "no supported source was available for a behavior check." });
-  }
-  if (ctx.pin !== void 0 && ctx.matching) {
-    return ctx.pin;
-  }
-  const generated = await generatePin(input);
-  if (ctx.pin === void 0) {
-    return generated;
-  }
-  return updatePin({ files: ctx.evaluation.current.runtimeFiles, next: generated, prior: ctx.pin });
-}
-
-// review/verify.mts
-async function publish2({ ctx, pin }) {
-  const input = { path: ctx.lock, root: ctx.job.request.root, value: pin };
-  if (ctx.pin === void 0) {
-    await writeAtomic({ ...input, first: true });
-    return;
-  }
-  await replacePin({ ...input, prior: ctx.prior });
-}
-async function verify({ ctx, attempt }) {
-  const pin = await selectPin({ attempt, ctx });
-  const rows = await evaluate2({ evaluation: ctx.evaluation, pin });
-  const after = await readInventory({ contract: ctx.job.contract, root: ctx.job.request.root });
-  if (after.observed !== ctx.evaluation.current.observed || after.shape !== ctx.evaluation.current.shape) {
-    throw new CheckerError({ message: "source changed during the check. Run it again." });
-  }
-  const results2 = rows.filter((row) => row.outcome !== "unresolved");
-  const cache2 = ctx.matching || pin.bundle.checks.length > 0 && results2.length === pin.bundle.checks.length;
-  if (cache2 && !ctx.matching) {
-    await publish2({ ctx, pin });
-  }
-  return { cache: cache2, pin, rows };
-}
-
-// review/measure.mts
-function mergeResults({ gaps, result: result3 }) {
-  const rows = [...gaps, ...result3.rows];
-  if (result3.cache) {
-    return { pin: result3.pin, rows };
-  }
-  return { rows };
-}
-async function collectFindings(options) {
-  const { ctx } = options;
-  const gaps = reportCoverage({
-    contract: ctx.job.contract,
-    omitted: ctx.evaluation.current.omitted
+async function readExplanations({
+  candidates,
+  contract,
+  onRequest
+}) {
+  const source = JSON.stringify({
+    contract: contract.document,
+    contract_name: contract.name,
+    findings: candidates
   });
-  async function runChecks2() {
-    return await verify(options);
+  async function requestExplanations() {
+    return await runFxJson({
+      instructions: EXPLAIN_INSTRUCTIONS,
+      onRequest,
+      source,
+      timeoutMs: EXPLAIN_TIMEOUT_MS
+    });
   }
   const classified = await classifyResult({
-    message: "checker unavailable",
-    run: runChecks2
+    message: "finding explanation unavailable",
+    run: requestExplanations
   });
   if (Result_exports.isFailure(classified)) {
-    const message = readReason(classified.failure.cause);
-    const warning = buildOpenFinding({ contract: ctx.job.contract.name, reason: message });
-    return { rows: [...gaps, warning] };
+    return Option_exports.none();
   }
-  return mergeResults({ gaps, result: classified.success });
+  const decoded = decodeExplanations(classified.success);
+  return Option_exports.map(decoded, (payload) => payload.explanations);
 }
-async function measure(ctx) {
-  const attempt = { cost: null, requested: false };
-  const result3 = await collectFindings({ attempt, ctx });
-  await saveReceipt({ ctx, ...result3 });
-  const first = result3.rows.at(0);
-  if (attempt.requested && first !== void 0) {
-    Object.assign(first, { cost_usd: attempt.cost, requested: true });
+async function explainFindings({
+  canSpendRequest,
+  contract,
+  onRequest,
+  progressFile,
+  rows
+}) {
+  const candidates = collectCandidates(rows);
+  if (candidates.length === 0 || !hasApiKey() || !canSpendRequest()) {
+    return rows;
   }
-  return result3.rows;
+  await reportProgress({ contract: contract.name, phase: "explaining findings", progressFile });
+  const explanations = await readExplanations({ candidates, contract, onRequest });
+  if (Option_exports.isNone(explanations)) {
+    return rows;
+  }
+  return applyExplanations({ explanations: explanations.value, rows });
 }
 
-// review/read-cached.mts
+// fx/generation.mts
+import { readFile } from "node:fs/promises";
+function encodeInput(request3) {
+  const { contract, inventory, repair } = request3;
+  const files = Object.fromEntries(inventory.files);
+  const payload = {
+    applicability_hints: inventory.decisions,
+    contract: contract.document,
+    files,
+    mechanical: contract.mechanical,
+    previously_checked: contract.checks,
+    reference_samples: inventory.assets
+  };
+  if (repair === void 0) {
+    return JSON.stringify(payload);
+  }
+  return JSON.stringify({
+    ...payload,
+    previous_attempt: repair.previous,
+    qualification_errors: repair.errors
+  });
+}
+async function generate(request3) {
+  const promptUrl = await resolveWorkerAsset("checker-prompt.md");
+  const instructions = await readFile(promptUrl, "utf-8");
+  const source = encodeInput(request3);
+  return await runFxJson({ instructions, onRequest: request3.onRequest, source });
+}
+
+// review/read-reason.mts
+function readReason(error) {
+  if (error instanceof SyntaxError) {
+    return "The checker response was not valid JSON.";
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Could not complete the check.";
+}
+
+// discovery/base.mts
+import { execFile as execFile2 } from "node:child_process";
+import { env as env5 } from "node:process";
+import { promisify as promisify2 } from "node:util";
+var execute2 = promisify2(execFile2);
+var OBJECT_ID = new RegExp("^(?:[a-f0-9]{40}|[a-f0-9]{64})$", "v");
+var FILE_LIMIT = 524288;
+var GIT_TIMEOUT = 3e3;
+async function runGit({ root, args: args2 }) {
+  const result3 = await execute2(
+    "git",
+    ["--no-replace-objects", "--literal-pathspecs", "-C", root, ...args2],
+    {
+      env: { GIT_CONFIG_NOSYSTEM: "1", PATH: env5.PATH },
+      maxBuffer: FILE_LIMIT,
+      timeout: GIT_TIMEOUT
+    }
+  );
+  return result3.stdout;
+}
+async function readBaseInputs({
+  base,
+  files,
+  root
+}) {
+  if (!OBJECT_ID.test(base)) {
+    throw new CheckerError({ message: "no pinned PR base is available." });
+  }
+  const priorFiles = /* @__PURE__ */ new Map();
+  for (const path of files.keys()) {
+    const entry = await runGit({ args: ["ls-tree", "-z", base, "--", path], root });
+    if (entry.length === 0) {
+      continue;
+    }
+    const content = await runGit({ args: ["cat-file", "blob", `${base}:${path}`], root });
+    priorFiles.set(path, content);
+  }
+  return priorFiles;
+}
+
+// discovery/discovery.mts
+import { basename as basename6, dirname as dirname8, extname } from "node:path";
+
+// discovery/hash-surface.mts
+import { basename as basename4 } from "node:path";
+
+// discovery/manifests.mts
+var MANIFESTS = /* @__PURE__ */ new Set([
+  "package.json",
+  "Cargo.toml",
+  "pyproject.toml",
+  "tsconfig.json"
+]);
+
+// discovery/hash-surface.mts
+var SURFACE_VERSION = 2;
+var CONTROL_WORDS = /* @__PURE__ */ new Set([
+  "if",
+  "switch",
+  "for",
+  "while",
+  "catch",
+  "function"
+]);
+var DECLARATION = new RegExp("(?:^|\\n)\\s*(?:export\\s+(?:(?:default|async)\\s+)*(?:class|function|const|let|enum|type|interface)?\\s*|(?:pub\\s+(?:async\\s+)?(?:fn|struct|trait|enum|type|mod)|(?:async\\s+)?def|class)\\s+)(?<name>[\\w$]+)", "gv");
+var MEMBER = new RegExp("(?:^|[\\{\\};\\n])\\s*(?:(?:public|static|async|readonly|abstract|get|set)\\s+)*(?<name>[A-Za-z_$][\\w$]*)\\s*\\([^\\(\\)\\{\\};]*\\)\\s*(?::[^=\\{\\};]+)?\\s*\\{", "gv");
+var EXPORT = new RegExp("(?:^|\\n)\\s*(?:export\\s+(?:type\\s+)?\\{[^\\}]+\\}(?:\\s+from\\s+[^;\\n]+)?|export\\s+\\*\\s+from\\s+[^;\\n]+|pub\\s+use\\s+[^;]+);?", "gv");
+function readSurface([path, source]) {
+  const name = basename4(path);
+  if (MANIFESTS.has(name)) {
+    return [path, hashSource(source)];
+  }
+  const declarationMatches = source.matchAll(DECLARATION);
+  const declared = Array.from(declarationMatches, (match7) => match7[1]);
+  const memberMatches = source.matchAll(MEMBER);
+  const members = Array.from(memberMatches, (match7) => match7[1]).filter(
+    (member) => !CONTROL_WORDS.has(member)
+  );
+  const exportMatches = source.matchAll(EXPORT);
+  const exported = Array.from(exportMatches, (match7) => match7[0].trim());
+  return [path, [...declared, ...members, ...exported].toSorted()];
+}
+function hashSurface({ contract, source, assets, omitted }) {
+  const names = source.map((entry) => readSurface(entry));
+  const hints = Object.entries(assets);
+  const missing2 = omitted.toSorted();
+  const identity2 = JSON.stringify([SURFACE_VERSION, contract.hash, names, hints, missing2]);
+  return hashSource(identity2);
+}
+
+// discovery/rank-path.mts
+import { basename as basename5 } from "node:path";
+var enumRank = {
+  failure: 1,
+  manifest: 0,
+  otherPublic: 3,
+  privateOrTest: 4,
+  publicSource: 2,
+  unrelated: 5
+};
+function isPrivateModule(path) {
+  const name = basename5(path);
+  return name.startsWith("_") && name !== "__init__.py";
+}
+function isTestPath(path) {
+  const segments = path.split("/");
+  return segments.includes("test") || segments.includes("tests");
+}
+function rankUnclassifiedPath(path) {
+  if (isPrivateModule(path) || isTestPath(path)) {
+    return enumRank.privateOrTest;
+  }
+  if (path.startsWith("src/") || path.startsWith("lib/")) {
+    return enumRank.publicSource;
+  }
+  return enumRank.otherPublic;
+}
+function rankPath({ path, decision }) {
+  const name = basename5(path);
+  if (MANIFESTS.has(name)) {
+    return enumRank.manifest;
+  }
+  if (decision === "fail") {
+    return enumRank.failure;
+  }
+  if (decision === "not_applicable") {
+    return enumRank.unrelated;
+  }
+  return rankUnclassifiedPath(path);
+}
+function listRankedPaths(contract) {
+  const paths = contract.paths.toSorted();
+  const groups = [
+    enumRank.manifest,
+    enumRank.failure,
+    enumRank.publicSource,
+    enumRank.otherPublic,
+    enumRank.privateOrTest,
+    enumRank.unrelated
+  ];
+  return groups.flatMap(
+    (group) => paths.filter((path) => rankPath({ decision: contract.decisions?.[path], path }) === group)
+  );
+}
+
+// discovery/discovery.mts
+var EXECUTION = { bytes: 16777216, files: 1024, source: 524288 };
+var MAX_FILES = 160;
+var MAX_BYTES = 393216;
+var MAX_SOURCE = 131072;
+var MAX_SAMPLES = 32768;
+var MAX_SAMPLE = 8192;
+var EXTENSIONS = /* @__PURE__ */ new Set([
+  ".js",
+  ".cjs",
+  ".mjs",
+  ".ts",
+  ".mts",
+  ".cts",
+  ".tsx",
+  ".jsx",
+  ".py",
+  ".rs"
+]);
+var UNSUPPORTED_EXTENSIONS = /* @__PURE__ */ new Set([
+  ".go",
+  ".java",
+  ".c",
+  ".cc",
+  ".cpp",
+  ".swift",
+  ".rb",
+  ".cs",
+  ".kt"
+]);
+var PACKAGE_DATA_EXTENSIONS = /* @__PURE__ */ new Set([".txt", ".json", ".csv"]);
+function classifyPath({
+  path,
+  decision,
+  packageRoots
+}) {
+  const extension = extname(path);
+  const name = basename6(path);
+  if (EXTENSIONS.has(extension) || MANIFESTS.has(name)) {
+    return "read";
+  }
+  if (PACKAGE_DATA_EXTENSIONS.has(extension) && packageRoots.some((root) => path.startsWith(`${root}/`))) {
+    return "read";
+  }
+  if (UNSUPPORTED_EXTENSIONS.has(extension) && decision !== "not_applicable" || decision === "fail") {
+    return "omitted";
+  }
+  return "skip";
+}
+async function readSample(input) {
+  async function runRead() {
+    return await readRegular(input);
+  }
+  const result3 = await classifyResult({ message: "bounded source unavailable", run: runRead });
+  return Result_exports.getSuccess(result3);
+}
+function createCapture({ root, budget }) {
+  const files = /* @__PURE__ */ new Map();
+  const omitted = [];
+  let remaining = budget.bytes;
+  async function capture(path) {
+    if (files.size >= budget.files || remaining <= 0) {
+      omitted.push(path);
+      return;
+    }
+    const limit = Math.min(remaining, budget.source);
+    const result3 = await readSample({ limit, path, root });
+    if (Option_exports.isNone(result3)) {
+      omitted.push(path);
+      return;
+    }
+    files.set(path, result3.value);
+    remaining -= Buffer.byteLength(result3.value);
+  }
+  function markOmitted(path) {
+    omitted.push(path);
+  }
+  return { capture, files, markOmitted, omitted };
+}
+async function readSamples({ root, paths }) {
+  const budget = { bytes: MAX_SAMPLES, files: paths.length, source: MAX_SAMPLE };
+  const pool = createCapture({ budget, root });
+  for (const path of paths.toSorted()) {
+    await pool.capture(path);
+  }
+  return Object.fromEntries(pool.files);
+}
+function listPackageRoots(input) {
+  if (input.budget !== EXECUTION) {
+    return [];
+  }
+  const packageModules = input.contract.paths.filter((path) => path.endsWith("/__init__.py"));
+  return packageModules.map((path) => dirname8(path));
+}
+async function select(input) {
+  const packageRoots = listPackageRoots(input);
+  const pool = createCapture(input);
+  for (const path of listRankedPaths(input.contract)) {
+    const decision = input.contract.decisions?.[path];
+    const kind = classifyPath({ decision, packageRoots, path });
+    if (kind === "omitted") {
+      pool.markOmitted(path);
+    }
+    if (kind === "read") {
+      await pool.capture(path);
+    }
+  }
+  return pool;
+}
+function listEntries(files) {
+  const result3 = [];
+  for (const path of [...files.keys()].toSorted()) {
+    const value3 = files.get(path);
+    if (value3 !== void 0) {
+      result3.push([path, value3]);
+    }
+  }
+  return result3;
+}
+function hashContents(files) {
+  const contents = listEntries(files);
+  const serialized = JSON.stringify(contents);
+  return hashSource(serialized);
+}
+var PROMPT = { bytes: MAX_BYTES, files: MAX_FILES, source: MAX_SOURCE };
+async function readInventory(input) {
+  const { contract, root } = input;
+  const { files, omitted: unprompted } = await select({ ...input, budget: PROMPT });
+  const dependencies = await select({ ...input, budget: EXECUTION });
+  const omittedPaths = /* @__PURE__ */ new Set([...unprompted, ...dependencies.omitted]);
+  const omitted = [...omittedPaths];
+  const assets = await readSamples({ paths: contract.assets ?? [], root });
+  const source = listEntries(files);
+  const shape = hashSurface({ assets, contract, omitted, source });
+  const observed = hashContents(dependencies.files);
+  return {
+    assets,
+    decisions: contract.decisions ?? {},
+    files,
+    observed,
+    omitted,
+    runtimeFiles: dependencies.files,
+    shape
+  };
+}
+
+// review/receipt/evidence.mts
+async function isFailingAtBase({ evaluation, check: check2 }) {
+  if (evaluation.base === null) {
+    return false;
+  }
+  const base = await readBaseInputs({
+    base: evaluation.base,
+    files: evaluation.current.runtimeFiles,
+    root: evaluation.root
+  });
+  if (!base.has(check2.subject)) {
+    return false;
+  }
+  const old = await observe({ check: check2, files: base, qualify: false });
+  return !old.passed;
+}
+async function observeOne(input) {
+  const { evaluation, check: check2, qualified, reused } = input;
+  const context3 = {
+    check: check2.id,
+    contract: evaluation.contract,
+    reused,
+    subject: check2.subject
+  };
+  const result3 = await observe({
+    check: check2,
+    files: evaluation.current.runtimeFiles,
+    qualify: !qualified
+  });
+  if (result3.passed) {
+    return buildFinding({ ...context3, message: check2.promise, outcome: "passed" });
+  }
+  if (await isFailingAtBase(input)) {
+    return buildFinding({
+      ...context3,
+      message: "Also fails on the PR base. Review whether the change worsens the existing behavior.",
+      outcome: "unresolved"
+    });
+  }
+  const message = `${check2.promise} (expected ${JSON.stringify(check2.expected)}, got ${JSON.stringify(result3.value)})`;
+  return buildFinding({ ...context3, message, outcome: "failed" });
+}
+function readErrorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "The observation is unavailable.";
+}
+async function observeCheck(input) {
+  async function runObservation() {
+    return await observeOne(input);
+  }
+  const result3 = await classifyResult({
+    message: "observation unavailable",
+    run: runObservation
+  });
+  if (Result_exports.isSuccess(result3)) {
+    return result3.success;
+  }
+  const message = readErrorMessage(result3.failure.cause);
+  return buildFinding({
+    check: input.check.id,
+    contract: input.evaluation.contract,
+    message,
+    outcome: "unresolved",
+    subject: input.check.subject
+  });
+}
+function readQualifications({ pin, evaluation }) {
+  const { saved, current, tools } = evaluation;
+  const serializedPin = JSON.stringify(pin);
+  if (saved?.signature !== hashSource(serializedPin) || saved.tools !== tools || saved.observed !== current.observed) {
+    return /* @__PURE__ */ new Set();
+  }
+  return new Set(saved.qualifications);
+}
+async function evaluate2(input) {
+  const { pin, evaluation, prequalifiedIds } = input;
+  const prior = readQualifications(input);
+  const rows = pin.bundle.open.map(
+    (reason) => buildOpenFinding({ contract: evaluation.contract, reason })
+  );
+  for (const check2 of pin.bundle.checks) {
+    const reused = prior.has(check2.id);
+    const qualified = reused || (prequalifiedIds?.has(check2.id) ?? false);
+    const row = await observeCheck({ check: check2, evaluation, qualified, reused });
+    rows.push(row);
+  }
+  return rows;
+}
+
+// review/receipt/read-cached.mts
 function isCurrentReceipt(input) {
   const { evaluation } = input;
   const { base, current, saved, tools } = evaluation;
@@ -22605,52 +23513,14 @@ function readCached(ctx) {
   return Option_exports.some(rows);
 }
 
-// review/receipt.mts
-import { dirname as dirname7, join as join6 } from "node:path";
-
-// review/is-matching.mts
-function isMatching({ current, contractHash, pin }) {
-  if (pin.shape !== current.shape || pin.contractHash !== void 0 && pin.contractHash !== contractHash) {
-    return false;
-  }
-  const { runtimeFiles: files } = current;
-  return pin.bundle.checks.every((check2) => hasCheckInputs({ check: check2, files }));
-}
-
-// review/parse-pin.mts
-var decodePin = Schema_exports.decodeUnknownOption(Pin, { onExcessProperty: "error" });
-function readPin(record2) {
-  const decoded = decodePin(record2.json);
-  if (Option_exports.isNone(decoded)) {
-    throw new CheckerError({ message: "the saved checker has an unsupported format" });
-  }
-  return decoded.value;
-}
-function parsePin({ value: value3, current, contractHash }) {
-  if (Option_exports.isNone(value3)) {
-    return { matching: false };
-  }
-  const prior = readPin(value3.value);
-  if (!isMatching({ contractHash, current, pin: prior })) {
-    return { matching: false, pin: prior };
-  }
-  const bundle = parseBundle({ files: current.runtimeFiles, value: prior.bundle });
-  const pin = {
-    bundle,
-    contractHash: prior.contractHash,
-    protocol: prior.protocol,
-    shape: prior.shape
-  };
-  return { matching: true, pin };
-}
-
-// review/receipt.mts
+// review/receipt/receipt.mts
+import { dirname as dirname9, join as join9 } from "node:path";
 var decodeReceipt = Schema_exports.decodeUnknownOption(Receipt, { onExcessProperty: "error" });
 function resolvePaths(contract) {
   const identity2 = hashSource(contract.path);
-  const receipt = join6("agent-checks", `${identity2}.json`);
-  const directory = dirname7(contract.path);
-  const lock = join6(directory, "agent-checks.lock.json");
+  const receipt = join9("agent-checks", `${identity2}.json`);
+  const directory = dirname9(contract.path);
+  const lock = join9(directory, "agent-checks.lock.json");
   return { lock, receipt };
 }
 async function readReceipt({
@@ -22681,9 +23551,255 @@ async function readContext(job) {
   return { evaluation, job, lock, ...candidate, prior, receipt };
 }
 
+// review/receipt/save-receipt.mts
+async function saveReceipt({ ctx, rows, pin }) {
+  const {
+    evaluation: { base, tools, current },
+    job: { request: request3 }
+  } = ctx;
+  const qualifications = rows.filter((row) => row.outcome !== "unresolved").map((row) => row.check);
+  const candidate = Option_exports.fromUndefinedOr(pin);
+  const serialized = Option_exports.map(candidate, (recipe) => JSON.stringify(recipe));
+  const signature = Option_exports.map(serialized, hashSource);
+  const value3 = {
+    base,
+    observed: current.observed,
+    qualifications,
+    rows,
+    shape: current.shape,
+    signature: Option_exports.getOrUndefined(signature),
+    tools
+  };
+  await writeAtomic({ path: ctx.receipt, root: request3.state, value: value3 });
+}
+
+// review/report-coverage.mts
+function reportCoverage({ omitted, contract }) {
+  if (omitted.length === 0) {
+    return [];
+  }
+  const count = String(omitted.length);
+  return [
+    buildFinding({
+      check: "coverage",
+      contract: contract.name,
+      message: `${count} source files could not be covered. First: ${omitted[0]}`,
+      outcome: "unresolved"
+    })
+  ];
+}
+
+// review/select-pin.mts
+var MAX_REPAIR_PREVIEW_CHARS = 32768;
+function formatPreview(value3) {
+  const serialized = JSON.stringify(value3);
+  if (serialized.length <= MAX_REPAIR_PREVIEW_CHARS) {
+    return serialized;
+  }
+  return serialized.slice(0, MAX_REPAIR_PREVIEW_CHARS);
+}
+async function callModel({ ctx, onRequest, repair }) {
+  const { contract } = ctx.job;
+  const { current } = ctx.evaluation;
+  return await generate({ contract, inventory: current, onRequest, repair });
+}
+function readGenerationPhase(repair) {
+  if (repair === void 0) {
+    return "generating checks";
+  }
+  return "repairing checks";
+}
+async function generateOnce(input) {
+  const { ctx, repair } = input;
+  const phase = readGenerationPhase(repair);
+  await reportProgress({
+    contract: ctx.job.contract.name,
+    phase,
+    progressFile: ctx.job.request.progressFile
+  });
+  const raw = await callModel(input);
+  await reportProgress({
+    contract: ctx.job.contract.name,
+    phase: "qualifying controls",
+    progressFile: ctx.job.request.progressFile
+  });
+  const evaluated = await qualifyBundle({
+    contractName: ctx.job.contract.name,
+    current: ctx.evaluation.current,
+    value: raw
+  });
+  return { evaluated, raw };
+}
+function shouldRepair(evaluated) {
+  return evaluated.qualified.length === 0 && evaluated.errors.length > 0;
+}
+function buildSelectedPin({ ctx, evaluated }) {
+  const pin = {
+    bundle: { checks: evaluated.qualified, open: evaluated.open },
+    contractHash: ctx.job.contract.hash,
+    protocol: 1,
+    shape: ctx.evaluation.current.shape
+  };
+  const qualifiedIds = evaluated.qualified.map((check2) => check2.id);
+  const prequalifiedIds = new Set(qualifiedIds);
+  return { extraUnresolved: evaluated.extraUnresolved, pin, prequalifiedIds };
+}
+async function runRepairIfNeeded({
+  first,
+  input
+}) {
+  if (!shouldRepair(first.evaluated) || !input.ctx.job.canSpendRequest()) {
+    return first.evaluated;
+  }
+  const repair = {
+    errors: first.evaluated.errors,
+    previous: formatPreview(first.raw)
+  };
+  const repaired = await generateOnce({ ...input, repair });
+  return repaired.evaluated;
+}
+async function generateAndQualify(input) {
+  const { ctx } = input;
+  if (!ctx.job.canSpendRequest()) {
+    throw new CheckerError({ message: "no saved checker. Generation needs a model request." });
+  }
+  const first = await generateOnce(input);
+  const evaluated = await runRepairIfNeeded({ first, input });
+  return buildSelectedPin({ ctx, evaluated });
+}
+function mergePriorPin({ ctx, generated }) {
+  if (ctx.pin === void 0) {
+    return generated;
+  }
+  const pin = updatePin({
+    files: ctx.evaluation.current.runtimeFiles,
+    next: generated.pin,
+    prior: ctx.pin
+  });
+  return { ...generated, pin };
+}
+async function selectPin(input) {
+  const { ctx } = input;
+  if (ctx.evaluation.current.files.size === 0) {
+    throw new CheckerError({ message: "no supported source was available for a behavior check." });
+  }
+  if (ctx.pin !== void 0 && ctx.matching) {
+    return { extraUnresolved: [], pin: ctx.pin, prequalifiedIds: /* @__PURE__ */ new Set() };
+  }
+  await assertSandboxAvailable();
+  const generated = await generateAndQualify(input);
+  return mergePriorPin({ ctx, generated });
+}
+
+// review/verify.mts
+async function publish2({ ctx, pin }) {
+  const input = { path: ctx.lock, root: ctx.job.request.root, value: pin };
+  if (ctx.pin === void 0) {
+    await writeAtomic({ ...input, first: true });
+    return;
+  }
+  await replacePin({ ...input, prior: ctx.prior });
+}
+async function assertStableSource(ctx) {
+  const after = await readInventory({ contract: ctx.job.contract, root: ctx.job.request.root });
+  if (after.observed !== ctx.evaluation.current.observed || after.shape !== ctx.evaluation.current.shape) {
+    throw new CheckerError({ message: "source changed during the check. Run it again." });
+  }
+}
+async function verify({ ctx, onRequest }) {
+  const { extraUnresolved, pin, prequalifiedIds } = await selectPin({ ctx, onRequest });
+  await reportProgress({
+    contract: ctx.job.contract.name,
+    phase: "replaying checks",
+    progressFile: ctx.job.request.progressFile
+  });
+  const observed = await evaluate2({ evaluation: ctx.evaluation, pin, prequalifiedIds });
+  await assertStableSource(ctx);
+  const rows = [...observed, ...extraUnresolved];
+  const cache2 = ctx.matching || pin.bundle.checks.length > 0;
+  if (cache2 && !ctx.matching) {
+    await publish2({ ctx, pin });
+  }
+  return { cache: cache2, pin, rows };
+}
+
+// review/measure.mts
+function recordAttemptCost({ attempt, cost }) {
+  const requests = attempt.requests + 1;
+  if (cost === null) {
+    Object.assign(attempt, { cost: null, hasUnknownCost: true, requested: true, requests });
+    return;
+  }
+  if (attempt.hasUnknownCost) {
+    Object.assign(attempt, { cost: null, requested: true, requests });
+    return;
+  }
+  const nextCost = (attempt.cost ?? 0) + cost;
+  Object.assign(attempt, { cost: nextCost, requested: true, requests });
+}
+function mergeResults({ gaps, result: result3 }) {
+  const rows = [...gaps, ...result3.rows];
+  if (result3.cache) {
+    return { pin: result3.pin, rows };
+  }
+  return { rows };
+}
+async function collectFindings(options) {
+  const { ctx } = options;
+  const gaps = reportCoverage({
+    contract: ctx.job.contract,
+    omitted: ctx.evaluation.current.omitted
+  });
+  async function runChecks2() {
+    return await verify(options);
+  }
+  const classified = await classifyResult({
+    message: "checker unavailable",
+    run: runChecks2
+  });
+  if (Result_exports.isFailure(classified)) {
+    const message = readReason(classified.failure.cause);
+    const warning = buildOpenFinding({ contract: ctx.job.contract.name, reason: message });
+    return { rows: [...gaps, warning] };
+  }
+  return mergeResults({ gaps, result: classified.success });
+}
+function attachUsage({ attempt, rows }) {
+  const first = rows.at(0);
+  if (!attempt.requested || first === void 0) {
+    return;
+  }
+  Object.assign(first, { cost_usd: attempt.cost, requested: true });
+  if (attempt.requests > 1) {
+    Object.assign(first, { generation_requests: attempt.requests });
+  }
+}
+async function measure(ctx) {
+  const attempt = { cost: null, hasUnknownCost: false, requested: false, requests: 0 };
+  function onRequest(cost) {
+    recordAttemptCost({ attempt, cost });
+  }
+  const result3 = await collectFindings({ ctx, onRequest });
+  const rows = await explainFindings({
+    canSpendRequest: ctx.job.canSpendRequest,
+    contract: ctx.job.contract,
+    onRequest,
+    progressFile: ctx.job.request.progressFile,
+    rows: result3.rows
+  });
+  await saveReceipt({ ctx, pin: result3.pin, rows });
+  attachUsage({ attempt, rows });
+  return rows;
+}
+
 // review/process-contract.mts
 async function processContract(job) {
   async function assessScope() {
+    await reportProgress({
+      contract: job.contract.name,
+      phase: "discovering source",
+      progressFile: job.request.progressFile
+    });
     const ctx = await readContext(job);
     const cached3 = readCached(ctx);
     if (Option_exports.isSome(cached3)) {
@@ -22703,18 +23819,26 @@ async function processContract(job) {
 }
 
 // review/review.mts
-async function run2(input) {
-  const request3 = { ...input, root: await realpath6(input.root), state: resolve6(input.state) };
-  const rows = [];
-  const tools = await readRunnerVersion();
-  let remaining = input.maxGenerations;
-  function canSpendRequest() {
+function createBudget(maxGenerations) {
+  let remaining = maxGenerations;
+  return () => {
     if (remaining <= 0) {
       return false;
     }
     remaining -= 1;
     return true;
-  }
+  };
+}
+async function normalizeRequest(input) {
+  const root = await realpath9(input.root);
+  const state = await resolveRoot(input.state);
+  return { ...input, root, state };
+}
+async function run2(input) {
+  const request3 = await normalizeRequest(input);
+  const rows = [];
+  const tools = await readRunnerVersion();
+  const canSpendRequest = createBudget(input.maxGenerations);
   for (const contract of request3.contracts) {
     const findings = await processContract({ canSpendRequest, contract, request: request3, tools });
     rows.push(...findings);

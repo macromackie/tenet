@@ -118,8 +118,8 @@ impl Reporter<'_> {
                 revision,
                 pending,
                 coverage,
-                ..
-            } => self.write_summary(summary, revision, &pending, coverage.as_ref())?,
+                exit_code,
+            } => self.write_summary(summary, revision, &pending, coverage.as_ref(), exit_code)?,
             Event::Error { message } => self.term.write_line(&format!("ERROR {message}"))?,
         }
         Ok(())

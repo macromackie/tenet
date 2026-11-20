@@ -1,13 +1,15 @@
 mod adoption;
 mod checking;
 mod exit_status;
+mod onboarding;
 
 use std::path::PathBuf;
 
 pub(crate) use adoption::{Contracts, Locked, Skills};
-pub(crate) use checking::{Check, Export, Fix, Input, Record, ReporterKind};
+pub(crate) use checking::{Check, Export, Input, Record, ReporterKind};
 use clap::{Parser, Subcommand};
 pub(crate) use exit_status::ExitStatus;
+pub(crate) use onboarding::{Fix, Init};
 use tenet_engine::review::DIRECTORY;
 
 use crate::telemetry::Environment;
@@ -20,14 +22,32 @@ use crate::telemetry::Environment;
               codes."
 )]
 pub(crate) struct Cli {
-    #[arg(long, global = true, default_value = ".")]
+    /// Project root directory to inspect.
+    #[arg(
+        long,
+        global = true,
+        default_value = ".",
+        help_heading = "Global options"
+    )]
     pub root: PathBuf,
     /// Keep review state here instead of `.tenet` in the project root, such as when the checkout
     /// is read-only.
-    #[arg(long, global = true, env = "TENET_STATE_DIR")]
+    #[arg(
+        long,
+        global = true,
+        env = "TENET_STATE_DIR",
+        help_heading = "Global options"
+    )]
     pub state_dir: Option<PathBuf>,
     /// Write a JSON Lines trace of spans and events to PATH, or to stderr with '-'.
-    #[arg(long, global = true, env = "TENET_TRACE", value_name = "PATH")]
+    #[arg(
+        long,
+        global = true,
+        env = "TENET_TRACE",
+        value_name = "PATH",
+        help_heading = "Diagnostics",
+        hide_short_help = true
+    )]
     pub trace: Option<PathBuf>,
     /// Environment that the trace's first record names; the default is ci when CI is set,
     /// otherwise local.
@@ -37,7 +57,9 @@ pub(crate) struct Cli {
         env = "TENET_TRACE_ENVIRONMENT",
         value_enum,
         default_value_t = Environment::detect(),
-        hide_default_value = true
+        hide_default_value = true,
+        help_heading = "Diagnostics",
+        hide_short_help = true
     )]
     pub trace_environment: Environment,
     #[command(subcommand)]
@@ -58,6 +80,14 @@ impl Cli {
               codes."
 )]
 pub(crate) enum Command {
+    /// Initialize Tenet in this repository with recommended or starter contracts.
+    Init(Init),
+    /// Check provider credentials, sandbox tooling, runtimes, and repository setup.
+    Doctor {
+        /// Print diagnostic check results as a JSON document.
+        #[arg(long)]
+        json: bool,
+    },
     /// Assess a repository, or whether a change preserves its contracts, and update the review.
     #[command(
         after_help = "Run tenet show CONTRACT to inspect a finding. Use --help for all check \
@@ -78,6 +108,7 @@ pub(crate) enum Command {
         /// Compare a trusted local checker receipt with the current working tree.
         #[arg(long, value_name = "PATH")]
         evidence: Option<PathBuf>,
+        /// Print the review status as a JSON document.
         #[arg(long)]
         json: bool,
         /// First remove cached answers this Tenet cannot reuse: those an earlier Tenet wrote and
@@ -87,6 +118,7 @@ pub(crate) enum Command {
     },
     /// Show what a reviewer needs to settle one contract: rule, change, model answer, and history.
     Show {
+        /// Name of the contract to inspect.
         #[arg(required_unless_present = "pending")]
         contract: Option<String>,
         /// The selected paths of the check to show, when the contract stands in several.
@@ -94,6 +126,7 @@ pub(crate) enum Command {
         /// Show every pending contract, printing their shared change once.
         #[arg(long, conflicts_with = "contract")]
         pending: bool,
+        /// Print the contract brief as a JSON document.
         #[arg(long)]
         json: bool,
     },
@@ -101,6 +134,7 @@ pub(crate) enum Command {
     Record(Record),
     /// List checks and records, newest first.
     Log {
+        /// Limit listed events to this contract name.
         contract: Option<String>,
         /// Print the matching review events as JSON Lines.
         #[arg(long)]

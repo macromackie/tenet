@@ -25,7 +25,11 @@ use super::{
     format_threshold_note,
     write_files,
 };
-use crate::error::CommandError;
+use crate::{
+    error::CommandError,
+    output,
+    report_format::{format_dim, format_marker, format_painted},
+};
 
 /// What a reviewer needs to settle one contract, everything but the change itself: its state,
 /// the model's answer, the scoped files, history, the record command, and the contract.
@@ -74,24 +78,41 @@ pub(super) fn write_brief(
         changes_since,
     } = History::new(review, entry)?;
     let (label, note) = format_state_text(entry);
-    writeln!(out, "{name}  {}  {note}", label.to_lowercase())?;
-    writeln!(out, "  {}", entry.contract.path.display())?;
     writeln!(
         out,
-        "  Review {}{} · selection checked in r{}",
-        entry.selection.review,
-        format_paths_note(entry.selection),
-        entry.selection.rev
+        "{} {}  {}  {}",
+        format_marker(label),
+        output::format_styled(name).bold(),
+        format_painted(&label.to_lowercase()),
+        format_dim(&note),
+    )?;
+    writeln!(
+        out,
+        "  {}",
+        format_dim(&entry.contract.path.display().to_string())
+    )?;
+    writeln!(
+        out,
+        "  {}",
+        format_dim(&format!(
+            "Review {}{} \u{b7} selection checked in r{}",
+            entry.selection.review,
+            format_paths_note(entry.selection),
+            entry.selection.rev
+        )),
     )?;
     if let Some(assessment) = entry.assessment {
         writeln!(
             out,
-            "  Assessed in r{} · {} check of {} · input {}{}",
-            assessment.rev,
-            entry.mode.as_str(),
-            entry.scope.describe(),
-            &entry.input[..12],
-            format_threshold_note(entry.min_confidence)
+            "  {}",
+            format_dim(&format!(
+                "Assessed in r{} \u{b7} {} check of {} \u{b7} input {}{}",
+                assessment.rev,
+                entry.mode.as_str(),
+                entry.scope.describe(),
+                &entry.input[..12],
+                format_threshold_note(entry.min_confidence)
+            )),
         )?;
     }
     if matches!(
@@ -115,7 +136,7 @@ pub(super) fn write_brief(
     write_files(out, current, entry)?;
 
     if !records.is_empty() || !earlier.is_empty() {
-        writeln!(out, "\nHistory")?;
+        writeln!(out, "\n{}", output::format_styled("History").bold())?;
         for record in records.iter().take(HISTORY) {
             let currency = if record.input == entry.input {
                 "current"
@@ -178,7 +199,7 @@ pub(super) fn write_brief(
         }
     }
 
-    writeln!(out, "\nRecord")?;
+    writeln!(out, "\n{}", output::format_styled("Record").bold())?;
     let conclusions = review::list_conclusions(entry.mode, entry.scope);
     let choices: Vec<_> = conclusions
         .iter()
@@ -228,6 +249,11 @@ pub(super) fn write_brief(
         )?;
     }
 
-    writeln!(out, "\nContract\n\n{}", entry.contract.document.trim_end())?;
+    writeln!(
+        out,
+        "\n{}\n\n{}",
+        output::format_styled("Contract").bold(),
+        entry.contract.document.trim_end()
+    )?;
     Ok(())
 }

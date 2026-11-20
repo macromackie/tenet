@@ -1,0 +1,30 @@
+[package]
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+name = "tenet-checks"
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+globset.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+similar.workspace = true
+tempfile.workspace = true
+tenet-contracts.workspace = true
+tenet-engine.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+
+[lints]
+workspace = true

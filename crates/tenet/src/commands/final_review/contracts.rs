@@ -88,7 +88,11 @@ impl Row<'_> {
         writeln!(out, "  {}   {label}   {note}", self.name)?;
         if let Some(action) = self.describe_next_action() {
             if let Some(conclusion) = self.assessed.and_then(|row| row.conclusion.as_ref()) {
-                writeln!(out, "    {}", conclusion.reason.escape_debug())?;
+                writeln!(
+                    out,
+                    "    {}",
+                    report_format::format_display(&conclusion.reason)
+                )?;
             }
             writeln!(out, "    {action}")?;
             writeln!(out, "    Replay    {}", self.replay)?;

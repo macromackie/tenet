@@ -12,16 +12,18 @@ Binaries support macOS and Linux on ARM64 and x86-64. Local checks run with the 
 
 ## Check code
 
-Write a numbered [contract](docs/contracts.md) under `.contracts/`. For example, “When the caller supplies a timeout, including zero, use it without reading the default.” Then run:
+Initialize a repository with recommended catalog contracts or a starter [contract](docs/contracts.md) under `.contracts/`, verify your environment, and run a check:
 
 ```sh
+tenet doctor                  # Verify credentials, sandbox tooling, and repository setup
+tenet init                    # Preview recommended catalog contracts (or --starter / --yes)
 tenet check                   # Review the repo or the current GitHub pull request
 tenet show timeouts           # Inspect a finding and its evidence
 tenet fix                     # Apply supported safe native lint fixes
 tenet check --contract timeouts
 ```
 
-With OpenRouter configured, a supported Linux checkout can build a behavior check, exercise it against a deliberate defect, and save it for the next run. See [behavior checks and runner requirements](docs/behavior-checks.md). Use [local checks](docs/local-checks.md) for project-owned tests and linters, and [final checks](docs/final-checks.md) to verify the finished change.
+With OpenRouter configured, a supported macOS or Linux checkout builds qualified behavior checks, streams live progress phases in interactive terminals, explains failed and unresolved behavior findings through `fx` in plain English, and saves frozen checks to `agent-checks.lock.json` for fast local and CI replay. `tenet check` always requires a model; use `tenet status`, `tenet show`, `tenet export`, and `tenet check --dry-run` offline. See [behavior checks and caching](docs/behavior-checks.md), [local checks](docs/local-checks.md), and [final checks](docs/final-checks.md).
 
 For example, a contract can require database failures to reach the caller rather than become empty results.
 Tenet checks relevant files and their combined context, then reports one conclusion per contract.

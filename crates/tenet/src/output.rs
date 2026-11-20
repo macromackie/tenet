@@ -36,6 +36,16 @@ pub(crate) fn open_terminal() -> Term {
     Term::buffered_stderr()
 }
 
+/// Whether standard error emits ANSI styling.
+pub(crate) fn is_stderr_styled() -> bool {
+    console::colors_enabled_stderr()
+}
+
+/// Active terminal width in columns when standard error is attached to a terminal.
+pub(crate) fn read_terminal_columns() -> Option<u16> {
+    open_terminal().size_checked().map(|(_, columns)| columns)
+}
+
 /// Text styled for standard error, colored only when standard error shows colors.
 pub(crate) fn format_styled<Value>(value: Value) -> StyledObject<Value> {
     console::style(value).for_stderr()

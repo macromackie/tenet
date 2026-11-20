@@ -3,10 +3,15 @@ mod recommend;
 use std::{io::Write as _, path::Path};
 
 use anyhow::{Context as _, anyhow};
-use tenet_engine::{
-    Selection,
-    adoption::{self, AddRequest, Destination, Kind, SkillDestination, SkillRequest},
+use tenet_adoption::{
+    self as adoption,
+    AddRequest,
+    Destination,
+    Kind,
+    SkillDestination,
+    SkillRequest,
 };
+use tenet_engine::Selection;
 
 use crate::{
     adoption::{execute as execute_adoption, report_added},

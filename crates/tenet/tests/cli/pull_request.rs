@@ -59,7 +59,7 @@ fn pull_request_review_pins_its_base_and_rechecks_changed_rules() -> Result<()> 
         Ok(build_tenet()
             .arg("--root")
             .arg(root)
-            .args(["check", "--no-model"])
+            .args(["check", "--max-requests", "0"])
             .args(args)
             .env("GITHUB_ACTIONS", "true")
             .env("GITHUB_EVENT_NAME", "pull_request")

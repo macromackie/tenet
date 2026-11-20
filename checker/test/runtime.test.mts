@@ -39,7 +39,7 @@ async function assess({
 
 async function writeLargeSource(root: string) {
   const large = 'large.ts';
-  const bytes = 49_153;
+  const bytes = 131_073;
 
   const contents = 'x'.repeat(bytes);
   const largePath = join(root, large);

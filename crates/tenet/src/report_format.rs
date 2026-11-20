@@ -1,8 +1,21 @@
+mod block;
 mod evidence;
+mod style;
+#[cfg(test)]
+mod tests;
 
 use alloc::collections::BTreeMap;
 
+pub(crate) use block::{DiagnosticBlock, write_diagnostic_block};
 pub(super) use evidence::{format_combined, format_hunks};
+pub(crate) use style::{
+    format_dim,
+    format_display,
+    format_duration,
+    format_marker,
+    format_painted,
+    quote_argument,
+};
 use tenet_engine::{
     ContextSummary,
     ContractState,
@@ -16,8 +29,6 @@ use tenet_engine::{
     Summary,
     review::Answer,
 };
-
-use crate::output;
 
 pub(super) const fn label_status(state: Status) -> &'static str {
     match state {
@@ -238,28 +249,6 @@ pub(super) fn format_counts(summary: &Summary) -> String {
     }
 }
 
-pub(super) fn format_painted(state: &str) -> String {
-    let styled = output::format_styled(state);
-    match state.to_ascii_uppercase().as_str() {
-        "PASS" | "PASSED" | "VERIFIED" | "PRESERVED" | "CLEAR" => styled.green().to_string(),
-        "FAIL" | "FAILED" | "ERROR" => styled.red().bold().to_string(),
-        "REVIEW" | "FOR REVIEW" | "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" | "PENDING" => {
-            styled.yellow().to_string()
-        },
-        _ => styled.dim().to_string(),
-    }
-}
-
-pub(super) fn format_marker(state: &str) -> String {
-    let symbol = |symbol| output::format_styled(symbol);
-    match state {
-        "PASS" | "VERIFIED" | "PRESERVED" | "CLEAR" => symbol("\u{2713}").green().to_string(),
-        "FAIL" | "FAILED" | "ERROR" => symbol("\u{d7}").red().to_string(),
-        "UNCERTAIN" | "UNRESOLVED" | "INCOMPLETE" | "PENDING" => symbol("?").yellow().to_string(),
-        _ => symbol("\u{2212}").dim().to_string(),
-    }
-}
-
 pub(super) fn format_contract_counts(states: &BTreeMap<&str, usize>, total: usize) -> String {
     let counts = states
         .iter()
@@ -270,17 +259,5 @@ pub(super) fn format_contract_counts(states: &BTreeMap<&str, usize>, total: usiz
         format!("0 completed ({total})")
     } else {
         format!("{counts} ({total})")
-    }
-}
-
-pub(crate) fn quote_argument(value: &str) -> String {
-    if !value.is_empty()
-        && value
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || "_-./:".contains(character))
-    {
-        value.to_owned()
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }

@@ -8,11 +8,11 @@ use std::{path::Path, time::Instant};
 
 use ev_grep_core::RequestInfo;
 use render::Report;
+use tenet_checks::mechanical::{self, Evidence, Freshness, LocalMode, Outcome, ReceiptSet};
 use tenet_engine::{
     Event,
     Plan,
     RunInfo,
-    mechanical::{self, Evidence, Freshness, LocalMode, Outcome, ReceiptSet},
     review::{Checked, OverallStatus, summarize_overall},
 };
 use tokio::signal;
@@ -153,7 +153,7 @@ impl<'run> FinalReview<'run> {
         observed: Vec<Evidence>,
         mut errors: Vec<String>,
     ) -> Result<ExitStatus, CommandError> {
-        let generated = generated::assess(self.plan, self.state, self.check, checked).await?;
+        let generated = generated::assess(self.plan, self.state, self.check, checked, None).await?;
         // Rediscover as well as recapture. A checker or editor can add a new contract or file,
         // change an already checked input, or remove the original selection entirely.
         let refreshed = prepare(

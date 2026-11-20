@@ -77,9 +77,9 @@ confidence threshold routes the raw answer; changing it does not itself require 
 pending, so a rerun sends unanswered or changed inputs; `check --dry-run` predicts how many. A record still settles an
 input whose request failed. Use `--fresh` to sample again; resampling does not verify an answer.
 
-`tenet check --no-model` captures a revision without credentials; only conclusions for unchanged inputs carry over,
-and its rows mark them `unchanged`. `tenet log` lists every revision and record. Each revision keeps its
-`--min-confidence`, and `status`, `show`, and `log` print it when it differs from the default 0.8.
+`tenet check` always requires a configured model; use `tenet status` to inspect current states without calling a model
+and `tenet log` to list every revision and record. Each revision keeps its `--min-confidence`, and `status`, `show`,
+and `log` print it when it differs from the default 0.8.
 
 Revisions also keep the context profile, so reopening a long-context review does not apply the smaller standard bound.
 Follow-up commands preserve that profile and the selected contract batch size, so they can reuse the same answer
@@ -109,19 +109,19 @@ uncommitted hook files would join every session's change:
 
 ```sh
 #!/usr/bin/env bash
-# tenet-start.sh: review everything the session changes from here.
+# tenet-start.sh: pin the commit the session started from.
 cd "$CLAUDE_PROJECT_DIR" && git_dir=$(git rev-parse --git-dir) && base=$(git rev-parse HEAD) || exit 0
 echo "$base" > "$git_dir/tenet-session-base"
-tenet check --base "$base" --no-model >/dev/null 2>&1
 exit 0
 ```
 
 ```sh
 #!/usr/bin/env bash
-# tenet-stop.sh: send the agent back once per stop while the review is pending or unreadable.
+# tenet-stop.sh: send the agent back once per stop while changes against the session base are pending or unchecked.
 grep -Eq '"stop_hook_active"[[:space:]]*:[[:space:]]*true' && exit 0
 cd "$CLAUDE_PROJECT_DIR" && git_dir=$(git rev-parse --git-dir) || exit 0
 base=$(cat "$git_dir/tenet-session-base") || exit 0
+if git diff --quiet "$base" && [ -z "$(git ls-files --others --exclude-standard)" ]; then exit 0; fi
 status=$(tenet status --base "$base" 2>&1)
 case $? in 2 | 4) ;; *) exit 0 ;; esac
 printf 'The Tenet review against %s is not settled. Run tenet check --base %s, then settle each\n' "$base" "$base" >&2
@@ -151,10 +151,9 @@ exit 2
 }
 ```
 
-The pinned base keeps commits made during the session in the review. The start hook's `--no-model` check opens that
-review without requests, so `status --base` covers every contract the session's change touches: a contract no model
-has checked is pending as `not_checked`. `status` reads the review without writing it or calling a model, and its exit
-code decides the hook:
+The pinned base keeps commits made during the session in the review. When the session leaves changes relative to that
+base, `tenet status --base "$base"` exits 4 until `tenet check --base "$base"` has run and every pending contract is
+settled. `status` reads the review without writing it or calling a model, and its exit code decides the hook:
 
 | Exit | Meaning for the hook                                                                                  |
 | ---- | ----------------------------------------------------------------------------------------------------- |
@@ -248,6 +247,33 @@ Read the current source before recording a conclusion, cite its actual lines, an
 until its scope is covered. When it cannot be covered, record `unresolved` and explain the missing evidence.
 Exclude artifacts through a contract's `paths` only when that is the requirement's deliberate scope; do not introduce
 an automatic ignore rule merely because the artifact is large.
+
+## Fresh codebase vs. PR reviewer bot
+
+Tenet is built for two distinct operating modes—use the matching playbook rather than treating them the same:
+
+### Fresh codebase (first-time adoption)
+
+Use full checks without `--base` whenever you introduce Tenet to an existing repository or add a new contract:
+
+1. **Discover high-signal rules first**: run `tenet contracts recommend` to find shared contracts backed by concrete public declarations in your repository.
+2. **Adopt incrementally**: start with one to three rules using `tenet contracts add tenet/NAME --scope DIR` instead of adopting an entire catalog at once.
+3. **Establish a real baseline**: run `tenet check --contract NAME` (with no `--base`). Tenet evaluates the full scope semantically and generates, qualifies, and freezes behavior checks into `agent-checks.lock.json` beside `CONTRACT.md`.
+4. **Triage pre-existing findings deliberately**: for each failure already in the codebase, fix the code, narrow `paths` or document a permanent exception under `## Local adaptations`, or record `failed` with evidence to acknowledge known debt while continuing to review new changes.
+5. **Commit contracts and behavior locks**: commit `.contracts/`, `.tenet.lock`, and reviewed `agent-checks.lock.json` files so every developer and CI runner replays the exact same checks. Never commit `.tenet/`.
+
+### PR reviewer bot (diff review)
+
+Use diff checks against the merge base so reviews stay fast and focus strictly on what the PR changes:
+
+1. **Pin the merge base**: in GitHub Actions with `fetch-depth: 0`, `tenet check` detects the PR merge base automatically; elsewhere run `base=$(git merge-base origin/main HEAD) && tenet check --base "$base"`.
+2. **Separate PR regressions from pre-existing debt**: diff checks assume the base complies and replay committed `agent-checks.lock.json` probes on both base and head. A defect already failing on the base is reported as pre-existing rather than blamed on the PR.
+3. **Inspect pending items**: run `tenet status` and `tenet show --pending` (or `--json`) to read every flagged contract, its evidence, and its ready-to-run `record` command.
+4. **Resolve reviewer disagreements explicitly**:
+   - **One-off false positive or context the model missed**: verify in source, then run `tenet record NAME --conclusion preserved|unaffected --evidence PATH:START-END -m "why"`. The record stays bound to that exact input hash in `.tenet/events.jsonl` and automatically becomes outdated (`inputs_changed`) if any governed file or contract text changes.
+   - **Recurring project-wide exception**: document it under `## Local adaptations` in `CONTRACT.md` so future PRs and CI runs do not re-flag it, then run `tenet check --contract NAME` to verify the updated rule.
+   - **Currently failing behavior check**: a favorable `tenet record` never hides a live executable failure; repair the implementation or update the contract if the requirement intentionally changed.
+5. **Close with a final check**: run `tenet check --final --base "$base" --json` (or pass `--evidence PATH` on untrusted PR code) before approving or merging.
 
 ## Establish the baseline
 

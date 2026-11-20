@@ -1,15 +1,16 @@
 use std::io::Write as _;
 
 use serde_json::{Value, json};
-use tenet_engine::{Summary, mechanical::Evidence, review::OverallStatus};
+use tenet_checks::{behavior::Finding, mechanical::Evidence};
+use tenet_engine::{Summary, review::OverallStatus};
 
 use super::{FinalReview, contracts::Row, replay};
 use crate::{
-    agent_checks::Finding,
     cli::ExitStatus,
     error::CommandError,
     generated,
     output,
+    report_format::format_display,
     review::write_mechanical,
 };
 
@@ -80,7 +81,7 @@ impl Report<'_> {
             write_mechanical(&mut out, &self.checks)?;
             generated::write_rows(&mut out, &self.generated)?;
             for error in self.source_error.iter().chain(&self.errors) {
-                writeln!(out, "  {}", error.escape_debug())?;
+                writeln!(out, "  {}", format_display(error))?;
             }
             if exit != ExitStatus::Passed {
                 writeln!(out, "Replay    {replay}")?;
@@ -128,7 +129,7 @@ impl FinalReview<'_> {
                 format_status(status)
             )?;
             for message in errors {
-                writeln!(output::open_stderr(), "  {}", message.escape_debug())?;
+                writeln!(output::open_stderr(), "  {}", format_display(&message))?;
             }
         }
         Ok(exit)

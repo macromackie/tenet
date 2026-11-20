@@ -1,7 +1,7 @@
 use std::{io::Write as _, path::Path};
 
 use anyhow::anyhow;
-use tenet_engine::adoption;
+use tenet_adoption as adoption;
 use tokio::signal;
 
 use super::prepare;

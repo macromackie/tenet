@@ -4,12 +4,8 @@ use std::{env, io::Write as _, path::Path};
 use ev_grep_core::RequestInfo;
 use ev_grep_jev::{Jev, Provider};
 use serde_json::{Value, json};
-use tenet_engine::{
-    Evaluator as _,
-    Outcome,
-    Question,
-    adoption::{self, Candidate},
-};
+use tenet_adoption::{self as adoption, Candidate};
+use tenet_engine::{Evaluator as _, Outcome, Question};
 
 use crate::{
     cli::ExitStatus,

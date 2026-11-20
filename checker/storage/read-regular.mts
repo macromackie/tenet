@@ -2,6 +2,7 @@ import { constants, type Stats } from 'node:fs';
 import { lstat, open, realpath, type FileHandle } from 'node:fs/promises';
 import { CheckerError } from '../checker-error.mts';
 import { type LocationInput, resolveInside } from './resolve-inside.mts';
+import { resolveRoot } from './resolve-root.mts';
 
 type ReadInput = LocationInput & Readonly<{ limit: number; preserveBom?: boolean }>;
 type DecodeInput = Readonly<{ buffer: Buffer; used: number; limit: number; preserveBom?: boolean }>;
@@ -57,7 +58,8 @@ async function readOpened(input: OpenInput): Promise<string> {
 
 /** Read a limited UTF-8 regular file and reject changed files, FIFOs, symlinks and binary content. */
 export async function readRegular(input: ReadInput): Promise<string> {
-  const file = resolveInside(input);
+  const root = await resolveRoot(input.root);
+  const file = resolveInside({ path: input.path, root });
   const prior = await lstat(file);
 
   if (!prior.isFile() || prior.size > input.limit || (await realpath(file)) !== file) {

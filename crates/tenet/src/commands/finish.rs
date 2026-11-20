@@ -38,7 +38,14 @@ impl Completion<'_, '_> {
         if let Some(review) = self.final_review {
             return review.complete(checked, revision).await;
         }
-        let rows = generated::assess(self.plan, self.state, self.check, checked).await?;
+        let live = self.reporter.borrow().is_live();
+        let mut report_phase = |phase: &str| {
+            drop(self.reporter.borrow_mut().refresh_behavior(phase));
+        };
+        let on_progress: Option<&mut dyn FnMut(&str)> = live.then_some(&mut report_phase);
+        let rows =
+            generated::assess(self.plan, self.state, self.check, checked, on_progress).await?;
+        self.reporter.borrow_mut().clear_progress()?;
         self.reporter.borrow_mut().write_generated(&rows, checked)?;
         let status = ExitStatus::from(
             checked

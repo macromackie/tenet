@@ -1,7 +1,7 @@
 use std::{io::Write as _, path::Path};
 
 use serde_json::json;
-use tenet_engine::mechanical::{self, Freshness, Outcome};
+use tenet_checks::mechanical::{self, Freshness, Outcome};
 use tokio::signal;
 
 use crate::{cli::ExitStatus, error::CommandError, output};

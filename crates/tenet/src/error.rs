@@ -2,6 +2,8 @@
 
 use std::io;
 
+use tenet_adoption::AdoptionError;
+use tenet_checks::mechanical;
 use tenet_engine::{
     CheckError,
     ContextError,
@@ -9,8 +11,6 @@ use tenet_engine::{
     EvidenceError,
     PredictionError,
     SnapshotError,
-    adoption::AdoptionError,
-    mechanical,
     review::{ReviewError, StoreError},
 };
 

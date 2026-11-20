@@ -113,8 +113,7 @@ pub struct ContractResult {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub conflicting_files: Vec<String>,
     pub request: Option<ev_grep_core::RequestInfo>,
-    /// The combined answer came from the answer cache, or `check --no-model` reused an earlier
-    /// check's conclusion for the same input; no request was sent.
+    /// The combined answer came from the answer cache; no new request was sent.
     pub cached: bool,
 }
 

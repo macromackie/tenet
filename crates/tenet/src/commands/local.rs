@@ -1,10 +1,8 @@
 use std::path::Path;
 
 use serde_json::json;
-use tenet_engine::{
-    mechanical::{self, Evidence, Freshness, LocalMode, Outcome},
-    review::OverallStatus,
-};
+use tenet_checks::mechanical::{self, Evidence, Freshness, LocalMode, Outcome};
+use tenet_engine::review::OverallStatus;
 use tokio::signal;
 
 use crate::{cli::ExitStatus, error::CommandError, output, review::write_mechanical};

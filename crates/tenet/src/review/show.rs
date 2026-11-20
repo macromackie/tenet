@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use tenet_checks::behavior::Finding;
 use tenet_engine::{
     Change,
     Review,
@@ -12,7 +13,7 @@ use tenet_engine::{
 };
 
 use super::{HISTORY, History, SHOW_VERSION, write_brief};
-use crate::{agent_checks::Finding, cli::ExitStatus, error::CommandError, generated, output};
+use crate::{cli::ExitStatus, error::CommandError, generated, output};
 
 #[expect(
     clippy::indexing_slicing,
@@ -208,7 +209,7 @@ fn change(out: &mut impl Write, changes: &[Change]) -> Result<(), CommandError> 
         .filter(|change| !change.patch.is_empty())
         .collect();
     if !patches.is_empty() {
-        writeln!(out, "\nChange")?;
+        writeln!(out, "\n{}", output::format_styled("Change").bold())?;
     }
     for change in patches {
         writeln!(

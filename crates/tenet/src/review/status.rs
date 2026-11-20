@@ -5,11 +5,11 @@ use std::{io::Write as _, path::Path};
 pub(crate) use checks::write_mechanical;
 use checks::write_unchecked;
 use serde_json::json;
+use tenet_checks::mechanical;
 use tenet_engine::{
     ContractState,
     Pending,
     Review,
-    mechanical,
     review::{self, CurrentContract, ReviewError},
 };
 
@@ -28,7 +28,7 @@ use crate::{
     error::CommandError,
     generated,
     output,
-    report_format::{format_marker, format_painted},
+    report_format::{format_dim, format_marker, format_painted},
 };
 
 #[expect(
@@ -161,16 +161,24 @@ pub(crate) async fn report_status(
     }
     writeln!(
         out,
-        "Review {}{} · latest check r{} {}\n",
-        current.latest.review,
-        format_paths_note(current.latest),
-        current.latest.rev,
-        format_ago(current.latest.at)
+        "{} {}\n",
+        output::format_styled(format!(
+            "Review {}{}",
+            current.latest.review,
+            format_paths_note(current.latest),
+        ))
+        .bold(),
+        format_dim(&format!(
+            "\u{b7} latest check r{} {}",
+            current.latest.rev,
+            format_ago(current.latest.at)
+        )),
     )?;
     if current.unchanged {
         writeln!(
             out,
-            " The working tree has no changes since the base; nothing to review."
+            " {}",
+            format_dim("The working tree has no changes since the base; nothing to review.")
         )?;
     }
     let width = current
@@ -183,17 +191,20 @@ pub(crate) async fn report_status(
         let (label, mut note) = format_state_text(entry);
         if !entry.selection.is_selecting(&current.latest.paths) {
             note.push_str(&format!(
-                " · from r{} {}",
+                " \u{b7} from r{} {}",
                 entry.selection.rev,
                 format_selection_text(entry.selection)
             ));
         }
+        let lower = label.to_lowercase();
+        let pad = " ".repeat(10_usize.saturating_sub(lower.len()));
         writeln!(
             out,
-            " {} {:width$}  {:10}  {note}",
+            "  {} {:width$}  {}{pad}  {}",
             format_marker(label),
             entry.contract.name,
-            format_painted(&label.to_lowercase()),
+            format_painted(&lower),
+            format_dim(&note),
         )?;
     }
     for path in &current.deleted {

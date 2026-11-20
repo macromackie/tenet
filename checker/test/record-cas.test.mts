@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { Option } from 'effect';
+import { reportProgress } from '../progress-log.mts';
 import { replacePin, readRecord } from '../storage/index.mts';
 
 async function makeFixture(context: TestContext) {
@@ -40,4 +41,16 @@ void test('a concurrent byte-only edit to a valid JSON pin prevents replacement'
   const after = await readFile(target, 'utf-8');
 
   assert.equal(after, changed);
+});
+
+void test('progress log records contract phase updates cleanly', async (context) => {
+  const { location } = await makeFixture(context);
+  const progressFile = join(location.root, 'progress.txt');
+
+  await reportProgress({ contract: 'options', phase: 'qualifying controls' });
+  await reportProgress({ contract: 'options', phase: 'qualifying controls', progressFile });
+
+  const recorded = await readFile(progressFile, 'utf-8');
+
+  assert.equal(recorded, 'options\tqualifying controls\n');
 });

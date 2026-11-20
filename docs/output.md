@@ -1,9 +1,15 @@
 # Output
 
-The default reporter lists contracts that need attention and summarizes the rest. `REVIEW` means a model flagged
-a concern or the check needs more evidence. A reviewer can inspect it with `tenet show NAME`.
-`FAIL` marks a confirmed violation. A record that overrides the model remains visible as `REVIEWED`.
-Colors and progress appear in interactive terminals. The labels also work in plain CI logs.
+The default reporter combines Vitest-style progress and summaries with Ruff/`ty`-style diagnostic blocks: compact green
+`✓ PASS` and cyan `✓ REVIEWED` rows keep passing runs tight, while every bold red `× FAIL` and yellow `? REVIEW` finding
+opens a vertically separated block with a clickable `╭─[path]` header, word-wrapped explanation aligned inside a dimmed
+`│` gutter, and a concrete `= help:` next-step command. The summary footer tallies `Contracts`, `Checks`, `Duration`,
+`Review`, and `Next` with an explicit exit-code explanation (`exit 1`, `exit 3`, or `exit 4`). Parse and validation
+errors render with styled source snippets when stderr supports color. Diagnostic text is cleaned for terminal display
+without backslash-escaped quotes. In interactive terminals, live progress streams both semantic file progress and
+intermediate behavior-check phases (`discovering source`, `generating checks`, `qualifying controls`, `repairing
+checks`, `replaying checks`, and `explaining findings`). All status labels and plain-text diagnostics work cleanly in
+non-TTY CI logs. Inspect any pending item with `tenet show NAME`.
 
 Use `--reporter verbose` for individual file judgments, model details and request counts. JSONL retains all
 intermediate evidence, including uncertainty that a later repository assessment resolves.
@@ -40,7 +46,7 @@ unrelated files keeps its conclusions. A record from `tenet record` settles its 
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `model_failed`     | The model found a violation; confirm or dispute it with a record                                                                                                                                              |
 | `model_unresolved` | The model could not decide, or its evidence or execution was incomplete, such as a [failed request](#failed-requests); `status` and `show` print its lean, as in `leans no violation · confidence 0.56 < 0.8` |
-| `not_assessed`     | `check --no-model` captured the input without asking the model                                                                                                                                                |
+| `not_assessed`     | An earlier revision captured the input without asking a model                                                                                                                                                 |
 | `inputs_changed`   | A scoped file or the contract changed after the latest check (`status` only)                                                                                                                                  |
 | `not_checked`      | No check assessed the contract in an open review scope, including a sibling or newly added requirement after a repository-wide named check (`status` only)                                                    |
 | `contract_changed` | The diff adds or edits the contract, so a favorable diff answer cannot settle it                                                                                                                              |
@@ -57,8 +63,8 @@ The verbose reporter shows uncertain file judgments as `UNCERTAIN`. A repository
 
 ## JSONL
 
-Each event has `version: 5` and a `type`. The `begin` event records `full` or `diff` mode, provider/model (`null` for
-`--no-model`), root, base and HEAD when available, the confidence threshold, the baseline assumption, and
+Each event has `version: 5` and a `type`. The `begin` event records `full` or `diff` mode, provider and model,
+root, base and HEAD when available, the confidence threshold, the baseline assumption, and
 `deleted_contracts`, the contract documents a diff deletes. It also records `context_profile` and
 `contract_batch_size`. Snapshot runs include the original snapshot path and patch hash.
 
@@ -81,8 +87,7 @@ remains. `input_bytes` measures the encoded assessment state, before provider in
 }
 ```
 
-Under `check --no-model`, `conclusion` is the earlier conclusion for the same input with `cached: true`, or `null`
-when there is none.
+Reused conclusions for unchanged inputs carry `cached: true`.
 
 `violation` is the probability the model gave a violation in the requested scope. When no combined assessment ran,
 it is the highest probability among the file checks. `status` and `show` print it as `violation N%`; `status` suggests the pending
@@ -147,8 +152,8 @@ whether that pair can be reused, and the other identifies the request that produ
 
 The live summary's `requests` counts logical dispatches, including failed dispatches. A dispatch can answer one pair,
 several pairs, a hunk group, or one contract's combined assessment. The file statuses count file/contract results,
-not provider calls. `cached` counts reused answer entries, including combined answers and conclusions reused by
-`--no-model`; it is not a count of hypothetical provider calls saved by grouping.
+not provider calls. `cached` counts reused answer entries, including combined answers; it is not a count of
+hypothetical provider calls saved by grouping.
 
 Provider receipts retain available `attempts`, `hedges`, `input_tokens`, and `output_tokens`. Sum a shared receipt
 once from its `file_batch_completed` event. Ordinary file, combined, and hunk receipts also count once at their owning

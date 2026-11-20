@@ -15,9 +15,9 @@ Run `tenet contracts recommend` in a project, including a project with no contra
 suggestion names a rule from the latest tagged catalog, cites a public declaration in this checkout
 and gives the released rule's description. To adopt one, run `tenet contracts add tenet/NAME@REF --scope DIR` using the reported release. Recommendation leaves the project unchanged.
 
-Tenet samples up to 256 JavaScript, TypeScript, Python and Rust source files, reading the first 16
-KiB of each. It uses top-level declarations and a few recognizable expressions, including default
-lookups. It skips tooling, tests, examples and installed dependencies. Installed rules that already
+Tenet samples up to 256 JavaScript, TypeScript, Python and Rust source files, reading the first 64
+KiB of each. It uses top-level declarations, repository structure, and a few recognizable expressions, including default
+lookups and in-place collection edits. It skips tooling, tests, examples and installed dependencies, and omits domain-prefixed contracts whose area is absent from the repository. Installed rules that already
 govern the matching source are excluded. With `OPENROUTER_API_KEY`, one batched Jev decision
 request ranks up to 16 catalog matches from their descriptions, paths and declaration names.
 Affirmative suggestions are ordered by model confidence. Each suggestion is advisory.
@@ -149,7 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          curl -fsSL https://tenet-contracts.com/v0.19.0/install.sh | bash
+          curl -fsSL https://tenet-contracts.com/v0.20.0/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - id: update
         run: |
