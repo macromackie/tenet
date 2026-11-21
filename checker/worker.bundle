@@ -21693,6 +21693,8 @@ var PRLIMIT = "/usr/bin/prlimit";
 var SYSTEM_PATH = "/usr/bin:/bin";
 var NODE = "/runtime/node";
 var GO_ROOT_MOUNT = "/goroot";
+var DEFAULT_TMPFS_BYTES = "67108864";
+var COMPILED_TMPFS_BYTES = "268435456";
 var COMPILED_RUNTIMES = /* @__PURE__ */ new Set(["go", "rust"]);
 var ISOLATION = [
   ["--unshare-all", "--new-session", "--die-with-parent", "--clearenv"],
@@ -21706,7 +21708,6 @@ var ISOLATION = [
   ["--symlink", "usr/lib64", "/lib64"],
   ["--proc", "/proc"],
   ["--dev", "/dev"],
-  ["--size", "67108864", "--tmpfs", "/tmp"],
   ["--dir", "/runtime"],
   ["--dir", "/deps"]
 ].flat();
@@ -21722,9 +21723,15 @@ var BASE_ENV_FLAGS = [
 ].flat();
 function readCpuFlag(runtime) {
   if (COMPILED_RUNTIMES.has(runtime)) {
-    return "--cpu=20";
+    return "--cpu=30";
   }
   return "--cpu=8";
+}
+function buildTmpfsMount(runtime) {
+  if (COMPILED_RUNTIMES.has(runtime)) {
+    return ["--size", COMPILED_TMPFS_BYTES, "--tmpfs", "/tmp"];
+  }
+  return ["--size", DEFAULT_TMPFS_BYTES, "--tmpfs", "/tmp"];
 }
 function buildLimits(runtime) {
   const cpu = readCpuFlag(runtime);
@@ -21848,6 +21855,7 @@ async function createLinuxSandbox({
 }) {
   await access2(BWRAP);
   await access2(PRLIMIT);
+  const tmpfsMount = buildTmpfsMount(check2.runtime);
   const mounts = await buildRuntimeMount(check2.runtime);
   const depMounts = buildDepMounts(deps);
   const envFlags = buildEnvFlags({ deps, files, runtime: check2.runtime });
@@ -21856,6 +21864,7 @@ async function createLinuxSandbox({
   return {
     args: [
       ...ISOLATION,
+      ...tmpfsMount,
       ...mounts,
       "--ro-bind",
       work,

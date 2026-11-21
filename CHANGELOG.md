@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.23.1
+
+- Raised the Linux `bubblewrap` `/tmp` tmpfs bound to 256 MiB and CPU limit to 30s for compiled behavior-check runtimes (`go` and `rust`) so cold Go stdlib compilation inside `GOCACHE=/tmp/gocache` succeeds cleanly while keeping 64 MiB for interpreted runtimes (`node` and `python`).
+
 ## v0.23.0
 
 - Added multi-file Rust crate support (`src/lib.rs`) to isolated behavior checks: Tenet reads `Cargo.toml` (falling back to the repository root for subdirectory-scoped contracts), extracts the crate name, edition, and transitive default features, compiles `src/lib.rs` with prebuilt read-only `target/debug/deps` inside macOS Seatbelt or Linux `bubblewrap`, and links the probe against the compiled crate without running `cargo` or `build.rs`.

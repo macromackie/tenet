@@ -21,6 +21,8 @@ const PRLIMIT = '/usr/bin/prlimit';
 const SYSTEM_PATH = '/usr/bin:/bin';
 const NODE = '/runtime/node';
 const GO_ROOT_MOUNT = '/goroot';
+const DEFAULT_TMPFS_BYTES = '67108864';
+const COMPILED_TMPFS_BYTES = '268435456';
 const COMPILED_RUNTIMES: ReadonlySet<string> = new Set(['go', 'rust']);
 
 const ISOLATION = [
@@ -35,7 +37,6 @@ const ISOLATION = [
   ['--symlink', 'usr/lib64', '/lib64'],
   ['--proc', '/proc'],
   ['--dev', '/dev'],
-  ['--size', '67108864', '--tmpfs', '/tmp'],
   ['--dir', '/runtime'],
   ['--dir', '/deps'],
 ].flat();
@@ -76,10 +77,18 @@ type EnvFlagsInput = Readonly<{
 
 function readCpuFlag(runtime: Check['runtime']): string {
   if (COMPILED_RUNTIMES.has(runtime)) {
-    return '--cpu=20';
+    return '--cpu=30';
   }
 
   return '--cpu=8';
+}
+
+function buildTmpfsMount(runtime: Check['runtime']): readonly string[] {
+  if (COMPILED_RUNTIMES.has(runtime)) {
+    return ['--size', COMPILED_TMPFS_BYTES, '--tmpfs', '/tmp'];
+  }
+
+  return ['--size', DEFAULT_TMPFS_BYTES, '--tmpfs', '/tmp'];
 }
 
 function buildLimits(runtime: Check['runtime']): readonly string[] {
@@ -227,6 +236,7 @@ export async function createLinuxSandbox({
   await access(BWRAP);
   await access(PRLIMIT);
 
+  const tmpfsMount = buildTmpfsMount(check.runtime);
   const mounts = await buildRuntimeMount(check.runtime);
   const depMounts = buildDepMounts(deps);
   const envFlags = buildEnvFlags({ deps, files, runtime: check.runtime });
@@ -236,6 +246,7 @@ export async function createLinuxSandbox({
   return {
     args: [
       ...ISOLATION,
+      ...tmpfsMount,
       ...mounts,
       '--ro-bind',
       work,
