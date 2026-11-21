@@ -21,9 +21,12 @@ pub struct AuditContractOutput {
 
 /// One repository module shard submitted to the isolated audit worker.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuditModuleInput {
     pub docs: Vec<String>,
     pub files: Vec<String>,
+    #[serde(default)]
+    pub low_test_files: Vec<String>,
     pub manifests: Vec<String>,
     pub name: String,
 }

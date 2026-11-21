@@ -97,11 +97,11 @@ pub(super) fn build_worker(checkout: &Path, generate: bool) -> io::Result<Comman
         }
     }
     if generate {
-        for name in NETWORK
-            .iter()
-            .copied()
-            .chain(["OPENROUTER_API_KEY", "TENET_AGENT_MODEL"])
-        {
+        for name in NETWORK.iter().copied().chain([
+            "OPENROUTER_API_KEY",
+            "TENET_AGENT_MODEL",
+            "TENET_AUDIT_MODEL",
+        ]) {
             if let Some(value) = env::var_os(name) {
                 let _set = command.env(name, value);
             }

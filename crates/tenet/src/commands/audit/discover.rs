@@ -1,9 +1,11 @@
+mod context;
 mod shard;
 
 use alloc::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::anyhow;
+use context::{TestIndex, collect_all_docs, format_slash_path, select_module_docs};
 use shard::{merge_tiny_siblings, split_into_shards};
 use tenet_checks::behavior::AuditModuleInput;
 
@@ -18,7 +20,6 @@ const AUDIT_ONLY_SKIP_SEGMENTS: &[&str] = &[
     "locales",
     "translations",
 ];
-const DOC_LIMIT: usize = 4;
 const MANIFEST_NAMES: &[&str] = &[
     "Cargo.toml",
     "go.mod",
@@ -46,13 +47,14 @@ const NON_RUNTIME_SEGMENTS: &[&str] = &[
     "test",
     "testdata",
     "tests",
+    "testsuite",
     "third_party",
     "vendor",
 ];
-const README_NAMES: &[&str] = &["readme.md", "readme.rst", "readme.txt"];
 const SOURCE_EXTENSIONS: &[&str] = &[
     "cjs", "cts", "go", "js", "jsx", "mjs", "mts", "py", "rs", "ts", "tsx",
 ];
+const TEST_SEGMENTS: &[&str] = &["__tests__", "test", "tests", "testsuite"];
 
 /// Discovered module shards plus the repository runtime source closure for sandbox imports.
 pub(super) struct DiscoveredAudit {
@@ -68,7 +70,8 @@ pub(super) fn discover_modules(
     let filters = normalize_filters(requested)?;
     let all_paths = tenet_engine::list_paths(root)?;
     let manifests = collect_manifests(&all_paths);
-    let docs = collect_docs(&all_paths);
+    let all_docs = collect_all_docs(&all_paths);
+    let test_index = build_test_index(root, &all_paths);
     let mut runtime_paths = manifests.clone();
     let mut module_files: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for path in &all_paths {
@@ -83,46 +86,60 @@ pub(super) fn discover_modules(
             continue;
         }
         let dir_key = read_module_key(path);
-        let entry = module_files.entry(dir_key).or_default();
-        entry.push(slash_path);
+        module_files.entry(dir_key).or_default().push(slash_path);
     }
-    let merged_modules = merge_tiny_siblings(module_files);
-    let mut modules = Vec::new();
-    for (base_name, mut files) in merged_modules {
-        files.sort();
-        let shards = split_into_shards(root, &base_name, files);
-        for (name, shard_files) in shards {
-            modules.push(AuditModuleInput {
-                docs: docs.clone(),
-                files: shard_files,
-                manifests: manifests.clone(),
-                name,
-            });
-        }
-    }
+    let modules = build_module_shards(
+        root,
+        merge_tiny_siblings(module_files),
+        &manifests,
+        &all_docs,
+        &test_index,
+    );
     Ok(DiscoveredAudit {
         modules,
         runtime_paths,
     })
 }
 
-fn collect_docs(paths: &[PathBuf]) -> Vec<String> {
-    let mut docs = Vec::new();
-    for path in paths {
-        let text = format_slash_path(path);
-        let lower = text.to_ascii_lowercase();
-        let is_readme = README_NAMES.contains(&lower.as_str());
-        let is_doc_md = lower.starts_with("docs/")
-            && path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
-        if is_readme || is_doc_md {
-            docs.push(text);
+fn build_module_shards(
+    root: &Path,
+    merged_modules: BTreeMap<String, Vec<String>>,
+    manifests: &[String],
+    all_docs: &[String],
+    test_index: &TestIndex,
+) -> Vec<AuditModuleInput> {
+    let mut modules = Vec::new();
+    for (base_name, mut files) in merged_modules {
+        files.sort();
+        for (name, shard_files) in split_into_shards(root, &base_name, files) {
+            let docs = select_module_docs(all_docs, &name, &shard_files);
+            let low_test_files = test_index.find_low_test_files(&shard_files);
+            modules.push(AuditModuleInput {
+                docs,
+                files: shard_files,
+                low_test_files,
+                manifests: manifests.to_vec(),
+                name,
+            });
         }
     }
-    docs.sort();
-    docs.truncate(DOC_LIMIT);
-    docs
+    modules.sort_by(|left, right| {
+        right
+            .low_test_files
+            .len()
+            .cmp(&left.low_test_files.len())
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    modules
+}
+
+fn build_test_index(root: &Path, paths: &[PathBuf]) -> TestIndex {
+    let test_paths: Vec<PathBuf> = paths
+        .iter()
+        .filter(|path| is_test_source(path))
+        .cloned()
+        .collect();
+    TestIndex::build(root, &test_paths)
 }
 
 fn collect_manifests(paths: &[PathBuf]) -> Vec<String> {
@@ -142,21 +159,6 @@ fn collect_manifests(paths: &[PathBuf]) -> Vec<String> {
     }
     manifests.sort();
     manifests
-}
-
-fn format_slash_path(path: &Path) -> String {
-    path.components()
-        .filter_map(|component| {
-            match component {
-                Component::Normal(segment) => Some(segment.to_string_lossy().into_owned()),
-                Component::CurDir
-                | Component::ParentDir
-                | Component::Prefix(_)
-                | Component::RootDir => None,
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 fn has_segment(path: &Path, blocked: &[&str]) -> bool {
@@ -205,6 +207,20 @@ fn is_test_filename(name: &str, ext: &str) -> bool {
                 tag.eq_ignore_ascii_case("test") || tag.eq_ignore_ascii_case("spec")
             })
         })
+}
+
+fn is_test_source(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|item| item.to_str()) else {
+        return false;
+    };
+    if !SOURCE_EXTENSIONS.contains(&ext) || has_segment(path, &["node_modules", "target", "vendor"])
+    {
+        return false;
+    }
+    let Some(name) = path.file_name().and_then(|item| item.to_str()) else {
+        return false;
+    };
+    has_segment(path, TEST_SEGMENTS) || is_test_filename(name, ext)
 }
 
 fn normalize_filters(requested: &[PathBuf]) -> Result<Vec<PathBuf>, CommandError> {

@@ -5,7 +5,7 @@ import { CheckerError } from '../checker-error.mts';
 import { tryOperation } from '../try-operation.mts';
 import type { Finding } from '../types.d.mts';
 import { readLibrary } from './fx-library.mts';
-import { OpenRouterTurn, ROUTER_BASE } from './openrouter.mts';
+import { OpenRouterTurn, type ReasoningEffort, ROUTER_BASE } from './openrouter.mts';
 
 const TURN_TIMEOUT_MS = 120_000;
 const CONTEXT_WINDOW = 256_000;
@@ -55,12 +55,16 @@ function readCredentials(): string {
 
 type CreateAgentInput = Readonly<{
   instructions: string;
+  model?: string;
   router: OpenRouterTurn;
 }>;
 
-async function createAgent({ instructions, router }: CreateAgentInput): Promise<FxAgent> {
+async function createAgent({
+  instructions,
+  model = env.TENET_AGENT_MODEL ?? 'openai/gpt-6-luna',
+  router,
+}: CreateAgentInput): Promise<FxAgent> {
   const { createFxAgent, memory } = await readLibrary();
-  const model = env.TENET_AGENT_MODEL ?? 'openai/gpt-6-luna';
   const durability = memory();
   // Q: libfx supplies URL and request options separately to its fetch hook.
   // oxlint-disable-next-line max-params
@@ -137,7 +141,9 @@ async function runTurn({
 
 type FxJsonInput = Readonly<{
   instructions: string;
+  model?: string;
   onRequest: (cost: Finding['cost_usd']) => void;
+  reasoningEffort?: ReasoningEffort;
   source: string;
   timeoutMs?: number;
 }>;
@@ -145,13 +151,15 @@ type FxJsonInput = Readonly<{
 /** Execute one bounded JSON-returning fx turn against OpenRouter. */
 export async function runFxJson({
   instructions,
+  model,
   onRequest,
+  reasoningEffort = 'low',
   source,
   timeoutMs = TURN_TIMEOUT_MS,
 }: FxJsonInput): Promise<unknown> {
   const key = readCredentials();
-  const router = new OpenRouterTurn(key);
-  const agent = await createAgent({ instructions, router });
+  const router = new OpenRouterTurn({ key, reasoningEffort });
+  const agent = await createAgent({ instructions, model, router });
 
   return await runTurn({ agent, onRequest, router, source, timeoutMs });
 }

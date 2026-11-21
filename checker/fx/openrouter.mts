@@ -5,6 +5,13 @@ import { tryOperation } from '../try-operation.mts';
 import type { Finding } from '../types.d.mts';
 import { HttpMethod } from './http-method.mts';
 
+export type ReasoningEffort = 'low' | 'medium' | 'high';
+
+type OpenRouterTurnOptions = Readonly<{
+  key: string;
+  reasoningEffort?: ReasoningEffort;
+}>;
+
 export const ROUTER_BASE = 'https://openrouter.ai/api/v1';
 const CHAT_ENDPOINT = `${ROUTER_BASE}/chat/completions`;
 const MAX_RESPONSE_BYTES = 2_097_152;
@@ -21,7 +28,13 @@ type BuildRequestInput = {
   readonly key: string;
   readonly init: RequestInit;
   readonly deadline: AbortSignal;
+  readonly reasoningEffort: ReasoningEffort;
 };
+
+type PrepareBodyInput = Readonly<{
+  reasoningEffort: ReasoningEffort;
+  source: RequestInit['body'];
+}>;
 
 type Received = { readonly response: Response; readonly cost: Option.Option<number> };
 
@@ -89,7 +102,7 @@ function readRequestText(body: RequestInit['body']): string {
   throw new CheckerError({ message: 'cannot fit the fx request into the checker context' });
 }
 
-function prepareBody(source: RequestInit['body']): string {
+function prepareBody({ reasoningEffort, source }: PrepareBodyInput): string {
   const text = readRequestText(source);
   const decoded = decodeInput(text);
 
@@ -100,20 +113,20 @@ function prepareBody(source: RequestInit['body']): string {
   return JSON.stringify({
     ...decoded.value,
     max_tokens: OUTPUT_TOKENS,
-    reasoning: { effort: 'low' },
+    reasoning: { effort: reasoningEffort },
     response_format: { type: 'json_object' },
     stream_options: { include_usage: true },
   });
 }
 
-function buildRequest({ key, init, deadline }: BuildRequestInput): RequestInit {
+function buildRequest({ key, init, deadline, reasoningEffort }: BuildRequestInput): RequestInit {
   const signals = [deadline];
 
   if (init.signal) {
     signals.push(init.signal);
   }
 
-  const body = prepareBody(init.body);
+  const body = prepareBody({ reasoningEffort, source: init.body });
   const signal = AbortSignal.any(signals);
 
   return {
@@ -155,12 +168,23 @@ async function readResponse(response: Response): Promise<Received> {
 /** Own one turn's provider request, returned cost and sanitized rejection reason. */
 export class OpenRouterTurn {
   readonly #key: string;
+  readonly #reasoningEffort: ReasoningEffort;
   #attempted = false;
   #cost = Option.none<number>();
   #failure = Option.none<string>();
 
-  constructor(key: string) {
+  constructor(input: string | OpenRouterTurnOptions) {
+    if (typeof input === 'string') {
+      this.#key = input;
+      this.#reasoningEffort = 'low';
+
+      return;
+    }
+
+    const { key, reasoningEffort = 'low' } = input;
+
     this.#key = key;
+    this.#reasoningEffort = reasoningEffort;
   }
 
   get attempted(): boolean {
@@ -196,7 +220,13 @@ export class OpenRouterTurn {
     }
 
     const run = async (deadline: AbortSignal) => {
-      const request = buildRequest({ deadline, init, key: this.#key });
+      const request = buildRequest({
+        deadline,
+        init,
+        key: this.#key,
+        reasoningEffort: this.#reasoningEffort,
+      });
+
       this.#attempted = true;
       const response = await fetch(CHAT_ENDPOINT, request);
 

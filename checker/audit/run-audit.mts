@@ -1,82 +1,43 @@
-import { Result } from 'effect';
-import type { CheckerError } from '../checker-error.mts';
-import { classifyResult } from '../classify-result.mts';
 import { reportProgress } from '../progress-log.mts';
-import { run } from '../review/index.mts';
 import { assertSandboxAvailable } from '../sandbox/index.mts';
 import type { Finding } from '../types.d.mts';
-import { buildModuleContracts, type SynthesisOutcome } from './synthesize.mts';
-import type {
-  AuditContractOutput,
-  AuditModule,
-  AuditModuleReport,
-  AuditRequest,
-  AuditResponse,
-} from './wire.mts';
+import { mergeModuleReports } from './merge-report.mts';
+import { type BudgetTracker, type RoundInput, runModuleRound } from './run-round.mts';
+import { reviewFailingWitnesses } from './skeptic.mts';
+import type { AuditModule, AuditModuleReport, AuditRequest, AuditResponse } from './wire.mts';
 
-const REQUESTS_PER_CONTRACT = 3;
+const SHARPEN_MIN_BUDGET = 4;
+const MAX_PRIOR_GUARDS = 16;
 
 type RunAuditInput = AuditRequest;
-
-type BudgetTracker = Readonly<{
-  consume: (count: number) => void;
-  readRemaining: () => number;
-}>;
-
-type AuditOneInput = Readonly<{
-  budget: BudgetTracker;
-  deep: boolean;
-  fresh: boolean;
-  module: AuditModule;
-  progressFile?: string;
-  root: string;
-  runtimePaths: readonly string[];
-  state: string;
-}>;
-
-type VerifyCandidatesInput = AuditOneInput & Readonly<{ synthesis: SynthesisOutcome }>;
 
 type SumCostInput = Readonly<{
   first: Finding['cost_usd'];
   second: Finding['cost_usd'];
 }>;
 
-function addNullableCost({ first, second }: SumCostInput): Finding['cost_usd'] {
+type ShouldSharpenInput = Readonly<{
+  budget: BudgetTracker;
+  deep: boolean;
+  guards: readonly string[];
+  report: AuditModuleReport;
+}>;
+
+type ApplySkepticInput = Readonly<{
+  budget: BudgetTracker;
+  deep: boolean;
+  module: AuditModule;
+  progressFile?: string;
+  report: AuditModuleReport;
+  root: string;
+}>;
+
+function addCost({ first, second }: SumCostInput): Finding['cost_usd'] {
   if (first === null || second === null) {
     return null;
   }
 
   return first + second;
-}
-
-function readFindingRequests(findings: readonly Finding[]): number {
-  let total = 0;
-
-  for (const row of findings) {
-    if (row.requested) {
-      total += row.generation_requests ?? 1;
-    }
-
-    total += row.explanation_requests ?? 0;
-  }
-
-  return total;
-}
-
-function readFindingCost(findings: readonly Finding[]): Finding['cost_usd'] {
-  let total: Finding['cost_usd'] = 0;
-
-  for (const row of findings) {
-    if (row.requested) {
-      total = addNullableCost({ first: total, second: row.cost_usd });
-    }
-
-    if (row.explanation_requests !== undefined && row.explanation_requests > 0) {
-      total = addNullableCost({ first: total, second: row.explanation_cost_usd ?? null });
-    }
-  }
-
-  return total;
 }
 
 function createBudget(limit: number): BudgetTracker {
@@ -93,131 +54,80 @@ function createBudget(limit: number): BudgetTracker {
   return { consume, readRemaining };
 }
 
-type FailedModuleInput = Readonly<{
-  cause: unknown;
-  name: string;
-}>;
+function readPassingGuards(findings: readonly Finding[]): readonly string[] {
+  return findings
+    .filter((row) => row.outcome === 'passed')
+    .slice(0, MAX_PRIOR_GUARDS)
+    .map((row) => `${row.contract}/${row.check}: ${row.message}`);
+}
 
-function readFailureReason(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
+function hasFailingWitness(findings: readonly Finding[]): boolean {
+  return findings.some((row) => row.outcome === 'failed');
+}
+
+function shouldSharpen({ budget, deep, guards, report }: ShouldSharpenInput): boolean {
+  if (!deep || guards.length === 0) {
+    return false;
   }
 
-  return 'could not synthesize module contracts';
+  return !hasFailingWitness(report.findings) && budget.readRemaining() >= SHARPEN_MIN_BUDGET;
 }
 
-function buildFailedModuleReport({ cause, name }: FailedModuleInput): AuditModuleReport {
-  const message = readFailureReason(cause);
-
-  const finding: Finding = {
-    check: 'synthesis',
-    contract: name,
-    cost_usd: null,
-    message,
-    outcome: 'unresolved',
-    requested: false,
-    reused: false,
-    subject: null,
-  };
-
-  return { contracts: [], costUsd: null, findings: [finding], name, requests: 0 };
-}
-
-function mapContractOutputs(synthesis: SynthesisOutcome): readonly AuditContractOutput[] {
-  return synthesis.candidates.map((item) => ({
-    document: item.document,
-    lockPath: item.lockPath,
-    message: item.message,
-    name: item.name,
-    paths: item.paths,
-  }));
-}
-
-async function verifyModuleCandidates({
+async function applySkepticFilter({
   budget,
-  fresh,
+  deep,
   module,
   progressFile,
+  report,
   root,
-  runtimePaths,
-  state,
-  synthesis,
-}: VerifyCandidatesInput): Promise<AuditModuleReport> {
-  const leftBudget = budget.readRemaining();
-  const reviewBudget = Math.min(leftBudget, synthesis.candidates.length * REQUESTS_PER_CONTRACT);
-  const contracts = synthesis.candidates.map((item) => ({ ...item.contract, runtimePaths }));
+}: ApplySkepticInput): Promise<AuditModuleReport> {
+  if (!hasFailingWitness(report.findings) || budget.readRemaining() <= 0) {
+    return report;
+  }
 
-  const findings = await run({
-    contracts,
-    fresh,
-    maxGenerations: reviewBudget,
-    pinRoot: state,
-    progressFile,
+  await reportProgress({ contract: module.name, phase: 'reviewing witnesses', progressFile });
+
+  const reviewed = await reviewFailingWitnesses({
+    deep,
+    findings: report.findings,
+    module,
     root,
-    state,
   });
 
-  const reviewRequests = readFindingRequests(findings);
-  const reviewCost = readFindingCost(findings);
-
-  budget.consume(reviewRequests);
-
-  const contractOutputs = mapContractOutputs(synthesis);
-  const costUsd = addNullableCost({ first: synthesis.costUsd, second: reviewCost });
+  budget.consume(reviewed.requests);
 
   return {
-    contracts: contractOutputs,
-    costUsd,
-    findings,
-    name: module.name,
-    requests: synthesis.requests + reviewRequests,
+    ...report,
+    costUsd: addCost({ first: report.costUsd, second: reviewed.costUsd }),
+    findings: reviewed.findings,
+    requests: report.requests + reviewed.requests,
   };
 }
 
-async function buildSafely(
-  input: AuditOneInput,
-): Promise<Result.Result<SynthesisOutcome, CheckerError>> {
-  const { deep, module, progressFile, root } = input;
+async function runWithOptionalSharpening(input: RoundInput): Promise<AuditModuleReport> {
+  const first = await runModuleRound(input);
+  const guards = readPassingGuards(first.findings);
 
-  await reportProgress({ contract: module.name, phase: 'synthesizing contracts', progressFile });
-
-  async function runSynthesis(): Promise<SynthesisOutcome> {
-    return await buildModuleContracts({ deep, module, root });
+  if (!shouldSharpen({ budget: input.budget, deep: input.deep, guards, report: first })) {
+    return first;
   }
 
-  return await classifyResult({ message: 'module synthesis failed', run: runSynthesis });
+  const extra = await runModuleRound({ ...input, priorGuards: guards });
+
+  return mergeModuleReports({ base: first, extra });
 }
 
-function buildEmptyModuleReport(name: string): AuditModuleReport {
-  return { contracts: [], costUsd: 0, findings: [], name, requests: 0 };
-}
+async function auditSingleModule(input: RoundInput): Promise<AuditModuleReport> {
+  const report = await runWithOptionalSharpening(input);
 
-async function auditSingleModule(input: AuditOneInput): Promise<AuditModuleReport> {
-  if (input.budget.readRemaining() <= 0) {
-    return buildEmptyModuleReport(input.module.name);
-  }
-
-  const synthResult = await buildSafely(input);
-
-  if (Result.isFailure(synthResult)) {
-    return buildFailedModuleReport({ cause: synthResult.failure.cause, name: input.module.name });
-  }
-
-  const synthesis = synthResult.success;
-
-  input.budget.consume(synthesis.requests);
-
-  if (synthesis.candidates.length === 0) {
-    return {
-      contracts: [],
-      costUsd: synthesis.costUsd,
-      findings: [],
-      name: input.module.name,
-      requests: synthesis.requests,
-    };
-  }
-
-  return await verifyModuleCandidates({ ...input, synthesis });
+  return await applySkepticFilter({
+    budget: input.budget,
+    deep: input.deep,
+    module: input.module,
+    progressFile: input.progressFile,
+    report,
+    root: input.root,
+  });
 }
 
 function summarizeAuditReports(reports: readonly AuditModuleReport[]): AuditResponse {
@@ -225,7 +135,7 @@ function summarizeAuditReports(reports: readonly AuditModuleReport[]): AuditResp
   let totalRequests = 0;
 
   for (const report of reports) {
-    totalCost = addNullableCost({ first: totalCost, second: report.costUsd });
+    totalCost = addCost({ first: totalCost, second: report.costUsd });
     totalRequests += report.requests;
   }
 

@@ -3,6 +3,7 @@ import { Schema } from 'effect';
 import type { Finding } from '../types.d.mts';
 
 const StringList = Schema.Array(Schema.String);
+const OptionalStringList = Schema.OptionFromOptionalKey(StringList);
 const OptionalFlag = Schema.OptionFromOptionalKey(Schema.Boolean);
 const OptionalText = Schema.OptionFromOptionalKey(Schema.String);
 const AuditMode = Schema.Literal('audit');
@@ -10,6 +11,7 @@ const AuditMode = Schema.Literal('audit');
 const AuditModuleFields = Schema.Struct({
   docs: StringList,
   files: StringList,
+  lowTestFiles: OptionalStringList,
   manifests: StringList,
   name: Schema.String,
 });
@@ -18,8 +20,6 @@ export const AuditModule = Schema.toEncoded(AuditModuleFields);
 export type AuditModule = typeof AuditModule.Type;
 
 const AuditModules = Schema.Array(AuditModule);
-
-const OptionalStringList = Schema.OptionFromOptionalKey(StringList);
 
 const AuditRequestFields = Schema.Struct({
   deep: OptionalFlag,

@@ -80,6 +80,48 @@ fn discover_modules_keeps_generated_runtime_files_and_merges_tiny_siblings() -> 
 }
 
 #[test]
+fn discover_modules_ranks_docs_and_flags_low_test_files() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    fs::create_dir_all(root.join("src/parser"))?;
+    fs::create_dir_all(root.join("src/format"))?;
+    fs::create_dir_all(root.join("tests"))?;
+    fs::create_dir_all(root.join("docs"))?;
+    fs::write(root.join("README.md"), "# Demo\n")?;
+    for name in ["alpha", "beta", "gamma", "delta", "parser"] {
+        fs::write(root.join(format!("docs/{name}.rst")), format!("{name}\n"))?;
+    }
+    fs::write(
+        root.join("src/parser/lexer.py"),
+        "def lex():\n    return 1\n",
+    )?;
+    fs::write(
+        root.join("src/format/render.py"),
+        "def render():\n    return 1\n",
+    )?;
+    fs::write(root.join("tests/test_render_one.py"), "import render\n")?;
+    fs::write(root.join("tests/test_render_two.py"), "import render\n")?;
+
+    let discovered = discover_modules(root, &[])?;
+    let first = discovered
+        .modules
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("missing first module"))?;
+    let name = &first.name;
+    anyhow::ensure!(
+        name == "src/parser",
+        "expected low-test module first, got {name:?}"
+    );
+    anyhow::ensure!(first.low_test_files == vec!["src/parser/lexer.py"]);
+    anyhow::ensure!(
+        first.docs.contains(&String::from("docs/parser.rst")),
+        "expected relevance-matched doc in {:?}",
+        first.docs
+    );
+    Ok(())
+}
+
+#[test]
 fn discover_modules_skips_tests_and_attaches_manifests() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let root = dir.path();

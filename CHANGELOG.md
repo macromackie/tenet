@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.25.0
+
+- Upgraded `tenet audit --deep` to a two-tier synthesis and verification architecture: contract synthesis, closed-loop hypothesis sharpening, and witness skepticism default to a stronger reasoning model (`openai/gpt-6.1-terra` at `medium` reasoning effort, overridable via `TENET_AUDIT_MODEL`), while sandboxed probe qualification and repair remain on the fast, low-cost generation model (`TENET_AGENT_MODEL`, defaulting to `openai/gpt-6-luna`).
+- Added a bounded closed-loop execution-feedback sharpening round in `tenet audit --deep`: when a module qualifies passing guards with zero failing witnesses and budget remains, Tenet feeds the already-verified guards back to synthesize 1 to 3 deeper adversarial contracts targeting unexplored seams, round-trips, metamorphic relations, and edge cases.
+- Added a batched skeptic reflection pass over live failing audit witnesses: each failing witness is checked against the module's source and documentation, keeping confirmed defects as failing witnesses while downgrading clear false positives to `unresolved` with the skeptic's explanation.
+- Added universal property-based, metamorphic, and differential oracle guidance to the audit and behavior-check prompts, enabling deterministic bounded property loops (10 to 60 structured edge inputs in pure stdlib) and cross-path/reference consistency checks inside the isolated sandbox.
+- Added static test-gap prioritization and relevance-ranked documentation matching in `tenet audit` discovery: production files with the fewest mentions across the repository's test suite are flagged in `lowTestFiles` and prioritized first, and each module receives its highest-overlap `docs/*.md` or `docs/*.rst` files alongside the root README.
+
 ## v0.24.1
 
 - Kept generated and locale source directories (`gen/`, `generated/`, `i18n/`, `l10n/`, `locale/`, `locales/`, `translations/`) in the `tenet audit` sandbox runtime closure (up to 1,024 files) while continuing to exclude them from audited module shards, so crates like `syn` that compile generated modules alongside hand-written code build cleanly in the sandbox without spending audit budget on generated or translation files.

@@ -20800,6 +20800,82 @@ function resolveAnnotationsKey(schema) {
   return schema.ast.context?.annotations;
 }
 
+// audit/apply-skeptic.mts
+var VerdictLiteral = Schema_exports.Literals(["confirm", "reject"]);
+var SkepticReview = Schema_exports.Struct({
+  check: Schema_exports.String,
+  reason: Schema_exports.String,
+  verdict: VerdictLiteral
+});
+var ReviewList = Schema_exports.Array(SkepticReview);
+var ReviewEnvelope = Schema_exports.Struct({
+  reviews: ReviewList
+});
+var decodeReviews = Schema_exports.decodeUnknownOption(ReviewEnvelope, { onExcessProperty: "error" });
+function buildRejectionLookup(reviews) {
+  const rejectedChecks = /* @__PURE__ */ new Map();
+  for (const review of reviews) {
+    const reason = review.reason.trim();
+    if (review.verdict === "reject" && reason.length > 0) {
+      rejectedChecks.set(review.check, reason);
+    }
+  }
+  return rejectedChecks;
+}
+function applySkepticOutput({ findings, raw }) {
+  const decoded = decodeReviews(raw);
+  if (Option_exports.isNone(decoded)) {
+    return findings;
+  }
+  const rejectedChecks = buildRejectionLookup(decoded.value.reviews);
+  return findings.map((row) => {
+    if (row.outcome !== "failed") {
+      return row;
+    }
+    const reason = rejectedChecks.get(row.check);
+    if (reason === void 0) {
+      return row;
+    }
+    return {
+      ...row,
+      message: `dismissed by skeptic: ${reason} (${row.message})`,
+      outcome: "unresolved"
+    };
+  });
+}
+
+// audit/model-tier.mts
+import { env } from "node:process";
+var DEFAULT_STANDARD_MODEL = "openai/gpt-6-luna";
+var DEFAULT_DEEP_MODEL = "openai/gpt-6.1-terra";
+function readModel({ agentModel, auditModel, deep }) {
+  if (auditModel !== void 0 && auditModel.length > 0) {
+    return auditModel;
+  }
+  if (agentModel !== void 0 && agentModel.length > 0) {
+    return agentModel;
+  }
+  if (deep) {
+    return DEFAULT_DEEP_MODEL;
+  }
+  return DEFAULT_STANDARD_MODEL;
+}
+function readEffort(deep) {
+  if (deep) {
+    return "medium";
+  }
+  return "low";
+}
+function selectAuditTier({
+  agentModel = env.TENET_AGENT_MODEL,
+  auditModel = env.TENET_AUDIT_MODEL,
+  deep
+}) {
+  const model = readModel({ agentModel, auditModel, deep });
+  const effort = readEffort(deep);
+  return { effort, model };
+}
+
 // storage/hash-source.mts
 import { createHash } from "node:crypto";
 function hashSource(data) {
@@ -21204,44 +21280,6 @@ async function reportProgress({
 `, "utf-8");
   }
   await classifyResult({ message: "progress update ignored", run: writePhase });
-}
-
-// review/merge-evaluations.mts
-function collectQualified({ prior, repaired }) {
-  const seenIds = /* @__PURE__ */ new Set();
-  const merged = [];
-  for (const check2 of [...prior.qualified, ...repaired.qualified]) {
-    if (!seenIds.has(check2.id)) {
-      seenIds.add(check2.id);
-      merged.push(check2);
-    }
-  }
-  return merged;
-}
-function collectOpen({ prior, repaired }) {
-  const openItems = /* @__PURE__ */ new Set([...prior.open, ...repaired.open]);
-  return [...openItems];
-}
-function collectUnresolved({ qualifiedIds, repaired }) {
-  return repaired.extraUnresolved.filter((finding) => !qualifiedIds.has(finding.check));
-}
-function mergeEvaluations({ prior, repaired }) {
-  const qualified = collectQualified({ prior, repaired });
-  const qualifiedIdList = qualified.map((check2) => check2.id);
-  const qualifiedIds = new Set(qualifiedIdList);
-  const extraUnresolved = collectUnresolved({ qualifiedIds, repaired });
-  const open4 = collectOpen({ prior, repaired });
-  return {
-    errors: repaired.errors,
-    extraUnresolved,
-    open: open4,
-    qualified
-  };
-}
-
-// review/pin/has-check-inputs.mts
-function hasCheckInputs({ check: check2, files }) {
-  return files.has(check2.subject) && (check2.testFile === void 0 || files.has(check2.testFile));
 }
 
 // sandbox/controls/probe-diagnostics.mts
@@ -21869,7 +21907,7 @@ var SYSTEM_PYTHON = "/usr/bin/python3";
 var TOOL_TIMEOUT_MS = 2e4;
 var OUTPUT_BYTES = 8192;
 async function probeHostPython() {
-  const env6 = {
+  const env7 = {
     HOME: hostEnvironment.HOME,
     PATH: hostEnvironment.PATH
   };
@@ -21880,7 +21918,7 @@ async function probeHostPython() {
     options: {
       cwd: cwd2,
       encoding: "utf-8",
-      env: env6,
+      env: env7,
       killSignal: "SIGKILL",
       maxBuffer: OUTPUT_BYTES,
       timeout: TOOL_TIMEOUT_MS
@@ -21913,7 +21951,7 @@ import { env as hostEnvironment2 } from "node:process";
 var TOOL_TIMEOUT_MS2 = 2e4;
 var OUTPUT_BYTES2 = 65536;
 async function readGoTool(args2) {
-  const env6 = {
+  const env7 = {
     GOPATH: hostEnvironment2.GOPATH,
     GOROOT: hostEnvironment2.GOROOT,
     HOME: hostEnvironment2.HOME,
@@ -21926,7 +21964,7 @@ async function readGoTool(args2) {
     options: {
       cwd: cwd2,
       encoding: "utf-8",
-      env: env6,
+      env: env7,
       killSignal: "SIGKILL",
       maxBuffer: OUTPUT_BYTES2,
       timeout: TOOL_TIMEOUT_MS2
@@ -22243,7 +22281,7 @@ import { env as hostEnvironment3 } from "node:process";
 var TOOL_TIMEOUT_MS3 = 2e4;
 var OUTPUT_BYTES3 = 65536;
 async function readRustTool(arg) {
-  const env6 = {
+  const env7 = {
     CARGO_HOME: hostEnvironment3.CARGO_HOME,
     HOME: hostEnvironment3.HOME,
     PATH: hostEnvironment3.PATH,
@@ -22257,7 +22295,7 @@ async function readRustTool(arg) {
     options: {
       cwd: cwd2,
       encoding: "utf-8",
-      env: env6,
+      env: env7,
       killSignal: "SIGKILL",
       maxBuffer: OUTPUT_BYTES3,
       timeout: TOOL_TIMEOUT_MS3
@@ -22648,7 +22686,7 @@ async function createMacosSandbox({
     runtimeRoot,
     work: canonicalWork
   });
-  const env6 = buildSandboxEnv({
+  const env7 = buildSandboxEnv({
     deps,
     extraEnv,
     files,
@@ -22661,7 +22699,7 @@ async function createMacosSandbox({
   return {
     args: ["-p", profile, "/bin/sh", "-c", limitScript, "tenet-limit", ...command],
     cwd: canonicalWork,
-    env: env6,
+    env: env7,
     file: SANDBOX_EXEC
   };
 }
@@ -23098,7 +23136,7 @@ function readProbeTimeout(runtime) {
   return PROBE_TIMEOUT_MS;
 }
 async function execute(probe) {
-  const { args: args2, cwd: cwd2, env: env6, file } = probe.command;
+  const { args: args2, cwd: cwd2, env: env7, file } = probe.command;
   const timeout3 = readProbeTimeout(probe.check.runtime);
   return await runFile({
     args: args2,
@@ -23106,7 +23144,7 @@ async function execute(probe) {
     options: {
       cwd: cwd2,
       encoding: "utf-8",
-      env: env6,
+      env: env7,
       killSignal: "SIGKILL",
       maxBuffer: OUTPUT_BYTES5,
       timeout: timeout3
@@ -23355,6 +23393,73 @@ async function readRunnerVersion() {
   const goInstalled = await readGoVersion();
   const go = Option_exports.getOrNull(goInstalled);
   return JSON.stringify([RUNNER_REVISION, process.version, process.platform, binaries, rust, go]);
+}
+
+// audit/merge-report.mts
+function addCost({ first, second }) {
+  if (first === null || second === null) {
+    return null;
+  }
+  return first + second;
+}
+function mergeContracts({ first, second }) {
+  const names = first.map((item) => item.name);
+  const seenNames = new Set(names);
+  const merged = [...first];
+  for (const item of second) {
+    if (!seenNames.has(item.name)) {
+      seenNames.add(item.name);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+function mergeModuleReports({ base, extra }) {
+  return {
+    contracts: mergeContracts({ first: base.contracts, second: extra.contracts }),
+    costUsd: addCost({ first: base.costUsd, second: extra.costUsd }),
+    findings: [...base.findings, ...extra.findings],
+    name: base.name,
+    requests: base.requests + extra.requests
+  };
+}
+
+// review/merge-evaluations.mts
+function collectQualified({ prior, repaired }) {
+  const seenIds = /* @__PURE__ */ new Set();
+  const merged = [];
+  for (const check2 of [...prior.qualified, ...repaired.qualified]) {
+    if (!seenIds.has(check2.id)) {
+      seenIds.add(check2.id);
+      merged.push(check2);
+    }
+  }
+  return merged;
+}
+function collectOpen({ prior, repaired }) {
+  const openItems = /* @__PURE__ */ new Set([...prior.open, ...repaired.open]);
+  return [...openItems];
+}
+function collectUnresolved({ qualifiedIds, repaired }) {
+  return repaired.extraUnresolved.filter((finding) => !qualifiedIds.has(finding.check));
+}
+function mergeEvaluations({ prior, repaired }) {
+  const qualified = collectQualified({ prior, repaired });
+  const qualifiedIdList = qualified.map((check2) => check2.id);
+  const qualifiedIds = new Set(qualifiedIdList);
+  const extraUnresolved = collectUnresolved({ qualifiedIds, repaired });
+  const open4 = collectOpen({ prior, repaired });
+  return {
+    errors: repaired.errors,
+    extraUnresolved,
+    open: open4,
+    qualified
+  };
+}
+
+// review/pin/has-check-inputs.mts
+function hasCheckInputs({ check: check2, files }) {
+  return files.has(check2.subject) && (check2.testFile === void 0 || files.has(check2.testFile));
 }
 
 // wire.mts
@@ -23839,10 +23944,10 @@ function updatePin({ prior, next, files }) {
 import { realpath as realpath10 } from "node:fs/promises";
 
 // fx/explain-findings.mts
-import { env as env4 } from "node:process";
+import { env as env5 } from "node:process";
 
 // fx/fx-json.mts
-import { env as env3 } from "node:process";
+import { env as env4 } from "node:process";
 
 // fx/fx-library.mts
 import { pathToFileURL } from "node:url";
@@ -23851,14 +23956,14 @@ import { pathToFileURL } from "node:url";
 import { access as access7, mkdir as mkdir4, mkdtemp as mkdtemp2, realpath as realpath9, rename as rename2, rm as rm4 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { isAbsolute as isAbsolute2, join as join11, relative as relative2, sep as sep5 } from "node:path";
-import { cwd, env as env2 } from "node:process";
+import { cwd, env as env3 } from "node:process";
 
 // fx/install-fx.mts
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { cp } from "node:fs/promises";
 import { join as join10 } from "node:path";
-import { env } from "node:process";
+import { env as env2 } from "node:process";
 
 // fx/resolve-asset.mts
 import { access as access6 } from "node:fs/promises";
@@ -23885,13 +23990,13 @@ async function installFxRuntime(directory) {
   await copyManifest({ destination: directory, directory: "package.json" });
   await copyManifest({ destination: directory, directory: "package-lock.json" });
   const options = {
-    HOME: env.HOME,
-    HTTPS_PROXY: env.HTTPS_PROXY,
-    HTTP_PROXY: env.HTTP_PROXY,
-    NODE_EXTRA_CA_CERTS: env.NODE_EXTRA_CA_CERTS,
-    NO_PROXY: env.NO_PROXY,
-    PATH: env.PATH,
-    SSL_CERT_FILE: env.SSL_CERT_FILE,
+    HOME: env2.HOME,
+    HTTPS_PROXY: env2.HTTPS_PROXY,
+    HTTP_PROXY: env2.HTTP_PROXY,
+    NODE_EXTRA_CA_CERTS: env2.NODE_EXTRA_CA_CERTS,
+    NO_PROXY: env2.NO_PROXY,
+    PATH: env2.PATH,
+    SSL_CERT_FILE: env2.SSL_CERT_FILE,
     npm_config_userconfig: "/dev/null"
   };
   const child = spawn("npm", ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], {
@@ -23917,7 +24022,7 @@ function readCode(value3) {
   return "";
 }
 async function resolveTrustedPath(path) {
-  const sourceRoot = env2.TENET_WORKER_SOURCE_ROOT ?? cwd();
+  const sourceRoot = env3.TENET_WORKER_SOURCE_ROOT ?? cwd();
   const source = await realpath9(sourceRoot);
   const destination = await resolveRoot(path);
   const relation = relative2(source, destination);
@@ -23952,7 +24057,7 @@ async function ensureInstallation({ cache: cache2, destination }) {
 }
 async function resolveInstallation() {
   const userHome = homedir3();
-  const home = env2.XDG_CACHE_HOME ?? join11(userHome, ".cache");
+  const home = env3.XDG_CACHE_HOME ?? join11(userHome, ".cache");
   const directory = join11(home, "tenet", "libfx");
   const cache2 = await resolveTrustedPath(directory);
   const destination = join11(cache2, LIBFX_VERSION);
@@ -24067,7 +24172,7 @@ function readRequestText(body) {
   }
   throw new CheckerError({ message: "cannot fit the fx request into the checker context" });
 }
-function prepareBody(source) {
+function prepareBody({ reasoningEffort, source }) {
   const text2 = readRequestText(source);
   const decoded = decodeInput(text2);
   if (Option_exports.isNone(decoded)) {
@@ -24076,17 +24181,17 @@ function prepareBody(source) {
   return JSON.stringify({
     ...decoded.value,
     max_tokens: OUTPUT_TOKENS,
-    reasoning: { effort: "low" },
+    reasoning: { effort: reasoningEffort },
     response_format: { type: "json_object" },
     stream_options: { include_usage: true }
   });
 }
-function buildRequest({ key, init, deadline }) {
+function buildRequest({ key, init, deadline, reasoningEffort }) {
   const signals = [deadline];
   if (init.signal) {
     signals.push(init.signal);
   }
-  const body = prepareBody(init.body);
+  const body = prepareBody({ reasoningEffort, source: init.body });
   const signal = AbortSignal.any(signals);
   return {
     body,
@@ -24118,11 +24223,19 @@ async function readResponse(response) {
 }
 var OpenRouterTurn = class {
   #key;
+  #reasoningEffort;
   #attempted = false;
   #cost = Option_exports.none();
   #failure = Option_exports.none();
-  constructor(key) {
+  constructor(input) {
+    if (typeof input === "string") {
+      this.#key = input;
+      this.#reasoningEffort = "low";
+      return;
+    }
+    const { key, reasoningEffort = "low" } = input;
     this.#key = key;
+    this.#reasoningEffort = reasoningEffort;
   }
   get attempted() {
     return this.#attempted;
@@ -24150,7 +24263,12 @@ var OpenRouterTurn = class {
       throw new CheckerError({ message: "the checker may send one OpenRouter request" });
     }
     const run3 = async (deadline) => {
-      const request3 = buildRequest({ deadline, init, key: this.#key });
+      const request3 = buildRequest({
+        deadline,
+        init,
+        key: this.#key,
+        reasoningEffort: this.#reasoningEffort
+      });
       this.#attempted = true;
       const response = await fetch(CHAT_ENDPOINT, request3);
       return await this.#receive(response);
@@ -24190,15 +24308,18 @@ async function readAnswer(turn) {
   return decodeAnswer(text2);
 }
 function readCredentials() {
-  const key = env3.OPENROUTER_API_KEY;
+  const key = env4.OPENROUTER_API_KEY;
   if (key === void 0 || key.length === 0) {
     throw new CheckerError({ message: "set OPENROUTER_API_KEY to build the checker" });
   }
   return key;
 }
-async function createAgent({ instructions, router }) {
+async function createAgent({
+  instructions,
+  model = env4.TENET_AGENT_MODEL ?? "openai/gpt-6-luna",
+  router
+}) {
   const { createFxAgent, memory } = await readLibrary();
-  const model = env3.TENET_AGENT_MODEL ?? "openai/gpt-6-luna";
   const durability = memory();
   const send = async (url, init) => await router.send({ init, url });
   const settings = {
@@ -24252,13 +24373,15 @@ async function runTurn({
 }
 async function runFxJson({
   instructions,
+  model,
   onRequest,
+  reasoningEffort = "low",
   source,
   timeoutMs = TURN_TIMEOUT_MS
 }) {
   const key = readCredentials();
-  const router = new OpenRouterTurn(key);
-  const agent = await createAgent({ instructions, router });
+  const router = new OpenRouterTurn({ key, reasoningEffort });
+  const agent = await createAgent({ instructions, model, router });
   return await runTurn({ agent, onRequest, router, source, timeoutMs });
 }
 
@@ -24312,7 +24435,7 @@ function collectCandidates2(rows) {
   return candidates;
 }
 function hasApiKey() {
-  const key = env4.OPENROUTER_API_KEY;
+  const key = env5.OPENROUTER_API_KEY;
   return key !== void 0 && key.length > 0;
 }
 function updateRow({ explanations, index: index2, row }) {
@@ -24423,7 +24546,7 @@ function readReason(error) {
 
 // discovery/base.mts
 import { execFile as execFile2 } from "node:child_process";
-import { env as env5 } from "node:process";
+import { env as env6 } from "node:process";
 import { promisify as promisify2 } from "node:util";
 var execute2 = promisify2(execFile2);
 var OBJECT_ID = new RegExp("^(?:[a-f0-9]{40}|[a-f0-9]{64})$", "v");
@@ -24434,7 +24557,7 @@ async function runGit({ root, args: args2 }) {
     "git",
     ["--no-replace-objects", "--literal-pathspecs", "-C", root, ...args2],
     {
-      env: { GIT_CONFIG_NOSYSTEM: "1", PATH: env5.PATH },
+      env: { GIT_CONFIG_NOSYSTEM: "1", PATH: env6.PATH },
       maxBuffer: FILE_LIMIT,
       timeout: GIT_TIMEOUT
     }
@@ -25492,6 +25615,8 @@ async function run2(input) {
 
 // audit/synthesize.mts
 import { readFile as readFile5 } from "node:fs/promises";
+
+// audit/packet.mts
 var MAX_PACKET_BYTES = 204800;
 var MAX_FILE_BYTES = 65536;
 var MAX_DOC_BYTES = 16384;
@@ -25546,27 +25671,7 @@ async function readGroup({
   }
   return Object.fromEntries(state.entries);
 }
-function createCostMeter() {
-  let costUsd = 0;
-  let requests = 0;
-  function onRequest(cost) {
-    requests += 1;
-    if (cost === null || costUsd === null) {
-      costUsd = null;
-      return;
-    }
-    costUsd += cost;
-  }
-  function readTotals() {
-    return { costUsd, requests };
-  }
-  return { onRequest, readTotals };
-}
-async function readAuditPrompt() {
-  const promptPath = await resolveWorkerAsset("audit-prompt.md");
-  return await readFile5(promptPath, "utf-8");
-}
-async function buildModulePayload({ deep, module, root }) {
+async function readModulePacket({ module, root }) {
   const sources = await readGroup({
     limitBytes: MAX_PACKET_BYTES,
     paths: [...module.manifests, ...module.files],
@@ -25579,18 +25684,54 @@ async function buildModulePayload({ deep, module, root }) {
     perFileBytes: MAX_DOC_BYTES,
     root
   });
-  const files = Object.keys(sources);
-  return JSON.stringify({ deep, docs, files, module: module.name, sources });
+  return { docs, files: Object.keys(sources), sources };
+}
+
+// audit/synthesize.mts
+async function readAuditPrompt() {
+  const promptPath = await resolveWorkerAsset("audit-prompt.md");
+  return await readFile5(promptPath, "utf-8");
+}
+async function buildModulePayload({
+  deep,
+  module,
+  priorGuards = [],
+  root
+}) {
+  const packet = await readModulePacket({ module, root });
+  const lowTestFiles = module.lowTestFiles ?? [];
+  return JSON.stringify({
+    deep,
+    docs: packet.docs,
+    files: packet.files,
+    lowTestFiles,
+    module: module.name,
+    priorGuards,
+    sources: packet.sources
+  });
 }
 async function buildModuleContracts({
   deep,
   module,
+  priorGuards = [],
   root
 }) {
   const instructions = await readAuditPrompt();
-  const source = await buildModulePayload({ deep, module, root });
-  const meter = createCostMeter();
-  const raw = await runFxJson({ instructions, onRequest: meter.onRequest, source });
+  const source = await buildModulePayload({ deep, module, priorGuards, root });
+  const tier = selectAuditTier({ deep });
+  let costUsd = 0;
+  let requests = 0;
+  function onRequest(cost) {
+    requests += 1;
+    costUsd = cost;
+  }
+  const raw = await runFxJson({
+    instructions,
+    model: tier.model,
+    onRequest,
+    reasoningEffort: tier.effort,
+    source
+  });
   const allowedPaths = [...module.manifests, ...module.files];
   const candidates = parseAuditCandidates({
     allowedPaths,
@@ -25598,53 +25739,35 @@ async function buildModuleContracts({
     moduleName: module.name,
     raw
   });
-  const totals = meter.readTotals();
-  return { candidates, ...totals };
+  return { candidates, costUsd, requests };
 }
 
-// audit/run-audit.mts
+// audit/run-round.mts
 var REQUESTS_PER_CONTRACT = 3;
-function addNullableCost({ first, second }) {
+function addCost2({ first, second }) {
   if (first === null || second === null) {
     return null;
   }
   return first + second;
 }
-function readFindingRequests(findings) {
-  let total = 0;
+function readFindingTotals(findings) {
+  let cost = 0;
+  let requests = 0;
   for (const row of findings) {
     if (row.requested) {
-      total += row.generation_requests ?? 1;
-    }
-    total += row.explanation_requests ?? 0;
-  }
-  return total;
-}
-function readFindingCost(findings) {
-  let total = 0;
-  for (const row of findings) {
-    if (row.requested) {
-      total = addNullableCost({ first: total, second: row.cost_usd });
+      requests += row.generation_requests ?? 1;
+      cost = addCost2({ first: cost, second: row.cost_usd });
     }
     if (row.explanation_requests !== void 0 && row.explanation_requests > 0) {
-      total = addNullableCost({ first: total, second: row.explanation_cost_usd ?? null });
+      requests += row.explanation_requests;
+      cost = addCost2({ first: cost, second: row.explanation_cost_usd ?? null });
     }
   }
-  return total;
+  return { cost, requests };
 }
-function createBudget2(limit) {
-  let left = Math.max(0, limit);
-  function consume(count) {
-    left = Math.max(0, left - count);
-  }
-  function readRemaining() {
-    return left;
-  }
-  return { consume, readRemaining };
-}
-function readFailureReason(error) {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
+function readFailureReason(cause) {
+  if (cause instanceof Error && cause.message.length > 0) {
+    return cause.message;
   }
   return "could not synthesize module contracts";
 }
@@ -25693,33 +25816,34 @@ async function verifyModuleCandidates({
     root,
     state
   });
-  const reviewRequests = readFindingRequests(findings);
-  const reviewCost = readFindingCost(findings);
-  budget.consume(reviewRequests);
-  const contractOutputs = mapContractOutputs(synthesis);
-  const costUsd = addNullableCost({ first: synthesis.costUsd, second: reviewCost });
+  const totals = readFindingTotals(findings);
+  budget.consume(totals.requests);
   return {
-    contracts: contractOutputs,
-    costUsd,
+    contracts: mapContractOutputs(synthesis),
+    costUsd: addCost2({ first: synthesis.costUsd, second: totals.cost }),
     findings,
     name: module.name,
-    requests: synthesis.requests + reviewRequests
+    requests: synthesis.requests + totals.requests
   };
 }
+function readSynthesisPhase(priorGuards) {
+  if (priorGuards.length > 0) {
+    return "sharpening hypotheses";
+  }
+  return "synthesizing contracts";
+}
 async function buildSafely(input) {
-  const { deep, module, progressFile, root } = input;
-  await reportProgress({ contract: module.name, phase: "synthesizing contracts", progressFile });
+  const { deep, module, priorGuards = [], progressFile, root } = input;
+  const phase = readSynthesisPhase(priorGuards);
+  await reportProgress({ contract: module.name, phase, progressFile });
   async function runSynthesis() {
-    return await buildModuleContracts({ deep, module, root });
+    return await buildModuleContracts({ deep, module, priorGuards, root });
   }
   return await classifyResult({ message: "module synthesis failed", run: runSynthesis });
 }
-function buildEmptyModuleReport(name) {
-  return { contracts: [], costUsd: 0, findings: [], name, requests: 0 };
-}
-async function auditSingleModule(input) {
+async function runModuleRound(input) {
   if (input.budget.readRemaining() <= 0) {
-    return buildEmptyModuleReport(input.module.name);
+    return { contracts: [], costUsd: 0, findings: [], name: input.module.name, requests: 0 };
   }
   const synthResult = await buildSafely(input);
   if (Result_exports.isFailure(synthResult)) {
@@ -25738,11 +25862,151 @@ async function auditSingleModule(input) {
   }
   return await verifyModuleCandidates({ ...input, synthesis });
 }
+
+// audit/skeptic.mts
+var SKEPTIC_INSTRUCTIONS = [
+  "You are a strict software verification skeptic reviewing live failing behavioral witnesses against source code and docs.",
+  'Return ONLY JSON: {"reviews":[{"check":"...","verdict":"confirm"|"reject","reason":"one concise sentence"}]}.',
+  "Confirm genuine defects: contradictions with docstrings/README/standards, unexpected crashes, state corruption, mutating non-mutating APIs, or broken edge cases.",
+  "Reject ONLY clear false positives where the witness contradicts intentional documented behavior, violates an explicit documented precondition, or assumes an unexported internal quirk.",
+  "When in doubt on a genuine behavioral anomaly, confirm."
+].join("\n");
+async function buildSkepticPayload({ failed, module, root }) {
+  const packet = await readModulePacket({ module, root });
+  const witnesses = failed.map((item) => ({
+    check: item.check,
+    contract: item.contract,
+    message: item.message,
+    subject: item.subject
+  }));
+  return JSON.stringify({
+    docs: packet.docs,
+    module: module.name,
+    sources: packet.sources,
+    witnesses
+  });
+}
+async function callSkepticModel({ deep, source }) {
+  const tier = selectAuditTier({ deep });
+  let costUsd = 0;
+  let requests = 0;
+  function onRequest(cost) {
+    requests += 1;
+    costUsd = cost;
+  }
+  async function runReview() {
+    return await runFxJson({
+      instructions: SKEPTIC_INSTRUCTIONS,
+      model: tier.model,
+      onRequest,
+      reasoningEffort: tier.effort,
+      source
+    });
+  }
+  const outcome = await classifyResult({ message: "skeptic witness review failed", run: runReview });
+  return { costUsd, outcome, requests };
+}
+async function reviewFailingWitnesses({
+  deep,
+  findings,
+  module,
+  root
+}) {
+  const failed = findings.filter((row) => row.outcome === "failed");
+  if (failed.length === 0) {
+    return { costUsd: 0, findings, requests: 0 };
+  }
+  const source = await buildSkepticPayload({ failed, module, root });
+  const { costUsd, outcome, requests } = await callSkepticModel({ deep, source });
+  if (Result_exports.isFailure(outcome)) {
+    return { costUsd, findings, requests };
+  }
+  const reviewed = applySkepticOutput({ findings, raw: outcome.success });
+  return { costUsd, findings: reviewed, requests };
+}
+
+// audit/run-audit.mts
+var SHARPEN_MIN_BUDGET = 4;
+var MAX_PRIOR_GUARDS = 16;
+function addCost3({ first, second }) {
+  if (first === null || second === null) {
+    return null;
+  }
+  return first + second;
+}
+function createBudget2(limit) {
+  let left = Math.max(0, limit);
+  function consume(count) {
+    left = Math.max(0, left - count);
+  }
+  function readRemaining() {
+    return left;
+  }
+  return { consume, readRemaining };
+}
+function readPassingGuards(findings) {
+  return findings.filter((row) => row.outcome === "passed").slice(0, MAX_PRIOR_GUARDS).map((row) => `${row.contract}/${row.check}: ${row.message}`);
+}
+function hasFailingWitness(findings) {
+  return findings.some((row) => row.outcome === "failed");
+}
+function shouldSharpen({ budget, deep, guards, report }) {
+  if (!deep || guards.length === 0) {
+    return false;
+  }
+  return !hasFailingWitness(report.findings) && budget.readRemaining() >= SHARPEN_MIN_BUDGET;
+}
+async function applySkepticFilter({
+  budget,
+  deep,
+  module,
+  progressFile,
+  report,
+  root
+}) {
+  if (!hasFailingWitness(report.findings) || budget.readRemaining() <= 0) {
+    return report;
+  }
+  await reportProgress({ contract: module.name, phase: "reviewing witnesses", progressFile });
+  const reviewed = await reviewFailingWitnesses({
+    deep,
+    findings: report.findings,
+    module,
+    root
+  });
+  budget.consume(reviewed.requests);
+  return {
+    ...report,
+    costUsd: addCost3({ first: report.costUsd, second: reviewed.costUsd }),
+    findings: reviewed.findings,
+    requests: report.requests + reviewed.requests
+  };
+}
+async function runWithOptionalSharpening(input) {
+  const first = await runModuleRound(input);
+  const guards = readPassingGuards(first.findings);
+  if (!shouldSharpen({ budget: input.budget, deep: input.deep, guards, report: first })) {
+    return first;
+  }
+  const extra = await runModuleRound({ ...input, priorGuards: guards });
+  return mergeModuleReports({ base: first, extra });
+}
+async function auditSingleModule(input) {
+  const report = await runWithOptionalSharpening(input);
+  return await applySkepticFilter({
+    budget: input.budget,
+    deep: input.deep,
+    module: input.module,
+    progressFile: input.progressFile,
+    report,
+    root: input.root
+  });
+}
 function summarizeAuditReports(reports) {
   let totalCost = 0;
   let totalRequests = 0;
   for (const report of reports) {
-    totalCost = addNullableCost({ first: totalCost, second: report.costUsd });
+    totalCost = addCost3({ first: totalCost, second: report.costUsd });
     totalRequests += report.requests;
   }
   return { costUsd: totalCost, modules: reports, requests: totalRequests };
@@ -25781,18 +26045,19 @@ async function runAudit({
 
 // audit/wire.mts
 var StringList = Schema_exports.Array(Schema_exports.String);
+var OptionalStringList = Schema_exports.OptionFromOptionalKey(StringList);
 var OptionalFlag2 = Schema_exports.OptionFromOptionalKey(Schema_exports.Boolean);
 var OptionalText2 = Schema_exports.OptionFromOptionalKey(Schema_exports.String);
 var AuditMode = Schema_exports.Literal("audit");
 var AuditModuleFields = Schema_exports.Struct({
   docs: StringList,
   files: StringList,
+  lowTestFiles: OptionalStringList,
   manifests: StringList,
   name: Schema_exports.String
 });
 var AuditModule = Schema_exports.toEncoded(AuditModuleFields);
 var AuditModules = Schema_exports.Array(AuditModule);
-var OptionalStringList = Schema_exports.OptionFromOptionalKey(StringList);
 var AuditRequestFields = Schema_exports.Struct({
   deep: OptionalFlag2,
   fresh: OptionalFlag2,
