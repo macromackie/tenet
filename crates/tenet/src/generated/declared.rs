@@ -27,10 +27,10 @@ fn build_finding(row: Evidence) -> Finding {
             .or(row.reason)
             .unwrap_or_else(|| "No observation was recorded.".into())
     } else {
-        let selection = quote_argument(&format!("{}/{name}", row.contract));
+        let contract = quote_argument(&row.contract);
         format!(
-            "Run the trusted project check with tenet check --local {selection} on the current \
-             code."
+            "Run the trusted project check with tenet check --final --contract {contract} on the \
+             current code."
         )
     };
     Finding {

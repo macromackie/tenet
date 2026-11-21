@@ -6,7 +6,7 @@ use std::{
 
 use serde_json::{Value, json};
 use tenet_contracts::Contract;
-use tenet_engine::{Plan, review::Checked};
+use tenet_engine::{Plan, Status, review::Checked};
 
 use super::{Finding, Operation};
 
@@ -17,26 +17,26 @@ pub(super) fn dispatch(
     operation: &Operation<'_>,
     on_progress: Option<&mut dyn FnMut(&str)>,
 ) -> io::Result<Vec<Finding>> {
-    let (max_generations, checked, known) = match operation {
-        Operation::Inspect => (0, None, &[][..]),
+    let (max_generations, checked, stored_decisions, known, is_fresh) = match operation {
+        Operation::Inspect { decisions } => (0, None, *decisions, &[][..], false),
         Operation::Assess {
             max_generations,
             checked,
             known,
-            ..
-        } => (*max_generations, Some(*checked), *known),
+            fresh,
+        } => (*max_generations, Some(*checked), None, *known, *fresh),
     };
     let contracts: Vec<_> = scopes
         .values()
-        .map(|contract| build_contract_input(plan, contract, checked, known))
+        .map(|contract| build_contract_input(plan, contract, checked, stored_decisions, known))
         .collect();
     let input = json!({
         "root": plan.root,
         "base": plan.base,
         "state": absolute(state)?,
         "contracts": contracts,
-        "inspect": matches!(operation, Operation::Inspect),
-        "fresh": matches!(operation, Operation::Assess { fresh: true, .. }),
+        "inspect": matches!(operation, Operation::Inspect { .. }),
+        "fresh": is_fresh,
         "maxGenerations": max_generations,
     });
 
@@ -46,6 +46,7 @@ pub(super) fn build_contract_input(
     plan: &Plan,
     contract: &Contract,
     checked: Option<&Checked>,
+    stored_decisions: Option<&BTreeMap<String, Status>>,
     known: &[Finding],
 ) -> Value {
     let paths: Vec<_> = plan
@@ -74,8 +75,16 @@ pub(super) fn build_contract_input(
             entry
                 .results
                 .iter()
-                .map(|result| (&result.path, result.status))
+                .map(|result| (result.path.as_str(), result.status))
                 .collect::<BTreeMap<_, _>>()
+        })
+        .or_else(|| {
+            stored_decisions.map(|saved| {
+                saved
+                    .iter()
+                    .map(|(path, status)| (path.as_str(), *status))
+                    .collect::<BTreeMap<_, _>>()
+            })
         });
     let mechanical: Vec<_> = known
         .iter()

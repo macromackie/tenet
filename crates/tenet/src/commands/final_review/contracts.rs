@@ -2,12 +2,13 @@ use alloc::collections::BTreeMap;
 use std::{io, path::Path};
 
 use serde_json::{Value, json};
+use tenet_checks::mechanical::{Evidence, Freshness, Outcome};
 use tenet_engine::{
     ContractState,
     EvidencePacket,
     Pending,
     Plan,
-    review::{Checked, Concluded},
+    review::{Checked, Concluded, OverallStatus},
 };
 
 use super::replay;
@@ -160,4 +161,18 @@ pub(super) fn compare<'run>(
         }
     }
     rows.into_values().collect()
+}
+
+pub(super) fn summarize_checks(rows: &[Evidence]) -> OverallStatus {
+    rows.iter()
+        .map(|row| {
+            match (row.freshness, row.observed_outcome) {
+                (Freshness::Missing | Freshness::Stale, _) => OverallStatus::Pending,
+                (Freshness::Current, Some(Outcome::Fail)) => OverallStatus::Failed,
+                (Freshness::Current, Some(Outcome::Pass)) => OverallStatus::Passed,
+                _ => OverallStatus::Unresolved,
+            }
+        })
+        .max()
+        .unwrap_or(OverallStatus::Passed)
 }

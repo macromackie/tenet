@@ -10,6 +10,7 @@ import { createSandbox } from './runner-sandbox.mts';
 type ObserveInput = Readonly<{
   check: Check;
   files: ReadonlyMap<string, string>;
+  projectRoot?: string;
   qualify: boolean;
   skipActual?: boolean;
 }>;
@@ -62,6 +63,7 @@ async function prepareProject(project: Project): Promise<Staged> {
     check: project.check,
     files: project.files,
     probeTmp: project.probeTmp,
+    projectRoot: project.projectRoot,
     work: project.work,
   });
 
@@ -82,21 +84,30 @@ async function restoreSubject({ project, variant }: SampleInput): Promise<void> 
   await writeFile(targetPath, source);
 }
 
+function readObservationHint(variant: Case): string {
+  if (variant === 'refactor') {
+    return ' (good and defect already passed; fix only the refactor control)';
+  }
+
+  return '';
+}
+
 async function readObservation({ project, variant }: SampleInput): Promise<Observation> {
   await restoreSubject({ project, variant });
 
   const { check } = project;
+  const suffix = readObservationHint(variant);
 
   function createObservationError(cause: unknown): CheckerError {
     const name = JSON.stringify(variant);
 
     if (cause instanceof Error) {
-      const detail = `could not observe ${name} variant: ${cause.message}`;
+      const detail = `could not observe ${name} variant: ${cause.message}${suffix}`;
 
       return new CheckerError({ cause, message: detail });
     }
 
-    const message = `could not observe ${name} variant`;
+    const message = `could not observe ${name} variant${suffix}`;
 
     return new CheckerError({ cause, message });
   }
@@ -107,6 +118,18 @@ async function readObservation({ project, variant }: SampleInput): Promise<Obser
   return { passed: isDeepStrictEqual(value, check.expected), value };
 }
 
+function readQualificationHint(variant: Case): string {
+  if (variant === 'good') {
+    return '; if the unmodified subject already violates the contract, set defect to [] and put the fix in good and refactor';
+  }
+
+  if (variant === 'refactor') {
+    return '; good and defect already passed — keep them and rewrite only refactor as a distinct behavior-preserving variant (for example, extract a helper or invert the condition)';
+  }
+
+  return '';
+}
+
 async function qualifyControl({ project, variant }: SampleInput): Promise<void> {
   const result = await readObservation({ project, variant });
 
@@ -114,7 +137,8 @@ async function qualifyControl({ project, variant }: SampleInput): Promise<void> 
     const name = JSON.stringify(variant);
     const observed = JSON.stringify(result.value);
     const expected = JSON.stringify(project.check.expected);
-    const message = `test did not distinguish its ${name} control (expected ${expected}, observed ${observed})`;
+    const suffix = readQualificationHint(variant);
+    const message = `test did not distinguish its ${name} control (expected ${expected}, observed ${observed})${suffix}`;
 
     throw new CheckerError({ message });
   }
@@ -147,6 +171,7 @@ async function executeObservation({
 export async function observe({
   check,
   files,
+  projectRoot,
   qualify,
   skipActual = false,
 }: ObserveInput): Promise<Observation> {
@@ -157,7 +182,7 @@ export async function observe({
   const probeTmp = await mkdtemp(tmpPrefix);
 
   try {
-    const project = await prepareProject({ check, files, probeTmp, work });
+    const project = await prepareProject({ check, files, probeTmp, projectRoot, work });
 
     return await executeObservation({ check, project, qualify, skipActual });
   } finally {

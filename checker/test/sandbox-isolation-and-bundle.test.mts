@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { readInventory } from '../discovery/index.mts';
 import { qualifyBundle } from '../review/index.mts';
-import { observe } from '../sandbox/index.mts';
+import { observe, readPythonPaths, validate } from '../sandbox/index.mts';
 import type { Check } from '../types.d.mts';
 import { canRun } from './can-run-sandbox.mts';
 import { contract, createProject } from './test-project.mts';
@@ -125,4 +125,138 @@ void test('malformed top-level bundles produce explicit unresolved findings', as
   const root = await createProject(context);
 
   await assertMalformedBundle(root);
+});
+
+const SAMPLE_SOURCE = 'export function resolveValue(value: number): number {\n  return value;\n}\n';
+const OVERSIZED_BYTES = 140_000;
+
+function buildSimplePatchCheck(): Readonly<Record<string, unknown>> {
+  return {
+    defect: [{ find: 'return value;', replace: 'return 0;' }],
+    expected: 1,
+    good: [],
+    id: 'keeps-value',
+    promise: 'resolveValue returns its input unchanged.',
+    refactor: [{ find: 'return value;', replace: 'return Number(value);' }],
+    runtime: 'node',
+    subject: 'sample.ts',
+    test: 'import { resolveValue } from "./sample.ts";\nconsole.log(JSON.stringify(resolveValue(1)));',
+  };
+}
+
+async function verifyLenientTopLevel(root: string): Promise<void> {
+  const samplePath = join(root, 'sample.ts');
+
+  await writeFile(samplePath, SAMPLE_SOURCE);
+
+  const selected = { ...contract, paths: ['sample.ts'] };
+  const current = await readInventory({ contract: selected, root });
+  const value = { checks: [buildSimplePatchCheck()], notes: 'extra planner field' };
+  const result = await qualifyBundle({ contractName: 'options', current, value });
+
+  assert.equal(result.qualified.length, 1);
+  assert.equal(result.errors.length, 0);
+  assert.deepEqual(result.open, []);
+}
+
+void test('qualifyBundle ignores extra top-level metadata keys and defaults omitted open', async (context: TestContext) => {
+  if (!(await canRun())) {
+    context.skip('Isolated sandbox is unavailable');
+
+    return;
+  }
+
+  const root = await createProject(context);
+
+  await verifyLenientTopLevel(root);
+});
+
+void test('patch controls report nearby lines, normalize CRLF, and advise edit arrays on oversized strings', () => {
+  const files = new Map<string, string>([['sample.ts', SAMPLE_SOURCE]]);
+
+  const crlfEdit = {
+    defect: [
+      {
+        find: 'export function resolveValue(value: number): number {\r\n  return value;',
+        replace: 'export function resolveValue(value: number): number {\n  return 0;',
+      },
+    ],
+    expected: 1,
+    good: [],
+    id: 'crlf-edit',
+    promise: 'Normalize CRLF find targets.',
+    refactor: [{ find: 'return value;', replace: 'return Number(value);' }],
+    runtime: 'node',
+    subject: 'sample.ts',
+    test: 'console.log(1);',
+  };
+
+  const normalized = validate({ check: crlfEdit, files });
+  const hasFix = normalized.defect.includes('return 0;');
+
+  assert.ok(hasFix);
+
+  const nearMiss = {
+    ...crlfEdit,
+    defect: [
+      {
+        find: 'export function resolveValue(value: number): number {\n  return missing;',
+        replace: 'x',
+      },
+    ],
+  };
+
+  assert.throws(
+    () => validate({ check: nearMiss, files }),
+    /control "defect" edit target.*was not found.*similar lines.*L1:/v,
+  );
+
+  const oversizedText = 'x'.repeat(OVERSIZED_BYTES);
+  const oversized = { ...crlfEdit, good: oversizedText };
+
+  assert.throws(
+    () => validate({ check: oversized, files }),
+    /control "good" string is 140000 bytes.*use a compact find\/replace edit array/v,
+  );
+});
+
+void test('failed good control qualification advises brownfield defect swap', async (context: TestContext) => {
+  if (!(await canRun())) {
+    context.skip('Isolated sandbox is unavailable');
+
+    return;
+  }
+
+  const files = new Map<string, string>([['buggy.py', 'VALUE = 0\n']]);
+
+  const buggyGood: Check = {
+    defect: 'VALUE = 2\n',
+    expected: 1,
+    good: 'VALUE = 0\n',
+    id: 'brownfield-hint',
+    promise: 'Value must be 1.',
+    refactor: 'VALUE = 1\n',
+    runtime: 'python',
+    subject: 'buggy.py',
+    test: 'import buggy\nprint(buggy.VALUE)\n',
+  };
+
+  await assert.rejects(
+    async () => await observe({ check: buggyGood, files, qualify: true }),
+    /set defect to \[\] and put the fix in good and refactor/v,
+  );
+});
+
+void test('readPythonPaths excludes nested package directories to prevent stdlib shadowing', () => {
+  const files = new Map<string, string>([
+    ['isort/__init__.py', ''],
+    ['isort/io.py', ''],
+    ['isort/stdlibs/__init__.py', ''],
+    ['src/click/__init__.py', ''],
+    ['src/click/sub/__init__.py', ''],
+  ]);
+
+  const pythonPath = readPythonPaths({ files, root: '/work' });
+
+  assert.equal(pythonPath, '/work:/work/src');
 });

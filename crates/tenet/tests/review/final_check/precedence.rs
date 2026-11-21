@@ -49,8 +49,11 @@ fi"#,
     let provider = Provider::start(&[], "no_match")?;
     ensure!(provider.run_tenet(root, &["check"])?.status.success());
     approve_values(root)?;
-    let local = run_tenet(root, &["check", "--local", "values/zero", "--json"])?;
-    ensure!(local.status.code() == Some(1_i32));
+    let final_run = provider.run_tenet(
+        root,
+        &["check", "--final", "--contract", "values", "--json"],
+    )?;
+    ensure!(final_run.status.code() == Some(1_i32));
     let result = provider.run_tenet(root, &["check"])?;
     assert_eq!(
         result.status.code(),

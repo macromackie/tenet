@@ -7,7 +7,6 @@ mod final_review;
 mod finish;
 mod fix;
 mod init;
-mod local;
 mod prepare;
 mod qualification;
 
@@ -39,12 +38,6 @@ pub(crate) async fn execute(cli: &Cli) -> Result<ExitStatus, CommandError> {
         Command::Check(check) => evaluate(&cli.root, &cli.resolve_state(), check).await,
         Command::Fix(args) => fix::run(&cli.root, args).await,
         Command::Status {
-            local: Some(name),
-            json,
-            ..
-        } => local::inspect(&cli.root, &cli.resolve_state(), name, *json),
-        Command::Status {
-            local: None,
             base,
             evidence,
             json,

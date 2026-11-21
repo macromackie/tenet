@@ -4583,7 +4583,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   let expiresAt = 0;
   let exit3;
   let current;
-  const join10 = (fiber3, run3) => {
+  const join12 = (fiber3, run3) => {
     run3.awaiters++;
     onExitUnsafe(fiber3, () => {
       if (--run3.awaiters > 0 || current !== run3) return;
@@ -4594,7 +4594,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   };
   return [withFiber((fiber3) => {
     if (current !== void 0) {
-      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join10(fiber3, current);
+      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join12(fiber3, current);
     }
     if (exit3 !== void 0 && (expiresAt === Infinity || fiber3.getRef(ClockRef).currentTimeMillisUnsafe() < expiresAt)) {
       return exit3;
@@ -4606,7 +4606,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
       awaiters: 0
     };
     current = run3;
-    const joined = join10(fiber3, run3);
+    const joined = join12(fiber3, run3);
     run3.fiber.evaluate(onExitPrimitive(self, (exit_) => {
       if (current !== run3) return;
       current = void 0;
@@ -20804,6 +20804,11 @@ function resolveAnnotationsKey(schema) {
 var CheckerError = class extends Data_exports.TaggedError("CheckerError") {
 };
 
+// review/pin/has-check-inputs.mts
+function hasCheckInputs({ check: check2, files }) {
+  return files.has(check2.subject) && (check2.testFile === void 0 || files.has(check2.testFile));
+}
+
 // sandbox/preflight.mts
 import { access } from "node:fs/promises";
 
@@ -20949,28 +20954,18 @@ async function assertSandboxAvailable() {
   });
 }
 
-// sandbox/runner.mts
-import { mkdir, mkdtemp, rm, writeFile as writeFile2 } from "node:fs/promises";
-import { tmpdir as tmpdir3 } from "node:os";
-import { dirname as dirname4, join as join3, resolve as resolve3, sep } from "node:path";
-import { isDeepStrictEqual } from "node:util";
-
-// sandbox/runner-sandbox.mts
-import { writeFile } from "node:fs/promises";
-import { join as join2 } from "node:path";
-
-// sandbox/linux-sandbox.mts
-import { access as access2, realpath } from "node:fs/promises";
-import { basename, dirname as dirname2 } from "node:path";
-
 // sandbox/python-paths.mts
 import { dirname, posix } from "node:path";
 var ROOT_SEGMENTS = /* @__PURE__ */ new Set([".", "/"]);
-function readSourceFolder(path) {
+function isPackageDirectory({ files, path }) {
+  const initPath = posix.join(path, "__init__.py");
+  return files.has(initPath);
+}
+function readSourceFolder({ files, path }) {
   if (path.endsWith("/__init__.py")) {
     const pkg = dirname(path);
     const parent = dirname(pkg);
-    if (!ROOT_SEGMENTS.has(parent)) {
+    if (!ROOT_SEGMENTS.has(parent) && !isPackageDirectory({ files, path: parent })) {
       return Option_exports.some(parent);
     }
     return Option_exports.none();
@@ -20983,7 +20978,7 @@ function readSourceFolder(path) {
 function readPythonPaths({ files, root }) {
   const extraFolders = /* @__PURE__ */ new Set();
   for (const path of files.keys()) {
-    const folder = readSourceFolder(path);
+    const folder = readSourceFolder({ files, path });
     if (Option_exports.isSome(folder)) {
       extraFolders.add(folder.value);
     }
@@ -20992,6 +20987,20 @@ function readPythonPaths({ files, root }) {
   const resolved = sorted.map((folder) => posix.join(root, folder));
   return [root, ...resolved].join(":");
 }
+
+// sandbox/runner.mts
+import { mkdir as mkdir2, mkdtemp, rm, writeFile as writeFile2 } from "node:fs/promises";
+import { tmpdir as tmpdir3 } from "node:os";
+import { dirname as dirname4, join as join5, resolve as resolve3, sep as sep2 } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+
+// sandbox/runner-sandbox.mts
+import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { join as join4 } from "node:path";
+
+// sandbox/linux-sandbox.mts
+import { access as access2, realpath } from "node:fs/promises";
+import { basename, dirname as dirname2 } from "node:path";
 
 // sandbox/rust-tool.mts
 import { tmpdir } from "node:os";
@@ -21049,7 +21058,8 @@ var LIMITS = [
 var RUST_COMMAND = [
   "/bin/sh",
   "-c",
-  "/toolchain/bin/rustc --edition=2021 --crate-name tenet_probe -C linker=/usr/bin/gcc .tenet-observe.rs -o /tmp/observe && exec /tmp/observe"
+  '/toolchain/bin/rustc --edition=2021 --crate-name tenet_probe -C linker=/usr/bin/gcc "$@" .tenet-observe.rs -o /tmp/observe && exec /tmp/observe',
+  "tenet-rust"
 ];
 var ISOLATION = [
   ["--unshare-all", "--new-session", "--die-with-parent", "--clearenv"],
@@ -21064,7 +21074,8 @@ var ISOLATION = [
   ["--proc", "/proc"],
   ["--dev", "/dev"],
   ["--size", "67108864", "--tmpfs", "/tmp"],
-  ["--dir", "/runtime"]
+  ["--dir", "/runtime"],
+  ["--dir", "/deps"]
 ].flat();
 var BASE_ENV_FLAGS = [
   ["--setenv", "PATH", SYSTEM_PATH2],
@@ -21098,6 +21109,19 @@ async function buildRuntimeMount(runtime) {
     }
   }
 }
+function buildDepMounts(deps) {
+  const mounts = [];
+  if (deps.nodeModules !== void 0) {
+    mounts.push("--ro-bind", deps.nodeModules, "/project/node_modules");
+  }
+  if (deps.pythonSitePackages !== void 0) {
+    mounts.push("--ro-bind", deps.pythonSitePackages, "/deps/python");
+  }
+  if (deps.rustDepsDir !== void 0) {
+    mounts.push("--ro-bind", deps.rustDepsDir, "/deps/rust");
+  }
+  return mounts;
+}
 function buildPythonProgram({ check: check2, probeFile: probeFile2 }) {
   if (check2.testFile === void 0) {
     return [PYTHON, "-B", `./${probeFile2}`];
@@ -21120,28 +21144,42 @@ function buildNodeProgram({ check: check2, probeFile: probeFile2 }) {
   }
   return [NODE, ...NODE_FLAGS, "--test", "--test-reporter=tap", "--", `./${check2.testFile}`];
 }
-function buildProgram({ check: check2, probeFile: probeFile2 }) {
+function buildRustProgram(deps) {
+  if (deps.rustDepsDir === void 0) {
+    return RUST_COMMAND;
+  }
+  const externArgs = deps.rustExterns.flatMap(({ file, name }) => [
+    "--extern",
+    `${name}=/deps/rust/${file}`
+  ]);
+  return [...RUST_COMMAND, "-L", "dependency=/deps/rust", ...externArgs];
+}
+function buildProgram({ check: check2, deps, probeFile: probeFile2 }) {
   switch (check2.runtime) {
     case "node": {
-      return buildNodeProgram({ check: check2, probeFile: probeFile2 });
+      return buildNodeProgram({ check: check2, deps, probeFile: probeFile2 });
     }
     case "python": {
-      return buildPythonProgram({ check: check2, probeFile: probeFile2 });
+      return buildPythonProgram({ check: check2, deps, probeFile: probeFile2 });
     }
     case "rust": {
-      return RUST_COMMAND;
+      return buildRustProgram(deps);
     }
   }
 }
-function buildEnvFlags({ files, runtime }) {
+function buildEnvFlags({ deps, files, runtime }) {
   if (runtime !== "python") {
     return BASE_ENV_FLAGS;
   }
-  const pythonPath = readPythonPaths({ files, root: "/project" });
-  return [...BASE_ENV_FLAGS, "--setenv", "PYTHONPATH", pythonPath];
+  const basePath = readPythonPaths({ files, root: "/project" });
+  if (deps.pythonSitePackages === void 0) {
+    return [...BASE_ENV_FLAGS, "--setenv", "PYTHONPATH", basePath];
+  }
+  return [...BASE_ENV_FLAGS, "--setenv", "PYTHONPATH", `${basePath}:/deps/python`];
 }
 async function createLinuxSandbox({
   check: check2,
+  deps,
   files,
   probeFile: probeFile2,
   work
@@ -21149,8 +21187,9 @@ async function createLinuxSandbox({
   await access2(BWRAP2);
   await access2(PRLIMIT2);
   const mounts = await buildRuntimeMount(check2.runtime);
-  const envFlags = buildEnvFlags({ files, runtime: check2.runtime });
-  const program = buildProgram({ check: check2, probeFile: probeFile2 });
+  const depMounts = buildDepMounts(deps);
+  const envFlags = buildEnvFlags({ deps, files, runtime: check2.runtime });
+  const program = buildProgram({ check: check2, deps, probeFile: probeFile2 });
   return {
     args: [
       ...ISOLATION,
@@ -21158,6 +21197,7 @@ async function createLinuxSandbox({
       "--ro-bind",
       work,
       "/project",
+      ...depMounts,
       "--chdir",
       "/project",
       ...envFlags,
@@ -21286,21 +21326,38 @@ async function resolvePythonRuntime({ check: check2, probeFile: probeFile2 }) {
     runtimeRoot
   };
 }
-async function resolveRustRuntime({ probeFile: probeFile2, probeTmp }) {
+function buildRustDepArgs(deps) {
+  const { rustDepsDir } = deps;
+  if (rustDepsDir === void 0) {
+    return [];
+  }
+  const externArgs = deps.rustExterns.flatMap(({ file, name }) => [
+    "--extern",
+    `${name}=${join(rustDepsDir, file)}`
+  ]);
+  return ["-L", `dependency=${rustDepsDir}`, ...externArgs];
+}
+async function resolveRustRuntime({
+  deps,
+  probeFile: probeFile2,
+  probeTmp
+}) {
   const sysroot = await readRustTool("--print=sysroot");
   const resolved = await realpath3(sysroot);
   const runtimeRoot = assertBoundedRuntimeRoot(resolved);
   const rustc = join(runtimeRoot, "bin", "rustc");
   const output = join(probeTmp, "observe");
+  const depArgs = buildRustDepArgs(deps);
   return {
     command: [
       "/bin/sh",
       "-c",
-      '"$1" --edition=2021 --crate-name tenet_probe ./"$2" -o "$3" && exec "$3"',
+      'rustc="$1"; probe="$2"; out="$3"; shift 3; "$rustc" --edition=2021 --crate-name tenet_probe "$@" ./"$probe" -o "$out" && exec "$out"',
       "tenet-rust",
       rustc,
       probeFile2,
-      output
+      output,
+      ...depArgs
     ],
     runtimeRoot
   };
@@ -21318,9 +21375,22 @@ async function resolveRuntime(input) {
     }
   }
 }
-function buildSeatbeltProfile({ probeTmp, runtimeRoot, work }) {
-  const safeRuntime = escapeScheme(runtimeRoot);
-  const safeWork = escapeScheme(work);
+function collectReadOnlyDepPaths(deps) {
+  const paths = [];
+  if (deps.nodeModules !== void 0) {
+    paths.push(deps.nodeModules);
+  }
+  if (deps.pythonSitePackages !== void 0) {
+    paths.push(deps.pythonSitePackages);
+  }
+  if (deps.rustDepsDir !== void 0) {
+    paths.push(deps.rustDepsDir);
+  }
+  return paths;
+}
+function buildSeatbeltProfile({ deps, probeTmp, runtimeRoot, work }) {
+  const allowedReadPaths = [runtimeRoot, work, probeTmp, ...collectReadOnlyDepPaths(deps)];
+  const readRules = allowedReadPaths.map((entry) => `(subpath "${escapeScheme(entry)}")`).join(" ");
   const safeTmp = escapeScheme(probeTmp);
   return [
     "(version 1)",
@@ -21333,12 +21403,13 @@ function buildSeatbeltProfile({ probeTmp, runtimeRoot, work }) {
     "(allow file-read*)",
     "(allow file-map-executable)",
     '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath "/private/var/folders"))',
-    `(allow file-read-data (subpath "${safeRuntime}") (subpath "${safeWork}") (subpath "${safeTmp}"))`,
+    `(allow file-read-data ${readRules})`,
     `(allow file-write* (subpath "${safeTmp}") (literal "/dev/null") (literal "/dev/zero"))`,
     "(deny network*)"
   ].join("\n");
 }
 function buildSandboxEnv({
+  deps,
   files,
   probeTmp,
   runtime,
@@ -21357,11 +21428,15 @@ function buildSandboxEnv({
   if (runtime !== "python") {
     return commonEnv;
   }
-  const pythonPath = readPythonPaths({ files, root: work });
-  return { ...commonEnv, PYTHONPATH: pythonPath };
+  const basePath = readPythonPaths({ files, root: work });
+  if (deps.pythonSitePackages === void 0) {
+    return { ...commonEnv, PYTHONPATH: basePath };
+  }
+  return { ...commonEnv, PYTHONPATH: `${basePath}:${deps.pythonSitePackages}` };
 }
 async function createMacosSandbox({
   check: check2,
+  deps,
   files,
   probeFile: probeFile2,
   probeTmp,
@@ -21372,15 +21447,18 @@ async function createMacosSandbox({
   const canonicalTmp = await realpath3(probeTmp);
   const { command, runtimeRoot } = await resolveRuntime({
     check: check2,
+    deps,
     probeFile: probeFile2,
     probeTmp: canonicalTmp
   });
   const profile = buildSeatbeltProfile({
+    deps,
     probeTmp: canonicalTmp,
     runtimeRoot,
     work: canonicalWork
   });
   const env6 = buildSandboxEnv({
+    deps,
     files,
     probeTmp: canonicalTmp,
     runtime: check2.runtime,
@@ -21402,6 +21480,239 @@ async function createMacosSandbox({
   };
 }
 
+// sandbox/project-deps.mts
+import { access as access5, readdir as readdir2, realpath as realpath4, stat as stat2 } from "node:fs/promises";
+import { homedir as homedir2 } from "node:os";
+import { join as join3, sep } from "node:path";
+
+// sandbox/run-optional.mts
+async function runOptional(run3) {
+  const attempt = Effect_exports.tryPromise(run3);
+  const optional3 = Effect_exports.option(attempt);
+  return await Effect_exports.runPromise(optional3);
+}
+
+// sandbox/rust-deps.mts
+import { readdir, readFile, stat } from "node:fs/promises";
+import { join as join2 } from "node:path";
+var MAX_RUST_EXTERNS = 64;
+var RUST_CRATE_PATTERN = new RegExp("^lib(?<name>[A-Za-z0-9_]+)-[0-9a-f]{16}\\.(?<ext>rlib|dylib|so)$", "v");
+var CARGO_NAME_PATTERN = new RegExp('^\\s*name\\s*=\\s*"(?<name>[^"]+)"', "mv");
+async function readCargoPackageName(projectRoot) {
+  const manifestPath = join2(projectRoot, "Cargo.toml");
+  const manifest = await runOptional(async () => await readFile(manifestPath, "utf-8"));
+  if (Option_exports.isNone(manifest)) {
+    return Option_exports.none();
+  }
+  const match7 = CARGO_NAME_PATTERN.exec(manifest.value);
+  const rawName = match7?.groups?.["name"];
+  if (rawName === void 0) {
+    return Option_exports.none();
+  }
+  const normalized = rawName.replaceAll("-", "_");
+  return Option_exports.some(normalized);
+}
+async function readRustFileMtime(fullPath) {
+  const info = await runOptional(async () => await stat(fullPath));
+  if (Option_exports.isNone(info) || !info.value.isFile()) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(info.value.mtimeMs);
+}
+async function readRustArtifact({
+  depsDir,
+  entry,
+  selfCrate
+}) {
+  const match7 = RUST_CRATE_PATTERN.exec(entry);
+  const name = match7?.groups?.["name"];
+  const selfName = Option_exports.getOrUndefined(selfCrate);
+  if (name === void 0 || name === selfName) {
+    return Option_exports.none();
+  }
+  const artifactPath = join2(depsDir, entry);
+  const mtimeMs = await readRustFileMtime(artifactPath);
+  if (Option_exports.isNone(mtimeMs)) {
+    return Option_exports.none();
+  }
+  return Option_exports.some({ file: entry, mtimeMs: mtimeMs.value, name });
+}
+function listOrderedExterns(latestArtifacts) {
+  const orderedNames = [...latestArtifacts.keys()].toSorted().slice(0, MAX_RUST_EXTERNS);
+  const externs = [];
+  for (const name of orderedNames) {
+    const artifact = latestArtifacts.get(name);
+    if (artifact !== void 0) {
+      externs.push({ file: artifact.file, name: artifact.name });
+    }
+  }
+  return externs;
+}
+function indexLatestArtifacts(artifacts) {
+  const latestArtifacts = /* @__PURE__ */ new Map();
+  for (const artifact of artifacts) {
+    const prior = latestArtifacts.get(artifact.name);
+    if (prior === void 0 || artifact.mtimeMs > prior.mtimeMs) {
+      latestArtifacts.set(artifact.name, artifact);
+    }
+  }
+  return latestArtifacts;
+}
+async function readAllArtifacts({
+  depsDir,
+  entries: entries3,
+  selfCrate
+}) {
+  const found = [];
+  for (const entry of entries3) {
+    const artifact = await readRustArtifact({ depsDir, entry, selfCrate });
+    if (Option_exports.isSome(artifact)) {
+      found.push(artifact.value);
+    }
+  }
+  return found;
+}
+async function collectRustExterns({
+  depsDir,
+  projectRoot
+}) {
+  const listed = await runOptional(async () => await readdir(depsDir));
+  if (Option_exports.isNone(listed)) {
+    return [];
+  }
+  const selfCrate = await readCargoPackageName(projectRoot);
+  const entries3 = listed.value.toSorted();
+  const found = await readAllArtifacts({ depsDir, entries: entries3, selfCrate });
+  const latestArtifacts = indexLatestArtifacts(found);
+  return listOrderedExterns(latestArtifacts);
+}
+
+// sandbox/project-deps.mts
+var EMPTY_DEPS = { rustExterns: [] };
+function isBoundedDepPath(candidate) {
+  const userHome = homedir2();
+  const forbiddenPaths = ["/", "/Users", "/private", "/var", userHome];
+  const forbiddenRoots = new Set(forbiddenPaths);
+  return !forbiddenRoots.has(candidate);
+}
+async function readCanonicalDirectory(candidate) {
+  await access5(candidate);
+  const canonical = await realpath4(candidate);
+  const info = await stat2(canonical);
+  if (!info.isDirectory() || !isBoundedDepPath(canonical)) {
+    throw new CheckerError({ message: "dependency path is not a bounded directory" });
+  }
+  return canonical;
+}
+async function resolveDirectory(candidate) {
+  return await runOptional(async () => await readCanonicalDirectory(candidate));
+}
+async function resolveNodeDeps(projectRoot) {
+  const candidate = join3(projectRoot, "node_modules");
+  const nodeModules = await resolveDirectory(candidate);
+  if (Option_exports.isNone(nodeModules)) {
+    return EMPTY_DEPS;
+  }
+  return { nodeModules: nodeModules.value, rustExterns: [] };
+}
+async function findSitePackagesInLib(libDir) {
+  const listed = await runOptional(async () => await readdir2(libDir));
+  if (Option_exports.isNone(listed)) {
+    return Option_exports.none();
+  }
+  const pythonDirs = listed.value.filter((entry) => entry.startsWith("python")).toSorted();
+  for (const entry of pythonDirs) {
+    const candidate = join3(libDir, entry, "site-packages");
+    const sitePackages = await resolveDirectory(candidate);
+    if (Option_exports.isSome(sitePackages)) {
+      return sitePackages;
+    }
+  }
+  return Option_exports.none();
+}
+async function resolvePythonSitePackages(venvDir) {
+  const libCandidate = join3(venvDir, "lib");
+  const libDir = await resolveDirectory(libCandidate);
+  if (Option_exports.isSome(libDir)) {
+    return await findSitePackagesInLib(libDir.value);
+  }
+  const winCandidate = join3(venvDir, "Lib", "site-packages");
+  return await resolveDirectory(winCandidate);
+}
+async function resolvePythonDeps(projectRoot) {
+  const venvDir = join3(projectRoot, ".venv");
+  const pythonSitePackages = await resolvePythonSitePackages(venvDir);
+  if (Option_exports.isNone(pythonSitePackages)) {
+    return EMPTY_DEPS;
+  }
+  return { pythonSitePackages: pythonSitePackages.value, rustExterns: [] };
+}
+async function resolveRustDeps(projectRoot) {
+  const candidate = join3(projectRoot, "target", "debug", "deps");
+  const rustDepsDir = await resolveDirectory(candidate);
+  if (Option_exports.isNone(rustDepsDir)) {
+    return EMPTY_DEPS;
+  }
+  const rustExterns = await collectRustExterns({ depsDir: rustDepsDir.value, projectRoot });
+  return { rustDepsDir: rustDepsDir.value, rustExterns };
+}
+async function selectDepsForRuntime({
+  projectRoot,
+  runtime
+}) {
+  switch (runtime) {
+    case "node": {
+      return await resolveNodeDeps(projectRoot);
+    }
+    case "python": {
+      return await resolvePythonDeps(projectRoot);
+    }
+    case "rust": {
+      return await resolveRustDeps(projectRoot);
+    }
+  }
+}
+function readSafeWithinRoot({ candidate, root }) {
+  if (candidate === void 0) {
+    return Option_exports.none();
+  }
+  const prefix = `${root}${sep}`;
+  if (!candidate.startsWith(prefix)) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(candidate);
+}
+function selectSafeRustExterns({ deps, rustDepsDir }) {
+  if (rustDepsDir === void 0) {
+    return [];
+  }
+  return deps.rustExterns;
+}
+function filterInsideRoot({ deps, projectRoot }) {
+  const safeNode = readSafeWithinRoot({ candidate: deps.nodeModules, root: projectRoot });
+  const nodeModules = Option_exports.getOrUndefined(safeNode);
+  const safePython = readSafeWithinRoot({ candidate: deps.pythonSitePackages, root: projectRoot });
+  const pythonSitePackages = Option_exports.getOrUndefined(safePython);
+  const safeRust = readSafeWithinRoot({ candidate: deps.rustDepsDir, root: projectRoot });
+  const rustDepsDir = Option_exports.getOrUndefined(safeRust);
+  const rustExterns = selectSafeRustExterns({ deps, rustDepsDir });
+  return { nodeModules, pythonSitePackages, rustDepsDir, rustExterns };
+}
+async function resolveProjectDeps({
+  projectRoot,
+  runtime
+}) {
+  if (projectRoot === void 0 || projectRoot.length === 0) {
+    return EMPTY_DEPS;
+  }
+  const canonicalRoot = await resolveDirectory(projectRoot);
+  if (Option_exports.isNone(canonicalRoot)) {
+    return EMPTY_DEPS;
+  }
+  const deps = await selectDepsForRuntime({ projectRoot: canonicalRoot.value, runtime });
+  return filterInsideRoot({ deps, projectRoot: canonicalRoot.value });
+}
+
 // sandbox/runner-sandbox.mts
 var PROBE_TIMEOUT_MS = 15e3;
 var RUST_PROBE_TIMEOUT_MS = 3e4;
@@ -21410,8 +21721,9 @@ var DIAGNOSTIC_LINES = 2;
 var DIAGNOSTIC_CHARS = 240;
 var ASCII_SPACE = 32;
 var ASCII_DEL = 127;
-var DIAGNOSTIC_FOOTER = new RegExp("^(?:error: aborting due to |For more information about this error)", "v");
-var DIAGNOSTIC_ERROR = new RegExp("^error(?:\\[|:)", "v");
+var DIAGNOSTIC_FOOTER = new RegExp("^(?:error: aborting due to |For more information about this error|Node\\.js v\\d)", "v");
+var DIAGNOSTIC_ERROR = new RegExp("^(?:error(?:\\[|:)|Error\\b|TypeError:|RangeError:|ReferenceError:|SyntaxError:|URIError:|EvalError:|ModuleNotFoundError:|ImportError:|AttributeError:|ValueError:|KeyError:|AssertionError:|NameError:|RuntimeError:|ZeroDivisionError:|FileNotFoundError:|OSError:|Exception:)", "v");
+var RUST_MISSING_CRATE_PATTERN = new RegExp("error\\[E04(?:32|63)\\]", "v");
 var PROBE_FILES = {
   node: ".tenet-observe.mjs",
   python: ".tenet-observe.py",
@@ -21464,25 +21776,44 @@ function summarizeDiagnostic(stderr) {
   }
   return summary.slice(0, DIAGNOSTIC_CHARS);
 }
-function formatFailure({ base, stderr }) {
-  const detail = summarizeDiagnostic(stderr);
-  if (detail.length === 0) {
-    return base;
+function readMissingDepHint({ deps, runtime, stderr }) {
+  if (runtime === "rust" && deps?.rustDepsDir === void 0 && RUST_MISSING_CRATE_PATTERN.test(stderr)) {
+    return " (run cargo build locally so compiled crate deps exist in target/debug/deps)";
   }
-  return `${base}: ${detail}`;
+  return "";
+}
+function formatFailure({ base, deps, runtime, stderr }) {
+  const detail = summarizeDiagnostic(stderr);
+  const hint = readMissingDepHint({ deps, runtime, stderr });
+  if (detail.length === 0) {
+    return `${base}${hint}`;
+  }
+  return `${base}: ${detail}${hint}`;
+}
+async function createNodeModulesLink({ deps, work }) {
+  if (deps.nodeModules === void 0) {
+    return;
+  }
+  const target = join4(work, "node_modules");
+  if (process.platform === "darwin") {
+    await symlink(deps.nodeModules, target, "dir");
+    return;
+  }
+  await mkdir(target, { recursive: true });
 }
 async function buildCommand({
   check: check2,
+  deps,
   files,
   probeTmp,
   work
 }) {
   const entry = probeFile(check2.runtime);
   if (process.platform === "darwin") {
-    return await createMacosSandbox({ check: check2, files, probeFile: entry, probeTmp, work });
+    return await createMacosSandbox({ check: check2, deps, files, probeFile: entry, probeTmp, work });
   }
   if (process.platform === "linux") {
-    return await createLinuxSandbox({ check: check2, files, probeFile: entry, work });
+    return await createLinuxSandbox({ check: check2, deps, files, probeFile: entry, work });
   }
   throw new CheckerError({
     message: "an isolated Linux or macOS runner is required for behavior checks"
@@ -21528,7 +21859,7 @@ function isPassing({ result: result3, runtime }) {
   });
   throw new CheckerError({ message });
 }
-function assertCompleted(result3) {
+function assertCompleted({ deps, result: result3, runtime }) {
   if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
     throw new CheckerError({
       message: "install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit"
@@ -21538,6 +21869,8 @@ function assertCompleted(result3) {
     const code = String(result3.status);
     const message = formatFailure({
       base: `the isolated test exited with status ${code}`,
+      deps,
+      runtime,
       stderr: result3.stderr
     });
     throw new CheckerError({ message });
@@ -21553,30 +21886,32 @@ async function runProbe(probe) {
     }
     return isPassing({ result: result3, runtime: probe.check.runtime });
   }
-  assertCompleted(result3);
+  assertCompleted({ deps: probe.deps, result: result3, runtime: probe.check.runtime });
   const observed = JSON.parse(result3.stdout);
   return observed;
 }
 async function createSandbox(input) {
-  const { check: check2, work } = input;
+  const { check: check2, projectRoot, work } = input;
+  const deps = await resolveProjectDeps({ projectRoot, runtime: check2.runtime });
+  await createNodeModulesLink({ deps, work });
   if (check2.test !== void 0) {
     const entry = probeFile(check2.runtime);
-    const targetPath = join2(work, entry);
+    const targetPath = join4(work, entry);
     await writeFile(targetPath, check2.test, { flag: "wx" });
   }
-  const command = await buildCommand(input);
-  return async () => await runProbe({ check: check2, command });
+  const command = await buildCommand({ ...input, deps });
+  return async () => await runProbe({ check: check2, command, deps });
 }
 
 // sandbox/runner.mts
 async function copySource({ path, source, work }) {
   const file = resolve3(work, path);
-  const prefix = join3(work, sep);
+  const prefix = join5(work, sep2);
   if (!file.startsWith(prefix)) {
     throw new CheckerError({ message: "a staged source path falls outside the checkout" });
   }
   const parent = dirname4(file);
-  await mkdir(parent, { recursive: true });
+  await mkdir2(parent, { recursive: true });
   await writeFile2(file, source, { flag: "wx" });
 }
 async function prepareProject(project) {
@@ -21590,6 +21925,7 @@ async function prepareProject(project) {
     check: project.check,
     files: project.files,
     probeTmp: project.probeTmp,
+    projectRoot: project.projectRoot,
     work: project.work
   });
   return { ...project, run: run3 };
@@ -21601,24 +21937,40 @@ async function restoreSubject({ project, variant }) {
   if (source === void 0) {
     throw new CheckerError({ message: "the checker subject disappeared" });
   }
-  const targetPath = join3(work, check2.subject);
+  const targetPath = join5(work, check2.subject);
   await writeFile2(targetPath, source);
+}
+function readObservationHint(variant) {
+  if (variant === "refactor") {
+    return " (good and defect already passed; fix only the refactor control)";
+  }
+  return "";
 }
 async function readObservation({ project, variant }) {
   await restoreSubject({ project, variant });
   const { check: check2 } = project;
+  const suffix = readObservationHint(variant);
   function createObservationError(cause) {
     const name = JSON.stringify(variant);
     if (cause instanceof Error) {
-      const detail = `could not observe ${name} variant: ${cause.message}`;
+      const detail = `could not observe ${name} variant: ${cause.message}${suffix}`;
       return new CheckerError({ cause, message: detail });
     }
-    const message = `could not observe ${name} variant`;
+    const message = `could not observe ${name} variant${suffix}`;
     return new CheckerError({ cause, message });
   }
   const attempt = Effect_exports.tryPromise({ catch: createObservationError, try: project.run });
   const value3 = await Effect_exports.runPromise(attempt);
   return { passed: isDeepStrictEqual(value3, check2.expected), value: value3 };
+}
+function readQualificationHint(variant) {
+  if (variant === "good") {
+    return "; if the unmodified subject already violates the contract, set defect to [] and put the fix in good and refactor";
+  }
+  if (variant === "refactor") {
+    return "; good and defect already passed — keep them and rewrite only refactor as a distinct behavior-preserving variant (for example, extract a helper or invert the condition)";
+  }
+  return "";
 }
 async function qualifyControl({ project, variant }) {
   const result3 = await readObservation({ project, variant });
@@ -21626,7 +21978,8 @@ async function qualifyControl({ project, variant }) {
     const name = JSON.stringify(variant);
     const observed = JSON.stringify(result3.value);
     const expected = JSON.stringify(project.check.expected);
-    const message = `test did not distinguish its ${name} control (expected ${expected}, observed ${observed})`;
+    const suffix = readQualificationHint(variant);
+    const message = `test did not distinguish its ${name} control (expected ${expected}, observed ${observed})${suffix}`;
     throw new CheckerError({ message });
   }
 }
@@ -21652,16 +22005,17 @@ async function executeObservation({
 async function observe({
   check: check2,
   files,
+  projectRoot,
   qualify,
   skipActual = false
 }) {
   const temporary = tmpdir3();
-  const workPrefix = join3(temporary, "tenet-observe-");
-  const tmpPrefix = join3(temporary, "tenet-probe-tmp-");
+  const workPrefix = join5(temporary, "tenet-observe-");
+  const tmpPrefix = join5(temporary, "tenet-probe-tmp-");
   const work = await mkdtemp(workPrefix);
   const probeTmp = await mkdtemp(tmpPrefix);
   try {
-    const project = await prepareProject({ check: check2, files, probeTmp, work });
+    const project = await prepareProject({ check: check2, files, probeTmp, projectRoot, work });
     return await executeObservation({ check: check2, project, qualify, skipActual });
   } finally {
     await rm(work, { force: true, recursive: true });
@@ -21670,14 +22024,14 @@ async function observe({
 }
 
 // sandbox/runner-version.mts
-import { stat } from "node:fs/promises";
+import { stat as stat3 } from "node:fs/promises";
 var BWRAP3 = "/usr/bin/bwrap";
 var PYTHON2 = "/usr/bin/python3";
 var PRLIMIT3 = "/usr/bin/prlimit";
 var SANDBOX_EXEC3 = "/usr/bin/sandbox-exec";
 var RUNNER_REVISION = 4;
 function readBinaryIdentity(path) {
-  const read = Effect_exports.tryPromise(async () => await stat(path));
+  const read = Effect_exports.tryPromise(async () => await stat3(path));
   function buildMissingIdentity() {
     return [path, null];
   }
@@ -21707,6 +22061,80 @@ async function readRunnerVersion() {
   const installed = await Effect_exports.runPromise(version);
   const rust = Option_exports.getOrNull(installed);
   return JSON.stringify([RUNNER_REVISION, process.version, process.platform, binaries, rust]);
+}
+
+// sandbox/control-diagnostics.mts
+var MAX_PREVIEW_CHARS = 96;
+var MAX_NEARBY_HINTS = 3;
+var MIN_ANCHOR_CHARS = 6;
+var ESCAPED_NEWLINE = String.raw`\n`;
+function formatPreview(text2) {
+  const withoutCr = text2.replaceAll("\r", "");
+  const singleLine = withoutCr.replaceAll("\n", ESCAPED_NEWLINE);
+  if (singleLine.length <= MAX_PREVIEW_CHARS) {
+    return singleLine;
+  }
+  return `${singleLine.slice(0, MAX_PREVIEW_CHARS)}...`;
+}
+function findAnchorLine(find) {
+  for (const line of find.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length >= MIN_ANCHOR_CHARS) {
+      return trimmed;
+    }
+  }
+  return find.trim();
+}
+function formatAnchorHit({ index: index2, line }) {
+  const lineNumber = String(index2 + 1);
+  const trimmedLine = line.trim();
+  const preview = formatPreview(trimmedLine);
+  return `L${lineNumber}: ${preview}`;
+}
+function scanAnchorHits({ anchor, lines }) {
+  const hits = [];
+  for (const [index2, line] of lines.entries()) {
+    if (!line.includes(anchor)) {
+      continue;
+    }
+    const hit = formatAnchorHit({ index: index2, line });
+    hits.push(hit);
+    if (hits.length >= MAX_NEARBY_HINTS) {
+      break;
+    }
+  }
+  return hits;
+}
+function collectNearbyLines({ current, find }) {
+  const anchor = findAnchorLine(find);
+  if (anchor.length === 0) {
+    return [];
+  }
+  const lines = current.split("\n");
+  return scanAnchorHits({ anchor, lines });
+}
+function formatMissingMessage({ current, find, label }) {
+  const controlName = JSON.stringify(label);
+  const formatted = formatPreview(find);
+  const preview = JSON.stringify(formatted);
+  const nearby = collectNearbyLines({ current, find });
+  if (nearby.length > 0) {
+    const joined = nearby.join(" | ");
+    const hints = JSON.stringify(joined);
+    return `control ${controlName} edit target ${preview} was not found in the subject file; similar lines ${hints}`;
+  }
+  return `control ${controlName} edit target ${preview} was not found in the subject file`;
+}
+function buildEditError({ current, find, kind, label }) {
+  if (kind === "missing") {
+    const missingMessage = formatMissingMessage({ current, find, label });
+    return new CheckerError({ message: missingMessage });
+  }
+  const controlName = JSON.stringify(label);
+  const formatted = formatPreview(find);
+  const preview = JSON.stringify(formatted);
+  const ambiguousMessage = `control ${controlName} edit target ${preview} matched multiple locations in the subject file`;
+  return new CheckerError({ message: ambiguousMessage });
 }
 
 // sandbox/apply-control.mts
@@ -21741,52 +22169,83 @@ function readControlEdit(item) {
   }
   return { find, replace };
 }
-function applySingleEdit({ current, edit }) {
-  const first = current.indexOf(edit.find);
-  if (first === -1) {
-    throw new CheckerError({
-      message: "a control edit target was not found in the subject file"
-    });
+function normalizeEditTarget({ current, find }) {
+  if (current.includes(find)) {
+    return find;
   }
-  const second = current.indexOf(edit.find, first + 1);
+  if (find.includes("\r\n") && !current.includes("\r\n")) {
+    return find.replaceAll("\r\n", "\n");
+  }
+  return find;
+}
+function applySingleEdit({ current, edit, label }) {
+  const target = normalizeEditTarget({ current, find: edit.find });
+  const first = current.indexOf(target);
+  if (first === -1) {
+    throw buildEditError({ current, find: edit.find, kind: "missing", label });
+  }
+  const second = current.indexOf(target, first + 1);
   if (second !== -1) {
-    throw new CheckerError({
-      message: "a control edit target matched multiple locations in the subject file"
-    });
+    throw buildEditError({ current, find: edit.find, kind: "ambiguous", label });
   }
   const prefix = current.slice(0, first);
-  const suffix = current.slice(first + edit.find.length);
+  const suffix = current.slice(first + target.length);
   return `${prefix}${edit.replace}${suffix}`;
 }
-function applyEdits({ edits, limit, source }) {
+function assertWithinLimit({ current, label, limit }) {
+  if (Buffer.byteLength(current) <= limit) {
+    return;
+  }
+  const controlName = JSON.stringify(label);
+  const message = `materialized control ${controlName} exceeds the bounded source limit`;
+  throw new CheckerError({ message });
+}
+function applyEdits({ edits, label, limit, source }) {
   if (edits.length > MAX_CONTROL_EDITS) {
-    throw new CheckerError({ message: "a control exceeds the maximum number of edits" });
+    const controlName = JSON.stringify(label);
+    const message = `control ${controlName} exceeds the maximum number of edits`;
+    throw new CheckerError({ message });
   }
   let current = source;
   for (const item of edits) {
     const edit = readControlEdit(item);
-    current = applySingleEdit({ current, edit });
-    if (Buffer.byteLength(current) > limit) {
-      throw new CheckerError({ message: "materialized control exceeds the bounded source limit" });
-    }
+    current = applySingleEdit({ current, edit, label });
+    assertWithinLimit({ current, label, limit });
   }
   return current;
 }
-function applyControl({ control, limit, source }) {
+function buildOversizedControlError({
+  bytes: bytes2,
+  controlName,
+  limit
+}) {
+  const sizeText = JSON.stringify(bytes2);
+  const limitText = JSON.stringify(limit);
+  const message = `control ${controlName} string is ${sizeText} bytes (limit ${limitText}); use a compact find/replace edit array instead of a full-file string`;
+  return new CheckerError({ message });
+}
+function applyStringControl({ control, label, limit }) {
+  const controlName = JSON.stringify(label);
+  const bytes2 = Buffer.byteLength(control);
+  if (control.trim().length === 0) {
+    const message = `control ${controlName} must be a non-empty source string or find/replace edit array`;
+    throw new CheckerError({ message });
+  }
+  if (bytes2 > limit) {
+    throw buildOversizedControlError({ bytes: bytes2, controlName, limit });
+  }
+  return control;
+}
+function applyControl({ control, label = "control", limit, source }) {
   if (typeof control === "string") {
-    if (control.trim().length === 0 || Buffer.byteLength(control) > limit) {
-      throw new CheckerError({
-        message: "the generated checker is missing a bounded test, promise or control"
-      });
-    }
-    return control;
+    return applyStringControl({ control, label, limit });
   }
   if (Array.isArray(control)) {
-    return applyEdits({ edits: control, limit, source });
+    return applyEdits({ edits: control, label, limit, source });
   }
-  throw new CheckerError({
-    message: "a control must be a full source string or an array of find/replace edits"
-  });
+  const controlName = JSON.stringify(label);
+  const message = `control ${controlName} must be a full source string or an array of find/replace edits`;
+  throw new CheckerError({ message });
 }
 
 // sandbox/validate-check.mts
@@ -21841,16 +22300,34 @@ function readTarget({ fields, files }) {
     subject
   };
 }
+function assertDistinctControls({ defect, good, refactor }) {
+  if (good === refactor && good !== defect) {
+    throw new CheckerError({
+      message: "refactor matched good; rewrite refactor as a distinct behavior-preserving edit (for example, extract a helper or invert the condition)"
+    });
+  }
+  if (good === defect || refactor === defect) {
+    throw new CheckerError({ message: "qualification requires three distinct alternatives" });
+  }
+}
 function readControls({ fields, source }) {
   const rawGood = fields.get("good");
   const rawDefect = fields.get("defect");
   const rawRefactor = fields.get("refactor");
-  const good = applyControl({ control: rawGood, limit: MAX_FIELD_BYTES, source });
-  const defect = applyControl({ control: rawDefect, limit: MAX_FIELD_BYTES, source });
-  const refactor = applyControl({ control: rawRefactor, limit: MAX_FIELD_BYTES, source });
-  if (good === defect || refactor === defect || good === refactor) {
-    throw new CheckerError({ message: "qualification requires three distinct alternatives" });
-  }
+  const good = applyControl({ control: rawGood, label: "good", limit: MAX_FIELD_BYTES, source });
+  const defect = applyControl({
+    control: rawDefect,
+    label: "defect",
+    limit: MAX_FIELD_BYTES,
+    source
+  });
+  const refactor = applyControl({
+    control: rawRefactor,
+    label: "refactor",
+    limit: MAX_FIELD_BYTES,
+    source
+  });
+  assertDistinctControls({ defect, good, refactor });
   return { defect, good, refactor };
 }
 function attachEntry({ base, fields, files }) {
@@ -21991,11 +22468,6 @@ function parseBundle({ value: value3, files }) {
   return { checks: verified, open: open4 };
 }
 
-// review/pin/has-check-inputs.mts
-function hasCheckInputs({ check: check2, files }) {
-  return files.has(check2.subject) && (check2.testFile === void 0 || files.has(check2.testFile));
-}
-
 // review/pin/is-matching.mts
 function isMatching({ current, contractHash, pin }) {
   if (pin.shape !== current.shape || pin.contractHash !== void 0 && pin.contractHash !== contractHash) {
@@ -22059,13 +22531,124 @@ function buildOpenFinding({ contract, reason }) {
   return buildFinding({ check: "discovery", contract, message: reason, outcome: "unresolved" });
 }
 
-// review/pin/qualify-bundle.mts
+// review/pin/decode-bundle.mts
 var MAX_CHECKS2 = 12;
 var MAX_OPEN_LENGTH = 400;
+var ELLIPSIS_SUFFIX = "…";
+var WHITESPACE_RUN = new RegExp("\\s+", "gv");
 var RawChecks = Schema_exports.Array(Schema_exports.Unknown);
-var OpenItems = Schema_exports.Array(Schema_exports.String);
-var RawBundle = Schema_exports.Struct({ checks: RawChecks, open: OpenItems });
+var OptionalRawChecks = Schema_exports.OptionFromOptionalKey(RawChecks);
+var RawOpenItems = Schema_exports.Array(Schema_exports.Unknown);
+var OptionalOpenItems = Schema_exports.OptionFromOptionalKey(RawOpenItems);
+var RawBundle = Schema_exports.Struct({ checks: OptionalRawChecks, open: OptionalOpenItems });
 var decodeRawBundle = Schema_exports.decodeUnknownOption(RawBundle, { onExcessProperty: "error" });
+var OPEN_TEXT_KEYS = ["reason", "message", "description", "summary"];
+function buildBundleRecord(entries3) {
+  const hasChecks = entries3.has("checks");
+  const hasOpen = entries3.has("open");
+  if (hasChecks && hasOpen) {
+    return { checks: entries3.get("checks"), open: entries3.get("open") };
+  }
+  if (hasChecks) {
+    return { checks: entries3.get("checks") };
+  }
+  if (hasOpen) {
+    return { open: entries3.get("open") };
+  }
+  return {};
+}
+function readBundleFields(value3) {
+  if (value3 === null || typeof value3 !== "object" || Array.isArray(value3)) {
+    return Option_exports.none();
+  }
+  const pairs = Object.entries(value3);
+  const entries3 = new Map(pairs);
+  const record2 = buildBundleRecord(entries3);
+  return Option_exports.some(record2);
+}
+function readOpenObjectText(fields) {
+  for (const key of OPEN_TEXT_KEYS) {
+    const candidate = fields.get(key);
+    if (typeof candidate === "string") {
+      return Option_exports.some(candidate);
+    }
+  }
+  return Option_exports.none();
+}
+function extractOpenText(item) {
+  if (typeof item === "string") {
+    return Option_exports.some(item);
+  }
+  if (item === null || typeof item !== "object" || Array.isArray(item)) {
+    return Option_exports.none();
+  }
+  const pairs = Object.entries(item);
+  const fields = new Map(pairs);
+  return readOpenObjectText(fields);
+}
+function normalizeOpenItem(item) {
+  const raw = extractOpenText(item);
+  if (Option_exports.isNone(raw)) {
+    return Option_exports.none();
+  }
+  const collapsed = raw.value.replaceAll(WHITESPACE_RUN, " ").trim();
+  if (collapsed.length === 0) {
+    return Option_exports.none();
+  }
+  if (collapsed.length <= MAX_OPEN_LENGTH) {
+    return Option_exports.some(collapsed);
+  }
+  const truncated = collapsed.slice(0, MAX_OPEN_LENGTH - ELLIPSIS_SUFFIX.length).trimEnd();
+  return Option_exports.some(`${truncated}${ELLIPSIS_SUFFIX}`);
+}
+function normalizeOpenItems(items) {
+  const normalized = [];
+  for (const item of items) {
+    const text2 = normalizeOpenItem(item);
+    if (Option_exports.isSome(text2)) {
+      normalized.push(text2.value);
+    }
+  }
+  return normalized;
+}
+function findBundleProblem({ open: open4, rawChecks }) {
+  if (rawChecks.length > MAX_CHECKS2 || open4.length > MAX_CHECKS2) {
+    return Option_exports.some("checker plan exceeds the number of allowed checks");
+  }
+  if (rawChecks.length === 0 && open4.length === 0) {
+    return Option_exports.some("checker plan returned neither checks nor open items");
+  }
+  return Option_exports.none();
+}
+function describeInvalidBundle(value3) {
+  if (value3 === null || typeof value3 !== "object" || Array.isArray(value3)) {
+    return "the checker plan must be a JSON object with checks and open arrays";
+  }
+  const keyList = Object.keys(value3);
+  const keys3 = JSON.stringify(keyList);
+  return `the checker plan has invalid top-level fields ${keys3}; return checks and open arrays where open contains strings`;
+}
+function validateDecodedBundle(bundle) {
+  const problem = findBundleProblem(bundle);
+  if (Option_exports.isSome(problem)) {
+    return Result_exports.fail(problem.value);
+  }
+  return Result_exports.succeed(bundle);
+}
+function decodePlannerBundle(value3) {
+  const projected = readBundleFields(value3);
+  const decoded = Option_exports.flatMap(projected, (fields) => decodeRawBundle(fields));
+  if (Option_exports.isNone(decoded)) {
+    const message = describeInvalidBundle(value3);
+    return Result_exports.fail(message);
+  }
+  const rawChecks = Option_exports.getOrElse(decoded.value.checks, () => []);
+  const rawOpen = Option_exports.getOrElse(decoded.value.open, () => []);
+  const open4 = normalizeOpenItems(rawOpen);
+  return validateDecodedBundle({ open: open4, rawChecks });
+}
+
+// review/pin/qualify-bundle.mts
 function readCandidateError(error) {
   if (error instanceof Error) {
     return error.message;
@@ -22085,24 +22668,6 @@ function buildEmptyError({ contractName, message }) {
   const warning = buildOpenFinding({ contract: contractName, reason: message });
   return { errors: [message], extraUnresolved: [warning], open: [], qualified: [] };
 }
-function isValidOpenItem(item) {
-  const trimmed = item.trim();
-  return trimmed.length > 0 && trimmed.length <= MAX_OPEN_LENGTH;
-}
-function findBundleProblem({ checks, open: open4 }) {
-  if (checks.length > MAX_CHECKS2 || open4.length > MAX_CHECKS2) {
-    return Option_exports.some("checker plan exceeds the number of allowed checks");
-  }
-  if (checks.length === 0 && open4.length === 0) {
-    return Option_exports.some("checker plan returned neither checks nor open items");
-  }
-  if (!open4.every((item) => isValidOpenItem(item))) {
-    return Option_exports.some(
-      "checker plan open items must be non-empty strings of at most 400 characters"
-    );
-  }
-  return Option_exports.none();
-}
 function parseSingle({ files, raw }) {
   function runValidate() {
     return validate3({ check: raw, files });
@@ -22111,10 +22676,11 @@ function parseSingle({ files, raw }) {
 }
 async function qualifySingle({
   check: check2,
-  files
+  files,
+  projectRoot
 }) {
   async function runQualification() {
-    await observe({ check: check2, files, qualify: true, skipActual: true });
+    await observe({ check: check2, files, projectRoot, qualify: true, skipActual: true });
     return check2;
   }
   return await classifyResult({ message: "qualification failed", run: runQualification });
@@ -22137,9 +22703,10 @@ function failCandidate({
 async function runCheckQualification({
   candidate,
   contractName,
-  files
+  files,
+  projectRoot
 }) {
-  const result3 = await qualifySingle({ check: candidate, files });
+  const result3 = await qualifySingle({ check: candidate, files, projectRoot });
   if (Result_exports.isSuccess(result3)) {
     return { check: result3.success, kind: "qualified" };
   }
@@ -22155,6 +22722,7 @@ async function checkCandidate({
   contractName,
   current,
   index: index2,
+  projectRoot,
   raw,
   seenIds
 }) {
@@ -22172,7 +22740,12 @@ async function checkCandidate({
       subject: candidate.subject
     });
   }
-  return await runCheckQualification({ candidate, contractName, files: current.runtimeFiles });
+  return await runCheckQualification({
+    candidate,
+    contractName,
+    files: current.runtimeFiles,
+    projectRoot
+  });
 }
 function recordOutcome({ outcome, state }) {
   if (outcome.kind === "qualified") {
@@ -22193,6 +22766,7 @@ async function qualifyList({
   contractName,
   current,
   open: open4,
+  projectRoot,
   rawChecks
 }) {
   let state = {
@@ -22206,6 +22780,7 @@ async function qualifyList({
       contractName,
       current,
       index: index2,
+      projectRoot,
       raw,
       seenIds: state.seenIds
     });
@@ -22221,21 +22796,14 @@ async function qualifyList({
 async function qualifyBundle({
   contractName,
   current,
+  projectRoot,
   value: value3
 }) {
-  const decoded = decodeRawBundle(value3);
-  if (Option_exports.isNone(decoded)) {
-    return buildEmptyError({
-      contractName,
-      message: "the checker plan has invalid top-level fields; return { checks: [...], open: [...] }"
-    });
+  const decoded = decodePlannerBundle(value3);
+  if (Result_exports.isFailure(decoded)) {
+    return buildEmptyError({ contractName, message: decoded.failure });
   }
-  const problem = findBundleProblem(decoded.value);
-  if (Option_exports.isSome(problem)) {
-    return buildEmptyError({ contractName, message: problem.value });
-  }
-  const { checks: rawChecks, open: open4 } = decoded.value;
-  return await qualifyList({ contractName, current, open: open4, rawChecks });
+  return await qualifyList({ contractName, current, projectRoot, ...decoded.success });
 }
 
 // review/pin/update-pin.mts
@@ -22264,7 +22832,7 @@ function updatePin({ prior, next, files }) {
 }
 
 // review/review.mts
-import { realpath as realpath9 } from "node:fs/promises";
+import { realpath as realpath10 } from "node:fs/promises";
 
 // storage/hash-source.mts
 import { createHash } from "node:crypto";
@@ -22276,14 +22844,14 @@ function hashSource(data) {
 
 // storage/read-regular.mts
 import { constants } from "node:fs";
-import { lstat, open, realpath as realpath5 } from "node:fs/promises";
+import { lstat, open, realpath as realpath6 } from "node:fs/promises";
 
 // storage/resolve-inside.mts
-import { isAbsolute, join as join4, resolve as resolve4, sep as sep2 } from "node:path";
+import { isAbsolute, join as join6, resolve as resolve4, sep as sep3 } from "node:path";
 function resolveInside({ root, path }) {
   const target = resolve4(root, path);
-  const prefix = join4(root, sep2);
-  const components = path.split(sep2);
+  const prefix = join6(root, sep3);
+  const components = path.split(sep3);
   if (isAbsolute(path) || components.includes("..") || !target.startsWith(prefix)) {
     throw new CheckerError({ message: "input falls outside the checkout." });
   }
@@ -22291,8 +22859,8 @@ function resolveInside({ root, path }) {
 }
 
 // storage/resolve-root.mts
-import { realpath as realpath4 } from "node:fs/promises";
-import { basename as basename3, dirname as dirname5, join as join5, resolve as resolve5 } from "node:path";
+import { realpath as realpath5 } from "node:fs/promises";
+import { basename as basename3, dirname as dirname5, join as join7, resolve as resolve5 } from "node:path";
 function readErrorCode(value3) {
   if (value3 instanceof Error && "code" in value3 && typeof value3.code === "string") {
     return value3.code;
@@ -22301,7 +22869,7 @@ function readErrorCode(value3) {
 }
 async function readRealPath(path) {
   async function run3() {
-    return await realpath4(path);
+    return await realpath5(path);
   }
   const inspect = tryOperation({ message: "resolve canonical root path", run: run3 });
   return await inspect.pipe(Effect_exports.result, Effect_exports.runPromise);
@@ -22318,7 +22886,7 @@ async function resolveRoot(path) {
   }
   const trusted = await resolveRoot(parent);
   const child = basename3(absolute);
-  return join5(trusted, child);
+  return join7(trusted, child);
 }
 
 // storage/read-regular.mts
@@ -22345,8 +22913,8 @@ async function readText2({ handle, limit, preserveBom }) {
 }
 async function readOpened(input) {
   const { handle, prior, file } = input;
-  const stat2 = await handle.stat();
-  if (stat2.dev !== prior.dev || stat2.ino !== prior.ino || await realpath5(file) !== file) {
+  const stat4 = await handle.stat();
+  if (stat4.dev !== prior.dev || stat4.ino !== prior.ino || await realpath6(file) !== file) {
     throw new CheckerError({ message: "input changed while opening it." });
   }
   return await readText2(input);
@@ -22355,7 +22923,7 @@ async function readRegular(input) {
   const root = await resolveRoot(input.root);
   const file = resolveInside({ path: input.path, root });
   const prior = await lstat(file);
-  if (!prior.isFile() || prior.size > input.limit || await realpath5(file) !== file) {
+  if (!prior.isFile() || prior.size > input.limit || await realpath6(file) !== file) {
     throw new CheckerError({ message: "input unavailable." });
   }
   const handle = await open(file, OPEN_FLAGS);
@@ -22404,18 +22972,18 @@ async function readExisting(location) {
 }
 
 // storage/replace-pin.mts
-import { open as open3, realpath as realpath7, rm as rm3 } from "node:fs/promises";
+import { open as open3, realpath as realpath8, rm as rm3 } from "node:fs/promises";
 import { dirname as dirname7 } from "node:path";
 
 // storage/write-atomic.mts
 import { randomUUID } from "node:crypto";
-import { link as link2, mkdir as mkdir2, open as open2, realpath as realpath6, rename, rm as rm2 } from "node:fs/promises";
-import { dirname as dirname6, join as join6, relative, sep as sep3 } from "node:path";
+import { link as link2, mkdir as mkdir3, open as open2, realpath as realpath7, rename, rm as rm2 } from "node:fs/promises";
+import { dirname as dirname6, join as join8, relative, sep as sep4 } from "node:path";
 var PRIVATE_FILE = 384;
 var PRIVATE_DIR = 448;
 async function ensureSegment(path) {
-  await mkdir2(path, { mode: PRIVATE_DIR, recursive: true });
-  if (await realpath6(path) !== path) {
+  await mkdir3(path, { mode: PRIVATE_DIR, recursive: true });
+  if (await realpath7(path) !== path) {
     throw new CheckerError({ message: "output directory is a symbolic link." });
   }
 }
@@ -22426,8 +22994,8 @@ async function ensureDirectory({ directory, root }) {
     return;
   }
   let current = root;
-  for (const part of nested.split(sep3)) {
-    current = join6(current, part);
+  for (const part of nested.split(sep4)) {
+    current = join8(current, part);
     await ensureSegment(current);
   }
 }
@@ -22449,7 +23017,7 @@ async function storeRecord({ handle, record: record2 }) {
 }
 async function writeTempRecord({ first, parent, target, value: value3 }) {
   const nonce = randomUUID();
-  const temp = join6(parent, `.tenet-${nonce}.tmp`);
+  const temp = join8(parent, `.tenet-${nonce}.tmp`);
   const handle = await open2(temp, "wx", PRIVATE_FILE);
   try {
     await storeRecord({ handle, record: value3 });
@@ -22472,7 +23040,7 @@ async function resolvePinLock(input) {
   const root = await resolveRoot(input.root);
   const lock = resolveInside({ path: `${input.path}.lock`, root });
   const parent = dirname7(lock);
-  if (await realpath7(parent) !== parent) {
+  if (await realpath8(parent) !== parent) {
     throw new CheckerError({ message: "output directory is a symbolic link." });
   }
   return lock;
@@ -22520,24 +23088,24 @@ import { env as env3 } from "node:process";
 import { pathToFileURL } from "node:url";
 
 // fx/fx-cache.mts
-import { access as access6, mkdir as mkdir3, mkdtemp as mkdtemp2, realpath as realpath8, rename as rename2, rm as rm4 } from "node:fs/promises";
-import { homedir as homedir2 } from "node:os";
-import { isAbsolute as isAbsolute2, join as join8, relative as relative2, sep as sep4 } from "node:path";
+import { access as access7, mkdir as mkdir4, mkdtemp as mkdtemp2, realpath as realpath9, rename as rename2, rm as rm4 } from "node:fs/promises";
+import { homedir as homedir3 } from "node:os";
+import { isAbsolute as isAbsolute2, join as join10, relative as relative2, sep as sep5 } from "node:path";
 import { cwd, env as env2 } from "node:process";
 
 // fx/install-fx.mts
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { cp } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { join as join9 } from "node:path";
 import { env } from "node:process";
 
 // fx/resolve-asset.mts
-import { access as access5 } from "node:fs/promises";
+import { access as access6 } from "node:fs/promises";
 async function resolveWorkerAsset(name) {
   const local = new URL(name, import.meta.url);
   async function probeLocal() {
-    await access5(local);
+    await access6(local);
   }
   const found = await classifyResult({ message: "missing local worker asset", run: probeLocal });
   if (Result_exports.isSuccess(found)) {
@@ -22550,7 +23118,7 @@ async function resolveWorkerAsset(name) {
 var INSTALL_TIMEOUT_MS = 9e4;
 async function copyManifest(input) {
   const source = await resolveWorkerAsset(input.directory);
-  const target = join7(input.destination, input.directory);
+  const target = join9(input.destination, input.directory);
   await cp(source, target);
 }
 async function installFxRuntime(directory) {
@@ -22590,10 +23158,10 @@ function readCode(value3) {
 }
 async function resolveTrustedPath(path) {
   const sourceRoot = env2.TENET_WORKER_SOURCE_ROOT ?? cwd();
-  const source = await realpath8(sourceRoot);
+  const source = await realpath9(sourceRoot);
   const destination = await resolveRoot(path);
   const relation = relative2(source, destination);
-  if (isAbsolute2(relation) || relation === ".." || relation.startsWith(`..${sep4}`)) {
+  if (isAbsolute2(relation) || relation === ".." || relation.startsWith(`..${sep5}`)) {
     return destination;
   }
   throw new CheckerError({ message: "move the fx cache outside the reviewed repository" });
@@ -22612,8 +23180,8 @@ async function publish({ directory, destination }) {
   }
 }
 async function ensureInstallation({ cache: cache2, destination }) {
-  await mkdir3(cache2, { mode: 448, recursive: true });
-  const prefix = join8(cache2, "install-");
+  await mkdir4(cache2, { mode: 448, recursive: true });
+  const prefix = join10(cache2, "install-");
   const temporary = await mkdtemp2(prefix);
   try {
     await installFxRuntime(temporary);
@@ -22623,17 +23191,17 @@ async function ensureInstallation({ cache: cache2, destination }) {
   }
 }
 async function resolveInstallation() {
-  const userHome = homedir2();
-  const home = env2.XDG_CACHE_HOME ?? join8(userHome, ".cache");
-  const directory = join8(home, "tenet", "libfx");
+  const userHome = homedir3();
+  const home = env2.XDG_CACHE_HOME ?? join10(userHome, ".cache");
+  const directory = join10(home, "tenet", "libfx");
   const cache2 = await resolveTrustedPath(directory);
-  const destination = join8(cache2, LIBFX_VERSION);
-  const entry = join8(destination, "node_modules", "libfx", "node.js");
+  const destination = join10(cache2, LIBFX_VERSION);
+  const entry = join10(destination, "node_modules", "libfx", "node.js");
   return { cache: cache2, destination, entry };
 }
 async function isCached(trusted) {
   async function run3() {
-    await access6(trusted);
+    await access7(trusted);
   }
   const read = tryOperation({ message: "inspect the fx cache", run: run3 });
   const cached3 = await read.pipe(Effect_exports.result, Effect_exports.runPromise);
@@ -23047,7 +23615,7 @@ async function explainFindings({
 }
 
 // fx/generation.mts
-import { readFile } from "node:fs/promises";
+import { readFile as readFile2 } from "node:fs/promises";
 function encodeInput(request3) {
   const { contract, inventory, repair } = request3;
   const files = Object.fromEntries(inventory.files);
@@ -23070,7 +23638,7 @@ function encodeInput(request3) {
 }
 async function generate(request3) {
   const promptUrl = await resolveWorkerAsset("checker-prompt.md");
-  const instructions = await readFile(promptUrl, "utf-8");
+  const instructions = await readFile2(promptUrl, "utf-8");
   const source = encodeInput(request3);
   return await runFxJson({ instructions, onRequest: request3.onRequest, source });
 }
@@ -23127,7 +23695,7 @@ async function readBaseInputs({
 }
 
 // discovery/discovery.mts
-import { basename as basename6, dirname as dirname8, extname } from "node:path";
+import { basename as basename6, dirname as dirname8, extname as extname2 } from "node:path";
 
 // discovery/hash-surface.mts
 import { basename as basename4 } from "node:path";
@@ -23177,15 +23745,118 @@ function hashSurface({ contract, source, assets, omitted }) {
 }
 
 // discovery/rank-path.mts
-import { basename as basename5 } from "node:path";
+import { basename as basename5, extname } from "node:path";
+var MIN_TOKEN_LENGTH = 3;
+var EXACT_PATH_SCORE = 100;
+var STEM_TOKEN_SCORE = 10;
+var MAX_RANK_SCORE = 9999;
+var SCORE_PAD_WIDTH = 4;
+var BACKTICK_PATTERN = new RegExp("`(?<token>[^`\\n]{2,120})`", "gv");
+var CAMEL_BOUNDARY = new RegExp("(?<prev>[a-z0-9])(?<next>[A-Z])", "gv");
+var NON_WORD_BOUNDARY = new RegExp("[^a-z0-9]+", "gv");
 var enumRank = {
+  contractMatch: 2,
   failure: 1,
+  generatedOrCompat: 5,
   manifest: 0,
-  otherPublic: 3,
-  privateOrTest: 4,
-  publicSource: 2,
-  unrelated: 5
+  otherPublic: 4,
+  privateOrTest: 6,
+  publicSource: 3,
+  unrelated: 7
 };
+var GENERATED_SEGMENTS = /* @__PURE__ */ new Set([
+  "_future",
+  "compat",
+  "gen",
+  "generated",
+  "third_party",
+  "vendor"
+]);
+var STOP_WORDS = /* @__PURE__ */ new Set([
+  "and",
+  "any",
+  "check",
+  "checks",
+  "code",
+  "contract",
+  "error",
+  "errors",
+  "false",
+  "file",
+  "files",
+  "for",
+  "from",
+  "function",
+  "index",
+  "init",
+  "input",
+  "inputs",
+  "lib",
+  "line",
+  "lines",
+  "method",
+  "mod",
+  "module",
+  "name",
+  "none",
+  "not",
+  "null",
+  "output",
+  "outputs",
+  "path",
+  "paths",
+  "public",
+  "return",
+  "returns",
+  "rule",
+  "rules",
+  "src",
+  "test",
+  "tests",
+  "the",
+  "true",
+  "type",
+  "value",
+  "values",
+  "with"
+]);
+function splitIdentifierTokens(text2) {
+  const spaced2 = text2.replaceAll(CAMEL_BOUNDARY, "$<prev> $<next>").toLowerCase();
+  const parts2 = spaced2.split(NON_WORD_BOUNDARY);
+  return parts2.filter((part) => part.length >= MIN_TOKEN_LENGTH && !STOP_WORDS.has(part));
+}
+function readBacktickValues(document) {
+  const values2 = [];
+  for (const match7 of document.matchAll(BACKTICK_PATTERN)) {
+    const raw = match7.groups?.["token"]?.trim();
+    if (raw !== void 0 && raw.length > 0) {
+      values2.push(raw);
+    }
+  }
+  return values2;
+}
+function readExactPaths(backticks) {
+  const exactPaths = /* @__PURE__ */ new Set();
+  for (const raw of backticks) {
+    if (raw.includes("/") && !raw.includes(" ")) {
+      const cleaned = raw.replace(new RegExp("^\\.\\/", "v"), "");
+      exactPaths.add(cleaned);
+    }
+  }
+  return exactPaths;
+}
+function readContractTerms(contract) {
+  const backticks = readBacktickValues(contract.document);
+  const exactPaths = readExactPaths(backticks);
+  const nameTokens = splitIdentifierTokens(contract.name);
+  const tokens = new Set(nameTokens);
+  for (const raw of backticks) {
+    for (const token of splitIdentifierTokens(raw)) {
+      tokens.add(token);
+    }
+  }
+  return { exactPaths, tokens };
+}
 function isPrivateModule(path) {
   const name = basename5(path);
   return name.startsWith("_") && name !== "__init__.py";
@@ -23194,16 +23865,54 @@ function isTestPath(path) {
   const segments = path.split("/");
   return segments.includes("test") || segments.includes("tests");
 }
-function rankUnclassifiedPath(path) {
+function isGeneratedOrCompatPath(path) {
+  const segments = path.split("/");
+  return segments.some((segment) => GENERATED_SEGMENTS.has(segment));
+}
+function readPathStem(path) {
+  const name = basename5(path);
+  const extension = extname(name);
+  if (extension.length === 0) {
+    return name;
+  }
+  return name.slice(0, -extension.length);
+}
+function countTokenHits({ candidates, tokens }) {
+  let hits = 0;
+  for (const candidate of candidates) {
+    if (tokens.has(candidate)) {
+      hits += 1;
+    }
+  }
+  return hits;
+}
+function scoreContractMatch({ path, terms }) {
+  if (terms.exactPaths.has(path)) {
+    return EXACT_PATH_SCORE;
+  }
+  const stem = readPathStem(path);
+  const stemCandidates = splitIdentifierTokens(stem);
+  const stemHits = countTokenHits({ candidates: stemCandidates, tokens: terms.tokens });
+  const pathCandidates = splitIdentifierTokens(path);
+  const pathHits = countTokenHits({ candidates: pathCandidates, tokens: terms.tokens });
+  return stemHits * STEM_TOKEN_SCORE + pathHits;
+}
+function rankUnclassifiedPath({ matchScore, path }) {
   if (isPrivateModule(path) || isTestPath(path)) {
     return enumRank.privateOrTest;
+  }
+  if (isGeneratedOrCompatPath(path)) {
+    return enumRank.generatedOrCompat;
+  }
+  if (matchScore > 0) {
+    return enumRank.contractMatch;
   }
   if (path.startsWith("src/") || path.startsWith("lib/")) {
     return enumRank.publicSource;
   }
   return enumRank.otherPublic;
 }
-function rankPath({ path, decision }) {
+function rankPath({ decision, matchScore, path }) {
   const name = basename5(path);
   if (MANIFESTS.has(name)) {
     return enumRank.manifest;
@@ -23214,21 +23923,33 @@ function rankPath({ path, decision }) {
   if (decision === "not_applicable") {
     return enumRank.unrelated;
   }
-  return rankUnclassifiedPath(path);
+  return rankUnclassifiedPath({ matchScore, path });
+}
+function buildSortKey({ group, matchScore, path }) {
+  const boundedScore = Math.min(matchScore, MAX_RANK_SCORE);
+  const inverted = String(MAX_RANK_SCORE - boundedScore).padStart(SCORE_PAD_WIDTH, "0");
+  return `${String(group)}:${inverted}:${path}`;
+}
+function readOrderedValues(rankedPaths) {
+  const ordered = [];
+  for (const key of [...rankedPaths.keys()].toSorted()) {
+    const entry = rankedPaths.get(key);
+    if (entry !== void 0) {
+      ordered.push(entry);
+    }
+  }
+  return ordered;
 }
 function listRankedPaths(contract) {
-  const paths = contract.paths.toSorted();
-  const groups = [
-    enumRank.manifest,
-    enumRank.failure,
-    enumRank.publicSource,
-    enumRank.otherPublic,
-    enumRank.privateOrTest,
-    enumRank.unrelated
-  ];
-  return groups.flatMap(
-    (group) => paths.filter((path) => rankPath({ decision: contract.decisions?.[path], path }) === group)
-  );
+  const terms = readContractTerms(contract);
+  const rankedPaths = /* @__PURE__ */ new Map();
+  for (const path of contract.paths.toSorted()) {
+    const matchScore = scoreContractMatch({ path, terms });
+    const group = rankPath({ decision: contract.decisions?.[path], matchScore, path });
+    const key = buildSortKey({ group, matchScore, path });
+    rankedPaths.set(key, path);
+  }
+  return readOrderedValues(rankedPaths);
 }
 
 // discovery/discovery.mts
@@ -23267,7 +23988,7 @@ function classifyPath({
   decision,
   packageRoots
 }) {
-  const extension = extname(path);
+  const extension = extname2(path);
   const name = basename6(path);
   if (EXTENSIONS.has(extension) || MANIFESTS.has(name)) {
     return "read";
@@ -23390,7 +24111,7 @@ async function isFailingAtBase({ evaluation, check: check2 }) {
   if (!base.has(check2.subject)) {
     return false;
   }
-  const old = await observe({ check: check2, files: base, qualify: false });
+  const old = await observe({ check: check2, files: base, projectRoot: evaluation.root, qualify: false });
   return !old.passed;
 }
 async function observeOne(input) {
@@ -23405,6 +24126,7 @@ async function observeOne(input) {
   const result3 = await observe({
     check: check2,
     files: evaluation.current.runtimeFiles,
+    projectRoot: evaluation.root,
     qualify: !qualified
   });
   if (result3.passed) {
@@ -23471,26 +24193,29 @@ async function evaluate2(input) {
 }
 
 // review/receipt/read-cached.mts
-function isCurrentReceipt(input) {
-  const { evaluation } = input;
-  const { base, current, saved, tools } = evaluation;
-  if (saved === void 0 || saved.base !== base) {
-    return false;
-  }
-  return saved.tools === tools && saved.observed === current.observed && saved.shape === current.shape;
-}
 function isCurrentPin(ctx) {
   const candidate = Option_exports.fromUndefinedOr(ctx.pin);
   const serialized = Option_exports.map(candidate, (pin) => JSON.stringify(pin));
   const signature = Option_exports.map(serialized, hashSource);
   return ctx.evaluation.saved?.signature === Option_exports.getOrUndefined(signature);
 }
-function isReusable(ctx) {
-  const { saved } = ctx.evaluation;
-  if (!isCurrentReceipt(ctx) || saved === void 0) {
+function isCurrentReceipt(input) {
+  const { evaluation } = input;
+  const { base, current, saved, tools } = evaluation;
+  if (saved === void 0 || saved.base !== base) {
     return false;
   }
-  if (!isCurrentPin(ctx)) {
+  if (saved.tools !== tools || saved.observed !== current.observed) {
+    return false;
+  }
+  if (saved.shape === current.shape) {
+    return true;
+  }
+  return saved.signature !== void 0 && isCurrentPin(input);
+}
+function isReusable(ctx) {
+  const { saved } = ctx.evaluation;
+  if (!isCurrentReceipt(ctx) || saved === void 0 || !isCurrentPin(ctx)) {
     return false;
   }
   if (saved.rows.some((row) => row.outcome === "unresolved")) {
@@ -23499,7 +24224,7 @@ function isReusable(ctx) {
   if (ctx.pin === void 0) {
     return false;
   }
-  return ctx.matching;
+  return ctx.job.request.inspect === true || ctx.matching;
 }
 function readCached(ctx) {
   const { saved } = ctx.evaluation;
@@ -23528,13 +24253,13 @@ function readCached(ctx) {
 }
 
 // review/receipt/receipt.mts
-import { dirname as dirname9, join as join9 } from "node:path";
+import { dirname as dirname9, join as join11 } from "node:path";
 var decodeReceipt = Schema_exports.decodeUnknownOption(Receipt, { onExcessProperty: "error" });
 function resolvePaths(contract) {
   const identity2 = hashSource(contract.path);
-  const receipt = join9("agent-checks", `${identity2}.json`);
+  const receipt = join11("agent-checks", `${identity2}.json`);
   const directory = dirname9(contract.path);
-  const lock = join9(directory, "agent-checks.lock.json");
+  const lock = join11(directory, "agent-checks.lock.json");
   return { lock, receipt };
 }
 async function readReceipt({
@@ -23605,7 +24330,8 @@ function reportCoverage({ omitted, contract }) {
 
 // review/select-pin.mts
 var MAX_REPAIR_PREVIEW_CHARS = 32768;
-function formatPreview(value3) {
+var MISSING_DEP_PATTERN = new RegExp("ERR_MODULE_NOT_FOUND|ModuleNotFoundError|error\\[E04(?:32|63)\\]|target\\/debug\\/deps", "v");
+function formatPreview2(value3) {
   const serialized = JSON.stringify(value3);
   if (serialized.length <= MAX_REPAIR_PREVIEW_CHARS) {
     return serialized;
@@ -23640,12 +24366,19 @@ async function generateOnce(input) {
   const evaluated = await qualifyBundle({
     contractName: ctx.job.contract.name,
     current: ctx.evaluation.current,
+    projectRoot: ctx.evaluation.root,
     value: raw
   });
   return { evaluated, raw };
 }
+function isUnrecoverableMissingDependency(errors) {
+  return errors.length > 0 && errors.every((error) => MISSING_DEP_PATTERN.test(error));
+}
 function shouldRepair(evaluated) {
-  return evaluated.qualified.length === 0 && evaluated.errors.length > 0;
+  if (evaluated.qualified.length > 0 || evaluated.errors.length === 0) {
+    return false;
+  }
+  return !isUnrecoverableMissingDependency(evaluated.errors);
 }
 function buildSelectedPin({ ctx, evaluated }) {
   const pin = {
@@ -23667,7 +24400,7 @@ async function runRepairIfNeeded({
   }
   const repair = {
     errors: first.evaluated.errors,
-    previous: formatPreview(first.raw)
+    previous: formatPreview2(first.raw)
   };
   const repaired = await generateOnce({ ...input, repair });
   return repaired.evaluated;
@@ -23859,7 +24592,7 @@ function createBudget(maxGenerations) {
   };
 }
 async function normalizeRequest(input) {
-  const root = await realpath9(input.root);
+  const root = await realpath10(input.root);
   const state = await resolveRoot(input.state);
   return { ...input, root, state };
 }

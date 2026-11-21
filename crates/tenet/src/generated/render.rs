@@ -68,7 +68,7 @@ fn write_finding(out: &mut impl Write, label: &str, row: &Finding) -> io::Result
     )
 }
 
-pub(crate) fn write_rows(out: &mut impl Write, rows: &[Finding]) -> io::Result<()> {
+fn write_rows(out: &mut impl Write, rows: &[Finding]) -> io::Result<()> {
     for row in rows {
         let label = match row.outcome {
             Outcome::Passed => "PASS",

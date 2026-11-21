@@ -17,7 +17,8 @@ use tenet_engine::{
 };
 use tokio::signal;
 
-use super::{local::summarize_checks, prepare};
+use self::contracts::summarize_checks;
+use super::prepare;
 use crate::{
     cli::{Check, ExitStatus, ReporterKind},
     error::CommandError,

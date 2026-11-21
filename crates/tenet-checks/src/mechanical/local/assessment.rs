@@ -23,7 +23,7 @@ pub(super) fn report(
         observed_outcome: previous.map(|saved| saved.observation.outcome),
         reason: None,
         replay: Some(format!(
-            "tenet check --local {}/{name} --fresh",
+            "tenet check --final --contract {} --fresh",
             contract.name
         )),
         reused: None,

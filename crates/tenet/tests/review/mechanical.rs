@@ -1,10 +1,10 @@
 #[cfg(unix)]
-use std::path::Path;
+use std::{path::Path, process::Output};
 
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use super::fixture::run_tenet;
+use super::{fixture::run_tenet, provider::Provider};
 use crate::write_file::write_file;
 
 #[test]
@@ -96,8 +96,8 @@ else
     {"case":"zero","expected":"0","actual":"1","location":"src/value.txt"}}'
 fi"#,
     )?;
-    let check = |args: &[&str], code: i32| -> Result<Value> {
-        let output = run_tenet(root, args)?;
+    let provider = Provider::start(&[], "no_match")?;
+    let read_check = |output: Output, code: i32, field: &str| -> Result<Value> {
         assert_eq!(
             output.status.code(),
             Some(code),
@@ -105,33 +105,40 @@ fi"#,
             String::from_utf8_lossy(&output.stderr)
         );
         let result: Value = serde_json::from_slice(&output.stdout)?;
-        Ok(result
-            .get("checks")
-            .unwrap_or_else(|| &result["mechanical_evidence"])[0]
-            .clone())
+        Ok(result[field][0].clone())
     };
-    let run = ["check", "--local", "values/zero", "--json"];
-    let status = ["status", "--local", "--json"];
-    assert_eq!(check(&status, 4_i32)?["freshness"], "missing");
-    assert!(!root.join(".tenet").exists());
-    let failed = check(&run, 1_i32)?;
+    let check_final = |args: &[&str], code: i32| -> Result<Value> {
+        read_check(provider.run_tenet(root, args)?, code, "checks")
+    };
+    let check_status = |code: i32| -> Result<Value> {
+        read_check(
+            run_tenet(root, &["status", "--json"])?,
+            code,
+            "mechanical_evidence",
+        )
+    };
+    let run = ["check", "--final", "--contract", "values", "--json"];
+    let failed = check_final(&run, 1_i32)?;
     assert_eq!(failed["check"], "zero");
     assert_eq!(failed["finding"]["case"], "zero");
-    assert_eq!(failed["replay"], "tenet check --local values/zero --fresh");
-    assert_eq!(check(&run, 1_i32)?["reused"], true);
+    assert_eq!(
+        failed["replay"],
+        "tenet check --final --contract values --fresh"
+    );
+    assert_eq!(check_final(&run, 1_i32)?["reused"], true);
     write_file(root, "src/value.txt", "0")?;
-    assert_eq!(check(&["status", "--json"], 4_i32)?["freshness"], "stale");
-    assert_eq!(check(&run, 0_i32)?["reused"], false);
+    assert_eq!(check_status(4_i32)?["freshness"], "stale");
+    assert_eq!(check_final(&run, 0_i32)?["reused"], false);
     write_file(root, "unrelated.md", "no change to the check")?;
-    assert_eq!(check(&run, 0_i32)?["reused"], true);
+    assert_eq!(check_final(&run, 0_i32)?["reused"], true);
     write_file(root, "src/new.txt", "new subject")?;
     assert_eq!(
-        check(&status, 4_i32)?["reason"],
+        check_status(4_i32)?["reason"],
         "discovered input set changed"
     );
-    assert_eq!(check(&run, 0_i32)?["reused"], false);
+    assert_eq!(check_final(&run, 0_i32)?["reused"], false);
     assert_eq!(
-        check(&["check", "--local", "--fresh", "--json"], 0_i32)?["reused"],
+        check_final(&["check", "--final", "--fresh", "--json"], 0_i32)?["reused"],
         false
     );
     Ok(())
@@ -171,7 +178,8 @@ echo '{"outcome":"pass","message":"asserted before edit"}'"#,
         "clean",
         r#"echo '{"outcome":"pass","message":"completed"}'"#,
     )?;
-    let output = run_tenet(root, &["check", "--local", "--json"])?;
+    let provider = Provider::start(&[], "no_match")?;
+    let output = provider.run_tenet(root, &["check", "--final", "--json"])?;
     let report: Value = serde_json::from_slice(&output.stdout)?;
     let rows = &report["checks"];
     assert_eq!(output.status.code(), Some(4_i32));

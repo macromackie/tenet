@@ -1,4 +1,4 @@
-use tenet_engine::{CheckResult, Event, Stage, Status};
+use tenet_engine::{CheckResult, ConclusionReason, Event, Stage, Status};
 
 use super::Reporter;
 
@@ -66,6 +66,8 @@ impl Reporter<'_> {
             self.track_request(conclusion.request.as_ref());
             self.track_failure(conclusion.failure);
             self.summary.cached += usize::from(conclusion.cached);
+            self.oversized_combined +=
+                usize::from(conclusion.reason_code == ConclusionReason::ContextTooLarge);
         }
     }
 
@@ -113,7 +115,16 @@ impl Reporter<'_> {
             Status::NotApplicable => self.summary.not_applicable += 1,
             Status::Uncertain => self.summary.uncertain += 1,
             Status::Error => self.summary.errors += 1,
-            Status::Incomplete => self.summary.incomplete += 1,
+            Status::Incomplete => {
+                self.summary.incomplete += 1;
+                if result
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("input was not truncated"))
+                {
+                    self.oversized_files += 1;
+                }
+            },
             Status::Skipped => self.summary.skipped += 1,
         }
     }

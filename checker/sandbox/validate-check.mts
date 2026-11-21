@@ -87,17 +87,42 @@ function readTarget({ fields, files }: Input): Omit<Check, 'defect' | 'good' | '
   };
 }
 
+type DistinctControlsInput = Pick<Check, 'defect' | 'good' | 'refactor'>;
+
+function assertDistinctControls({ defect, good, refactor }: DistinctControlsInput): void {
+  if (good === refactor && good !== defect) {
+    throw new CheckerError({
+      message:
+        'refactor matched good; rewrite refactor as a distinct behavior-preserving edit (for example, extract a helper or invert the condition)',
+    });
+  }
+
+  if (good === defect || refactor === defect) {
+    throw new CheckerError({ message: 'qualification requires three distinct alternatives' });
+  }
+}
+
 function readControls({ fields, source }: ControlInput): Pick<Check, 'defect' | 'good' | 'refactor'> {
   const rawGood = fields.get('good');
   const rawDefect = fields.get('defect');
   const rawRefactor = fields.get('refactor');
-  const good = applyControl({ control: rawGood, limit: MAX_FIELD_BYTES, source });
-  const defect = applyControl({ control: rawDefect, limit: MAX_FIELD_BYTES, source });
-  const refactor = applyControl({ control: rawRefactor, limit: MAX_FIELD_BYTES, source });
+  const good = applyControl({ control: rawGood, label: 'good', limit: MAX_FIELD_BYTES, source });
 
-  if (good === defect || refactor === defect || good === refactor) {
-    throw new CheckerError({ message: 'qualification requires three distinct alternatives' });
-  }
+  const defect = applyControl({
+    control: rawDefect,
+    label: 'defect',
+    limit: MAX_FIELD_BYTES,
+    source,
+  });
+
+  const refactor = applyControl({
+    control: rawRefactor,
+    label: 'refactor',
+    limit: MAX_FIELD_BYTES,
+    source,
+  });
+
+  assertDistinctControls({ defect, good, refactor });
 
   return { defect, good, refactor };
 }

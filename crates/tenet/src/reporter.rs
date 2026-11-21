@@ -16,7 +16,7 @@ use std::{
 use console::Term;
 use state::ContractProgress;
 use tenet_contracts::Contract;
-use tenet_engine::{Event, Summary};
+use tenet_engine::{ContextProfile, Event, Summary};
 
 use crate::{
     cli::ReporterKind,
@@ -56,6 +56,13 @@ pub(crate) struct Reporter<'check> {
     /// Contract documents the diff deletes, listed with the summary.
     deleted: Vec<PathBuf>,
     diff: bool,
+    /// The run's context profile, used to recommend `--context-profile long` when standard hits
+    /// limits.
+    context_profile: ContextProfile,
+    /// File pairs left incomplete because their encoded input exceeded the input limit.
+    oversized_files: usize,
+    /// Contracts whose combined assessment stayed over the input limit.
+    oversized_combined: usize,
     /// The run's confidence threshold, shown beside an unresolved answer that fell short of it.
     min_confidence: f64,
 }
@@ -92,6 +99,9 @@ impl<'check> Reporter<'check> {
             recorded: 0,
             deleted: Vec::new(),
             diff: false,
+            context_profile: ContextProfile::Standard,
+            oversized_files: 0,
+            oversized_combined: 0,
             min_confidence: tenet_engine::MIN_CONFIDENCE,
         }
     }

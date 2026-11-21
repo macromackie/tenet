@@ -4,19 +4,6 @@ import type { Finding } from '../../types.d.mts';
 import { buildOpenFinding } from '../build-open-finding.mts';
 import type { Context } from './receipt.mts';
 
-function isCurrentReceipt(input: Context): boolean {
-  const { evaluation } = input;
-  const { base, current, saved, tools } = evaluation;
-
-  if (saved === undefined || saved.base !== base) {
-    return false;
-  }
-
-  return (
-    saved.tools === tools && saved.observed === current.observed && saved.shape === current.shape
-  );
-}
-
 function isCurrentPin(ctx: Context) {
   const candidate = Option.fromUndefinedOr(ctx.pin);
   const serialized = Option.map(candidate, (pin) => JSON.stringify(pin));
@@ -25,14 +12,29 @@ function isCurrentPin(ctx: Context) {
   return ctx.evaluation.saved?.signature === Option.getOrUndefined(signature);
 }
 
-function isReusable(ctx: Context): boolean {
-  const { saved } = ctx.evaluation;
+function isCurrentReceipt(input: Context): boolean {
+  const { evaluation } = input;
+  const { base, current, saved, tools } = evaluation;
 
-  if (!isCurrentReceipt(ctx) || saved === undefined) {
+  if (saved === undefined || saved.base !== base) {
     return false;
   }
 
-  if (!isCurrentPin(ctx)) {
+  if (saved.tools !== tools || saved.observed !== current.observed) {
+    return false;
+  }
+
+  if (saved.shape === current.shape) {
+    return true;
+  }
+
+  return saved.signature !== undefined && isCurrentPin(input);
+}
+
+function isReusable(ctx: Context): boolean {
+  const { saved } = ctx.evaluation;
+
+  if (!isCurrentReceipt(ctx) || saved === undefined || !isCurrentPin(ctx)) {
     return false;
   }
 
@@ -44,7 +46,7 @@ function isReusable(ctx: Context): boolean {
     return false;
   }
 
-  return ctx.matching;
+  return ctx.job.request.inspect === true || ctx.matching;
 }
 
 /** Reuse only fresh evidence bound to the same observed files and tools. */

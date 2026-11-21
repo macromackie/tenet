@@ -1,23 +1,30 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CheckerError } from '../checker-error.mts';
 import type { Check } from '../types.d.mts';
 import { type Execution, runFile } from './host-tool.mts';
 import { createLinuxSandbox } from './linux-sandbox.mts';
 import { createMacosSandbox, type SandboxCommand } from './macos-sandbox.mts';
+import { type ProjectDeps, resolveProjectDeps } from './project-deps.mts';
 
 type SandboxInput = Readonly<{
   check: Check;
   files: ReadonlyMap<string, string>;
   probeTmp: string;
+  projectRoot?: string;
   work: string;
 }>;
 
-type Probe = Readonly<{ check: Check; command: SandboxCommand }>;
+type Probe = Readonly<{ check: Check; command: SandboxCommand; deps: ProjectDeps }>;
 
 type AssertionInput = Readonly<{ result: Execution; runtime: Check['runtime'] }>;
 
-type FailureInput = Readonly<{ base: string; stderr: string }>;
+type FailureInput = Readonly<{
+  base: string;
+  deps?: ProjectDeps;
+  runtime?: Check['runtime'];
+  stderr: string;
+}>;
 
 const PROBE_TIMEOUT_MS = 15_000;
 const RUST_PROBE_TIMEOUT_MS = 30_000;
@@ -26,8 +33,14 @@ const DIAGNOSTIC_LINES = 2;
 const DIAGNOSTIC_CHARS = 240;
 const ASCII_SPACE = 32;
 const ASCII_DEL = 127;
-const DIAGNOSTIC_FOOTER = /^(?:error: aborting due to |For more information about this error)/v;
-const DIAGNOSTIC_ERROR = /^error(?:\[|:)/v;
+
+const DIAGNOSTIC_FOOTER =
+  /^(?:error: aborting due to |For more information about this error|Node\.js v\d)/v;
+
+const DIAGNOSTIC_ERROR =
+  /^(?:error(?:\[|:)|Error\b|TypeError:|RangeError:|ReferenceError:|SyntaxError:|URIError:|EvalError:|ModuleNotFoundError:|ImportError:|AttributeError:|ValueError:|KeyError:|AssertionError:|NameError:|RuntimeError:|ZeroDivisionError:|FileNotFoundError:|OSError:|Exception:)/v;
+
+const RUST_MISSING_CRATE_PATTERN = /error\[E04(?:32|63)\]/v;
 
 const PROBE_FILES = {
   node: '.tenet-observe.mjs',
@@ -100,30 +113,72 @@ function summarizeDiagnostic(stderr: string): string {
   return summary.slice(0, DIAGNOSTIC_CHARS);
 }
 
-function formatFailure({ base, stderr }: FailureInput): string {
-  const detail = summarizeDiagnostic(stderr);
+type MissingDepHintInput = Readonly<{
+  deps?: ProjectDeps;
+  runtime?: Check['runtime'];
+  stderr: string;
+}>;
 
-  if (detail.length === 0) {
-    return base;
+type NodeModulesStageInput = Readonly<{ deps: ProjectDeps; work: string }>;
+
+type AssertCompletedInput = Readonly<{
+  deps: ProjectDeps;
+  result: Execution;
+  runtime: Check['runtime'];
+}>;
+
+function readMissingDepHint({ deps, runtime, stderr }: MissingDepHintInput): string {
+  if (runtime === 'rust' && deps?.rustDepsDir === undefined && RUST_MISSING_CRATE_PATTERN.test(stderr)) {
+    return ' (run cargo build locally so compiled crate deps exist in target/debug/deps)';
   }
 
-  return `${base}: ${detail}`;
+  return '';
 }
+
+function formatFailure({ base, deps, runtime, stderr }: FailureInput): string {
+  const detail = summarizeDiagnostic(stderr);
+  const hint = readMissingDepHint({ deps, runtime, stderr });
+
+  if (detail.length === 0) {
+    return `${base}${hint}`;
+  }
+
+  return `${base}: ${detail}${hint}`;
+}
+
+async function createNodeModulesLink({ deps, work }: NodeModulesStageInput): Promise<void> {
+  if (deps.nodeModules === undefined) {
+    return;
+  }
+
+  const target = join(work, 'node_modules');
+
+  if (process.platform === 'darwin') {
+    await symlink(deps.nodeModules, target, 'dir');
+
+    return;
+  }
+
+  await mkdir(target, { recursive: true });
+}
+
+type BuildCommandInput = SandboxInput & Readonly<{ deps: ProjectDeps }>;
 
 async function buildCommand({
   check,
+  deps,
   files,
   probeTmp,
   work,
-}: SandboxInput): Promise<SandboxCommand> {
+}: BuildCommandInput): Promise<SandboxCommand> {
   const entry = probeFile(check.runtime);
 
   if (process.platform === 'darwin') {
-    return await createMacosSandbox({ check, files, probeFile: entry, probeTmp, work });
+    return await createMacosSandbox({ check, deps, files, probeFile: entry, probeTmp, work });
   }
 
   if (process.platform === 'linux') {
-    return await createLinuxSandbox({ check, files, probeFile: entry, work });
+    return await createLinuxSandbox({ check, deps, files, probeFile: entry, work });
   }
 
   throw new CheckerError({
@@ -182,7 +237,7 @@ function isPassing({ result, runtime }: AssertionInput): boolean {
   throw new CheckerError({ message });
 }
 
-function assertCompleted(result: Execution): void {
+function assertCompleted({ deps, result, runtime }: AssertCompletedInput): void {
   if (result.status !== 0 && result.stderr.startsWith('bwrap: Unknown option --size')) {
     throw new CheckerError({
       message: 'install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit',
@@ -194,6 +249,8 @@ function assertCompleted(result: Execution): void {
 
     const message = formatFailure({
       base: `the isolated test exited with status ${code}`,
+      deps,
+      runtime,
       stderr: result.stderr,
     });
 
@@ -214,7 +271,7 @@ async function runProbe(probe: Probe): Promise<unknown> {
     return isPassing({ result, runtime: probe.check.runtime });
   }
 
-  assertCompleted(result);
+  assertCompleted({ deps: probe.deps, result, runtime: probe.check.runtime });
 
   const observed: unknown = JSON.parse(result.stdout);
 
@@ -223,7 +280,10 @@ async function runProbe(probe: Probe): Promise<unknown> {
 
 /** Stage the test and return an isolated observation that can be replayed against each control. */
 export async function createSandbox(input: SandboxInput): Promise<() => Promise<unknown>> {
-  const { check, work } = input;
+  const { check, projectRoot, work } = input;
+  const deps = await resolveProjectDeps({ projectRoot, runtime: check.runtime });
+
+  await createNodeModulesLink({ deps, work });
 
   if (check.test !== undefined) {
     const entry = probeFile(check.runtime);
@@ -232,7 +292,7 @@ export async function createSandbox(input: SandboxInput): Promise<() => Promise<
     await writeFile(targetPath, check.test, { flag: 'wx' });
   }
 
-  const command = await buildCommand(input);
+  const command = await buildCommand({ ...input, deps });
 
-  return async () => await runProbe({ check, command });
+  return async () => await runProbe({ check, command, deps });
 }

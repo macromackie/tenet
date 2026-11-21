@@ -297,6 +297,20 @@ const OBSERVATION_PATTERNS: &[(&str, &[&str], &[&str])] = &[
         &["os.fspath", "PathLike", ".casefold(", "FromStr"],
     ),
     (
+        "idempotent source transformations",
+        &["idempotent", "transformation"],
+        &[
+            "TokenStream",
+            "tokenize.",
+            "import tokenize",
+            "ast.parse(",
+            "format_code(",
+            "sort_code(",
+            "sort_imports(",
+            "pretty_print(",
+        ],
+    ),
+    (
         "broad Python exception propagation handler",
         &[],
         &["except Exception", "except:"],

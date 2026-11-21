@@ -33,9 +33,9 @@ Beside it, create `checks/preserve-zero.json`. The arguments select the project'
 ```
 
 ```sh
-tenet check --local options/preserve-zero
-tenet check --local options/preserve-zero --fresh
-tenet status --local --json
+tenet check --final --contract options
+tenet check --final --contract options --fresh
+tenet status --json
 ```
 
 The first command reports the checker's diagnostic. Repair the implementation and use the second command to replay it.
@@ -73,7 +73,7 @@ A tool that cannot start, malformed checker output, an exceeded limit, or inputs
 
 Set `"cache": true` only for reproducible checks. Include test helpers, rule files, tool configuration, and runtime dependency locks in `inputs`. Tenet matches each glob against project discovery from the root. Each pattern must match and at least one input must be governed by the contract. Tenet compares the contract, binding, resolved executable and its bytes, discovered paths, and file contents. A changed dependency makes the prior observation stale. Environment variables, installed plugins, external services, and transitive tools need separate control by the project. Leave caching off when those can change the result. A fresh run always executes the check. Unresolved observations are retried.
 
-Local observations live under the review state directory. `tenet status` includes them after the first run. Its exit code continues to describe the semantic review. `tenet check --local` provides a separate gate for the selected executable claims. Exit 0 means all passed, 1 indicates a current failure, 2 indicates a command or state error, 3 indicates unresolved evidence, and 4 indicates missing or stale evidence or an empty selection of declarations. Pending evidence takes precedence over current failures, and failures take precedence over unresolved observations. A passing example establishes only the claim it exercises. For independently produced evidence, see [mechanical receipts](./cli.md#mechanical-evidence).
+Local observations live under the review state directory. `tenet status` includes them after the first run. Its exit code continues to describe the review. Run `tenet check --final` (with model credentials configured) to execute semantic review and declared project checks together. A passing example establishes only the claim it exercises. For independently produced evidence, see [mechanical receipts](./cli.md#mechanical-evidence).
 
 ## Apply native fixes
 

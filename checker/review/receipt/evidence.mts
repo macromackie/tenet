@@ -36,7 +36,7 @@ async function isFailingAtBase({ evaluation, check }: IsFailingAtBaseInput): Pro
     return false;
   }
 
-  const old = await observe({ check, files: base, qualify: false });
+  const old = await observe({ check, files: base, projectRoot: evaluation.root, qualify: false });
 
   return !old.passed;
 }
@@ -63,6 +63,7 @@ async function observeOne(input: Invocation): Promise<Finding> {
   const result = await observe({
     check,
     files: evaluation.current.runtimeFiles,
+    projectRoot: evaluation.root,
     qualify: !qualified,
   });
 

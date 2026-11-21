@@ -98,10 +98,6 @@ pub(crate) enum Command {
     Fix(Fix),
     /// Show which contracts are settled and which are pending, without calling a model.
     Status {
-        /// Inspect project check evidence only. Optionally select CONTRACT/NAME.
-        #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "CONTRACT/NAME",
-              conflicts_with_all = ["base", "evidence", "prune_cache"])]
-        local: Option<String>,
         /// Report the diff review against this commit instead of the latest check's review.
         #[arg(long)]
         base: Option<String>,

@@ -1,15 +1,52 @@
+use alloc::collections::BTreeSet;
 use std::io;
 
 use serde_json::json;
-use tenet_checks::mechanical::{self, Freshness, Outcome};
+use tenet_checks::{
+    behavior::{Finding, Outcome as BehaviorOutcome},
+    mechanical::{self, Freshness, Outcome},
+};
+use tenet_engine::review::CurrentContract;
 
 use crate::{
     cli::ExitStatus,
     error::CommandError,
     output,
     report_format::{format_dim, format_display, format_marker, format_painted},
-    review::STATUS_VERSION,
+    review::{STATUS_VERSION, find_model, format_state_text},
 };
+
+pub(super) fn collect_failed_behavior_contracts(rows: &[Finding]) -> BTreeSet<&str> {
+    rows.iter()
+        .filter(|row| row.outcome == BehaviorOutcome::Failed)
+        .map(|row| row.contract.as_str())
+        .collect()
+}
+
+pub(super) fn format_contract_row_state(
+    entry: &CurrentContract<'_>,
+    behavior_failed_contracts: &BTreeSet<&str>,
+) -> (&'static str, String) {
+    if !behavior_failed_contracts.contains(entry.contract.name.as_str()) {
+        return format_state_text(entry);
+    }
+    let note = match find_model(entry).and_then(|verdict| verdict.violation) {
+        Some(probability) => {
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                clippy::float_arithmetic,
+                reason = "Model violation probability is bounded in [0.0, 1.0] before percentage \
+                          formatting."
+            )]
+            let percent = (probability.clamp(0.0_f64, 1.0_f64) * 100.0_f64).round() as u8;
+            format!("behavior failed \u{b7} model {percent}%")
+        },
+        None => "behavior failed".into(),
+    };
+    ("FAIL", note)
+}
 
 const fn label_freshness(freshness: Freshness) -> &'static str {
     match freshness {

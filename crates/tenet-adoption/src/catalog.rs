@@ -2,6 +2,8 @@
 
 mod profile;
 mod surface;
+#[cfg(test)]
+mod tests;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use core::cmp::Reverse;

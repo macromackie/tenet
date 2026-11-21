@@ -10,7 +10,8 @@ use alloc::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tenet_engine::{Plan, review::Checked};
+use tenet_contracts::Contract;
+use tenet_engine::{Plan, Status, review::Checked};
 
 /// Observation outcome reported by one executable behavior check.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -65,7 +66,9 @@ enum Operation<'plan> {
         checked: &'plan Checked,
         known: &'plan [Finding],
     },
-    Inspect,
+    Inspect {
+        decisions: Option<&'plan BTreeMap<String, Status>>,
+    },
 }
 
 /// Generate, qualify, and replay behavior checks for contracts touched by `plan`.
@@ -97,15 +100,26 @@ pub fn assess(
 #[inline]
 #[must_use]
 pub fn inspect(plan: &Plan, state: &Path) -> Vec<Finding> {
-    run(plan, state, &Operation::Inspect, None)
+    run(plan, state, &Operation::Inspect { decisions: None }, None)
 }
 
-fn run(
+/// Inspect cached behavior-check receipts using stored per-file semantic review decisions so
+/// discovery matches the file selection recorded when `check` wrote the receipt.
+#[inline]
+#[must_use]
+pub fn inspect_with_decisions(
     plan: &Plan,
     state: &Path,
-    operation: &Operation<'_>,
-    on_progress: Option<&mut dyn FnMut(&str)>,
+    decisions: Option<&BTreeMap<String, Status>>,
 ) -> Vec<Finding> {
+    run(plan, state, &Operation::Inspect { decisions }, None)
+}
+
+fn select_scopes<'plan>(
+    plan: &'plan Plan,
+    state: &Path,
+    operation: &Operation<'_>,
+) -> BTreeMap<&'plan str, &'plan Contract> {
     let mut scopes = BTreeMap::new();
     for contract in &plan.contracts {
         // Unchanged, unrelated packages never become visible on a PR or a selected-path check.
@@ -121,13 +135,23 @@ fn run(
         }
         let _prior = scopes.insert(contract.name.as_str(), contract);
     }
-    if matches!(operation, Operation::Inspect) && !state.join("agent-checks").exists() {
+    if matches!(operation, Operation::Inspect { .. }) && !state.join("agent-checks").exists() {
         scopes.retain(|_, contract| {
             plan.root
                 .join(contract.path.with_file_name("agent-checks.lock.json"))
                 .exists()
         });
     }
+    scopes
+}
+
+fn run(
+    plan: &Plan,
+    state: &Path,
+    operation: &Operation<'_>,
+    on_progress: Option<&mut dyn FnMut(&str)>,
+) -> Vec<Finding> {
+    let scopes = select_scopes(plan, state, operation);
     if scopes.is_empty() {
         return Vec::new();
     }

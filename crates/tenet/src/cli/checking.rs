@@ -19,20 +19,8 @@ pub(crate) struct Check {
     #[command(flatten)]
     pub input: Input,
     /// Check the full scope even in pull request CI.
-    #[arg(long, conflicts_with_all = ["base", "snapshot", "local", "qualify"])]
+    #[arg(long, conflicts_with_all = ["base", "snapshot", "qualify"])]
     pub full: bool,
-    /// Run trusted project checks without a model. Optionally select CONTRACT/NAME.
-    #[arg(
-        hide_short_help = true,
-        help_heading = "Project checks",
-        long,
-        num_args = 0..=1,
-        default_missing_value = "",
-        value_name = "CONTRACT/NAME",
-          conflicts_with_all = ["paths", "base", "snapshot", "patch", "contract", "context",
-                                "dry_run", "context_profile", "max_requests", "jobs",
-                                "contract_batch_size", "min_confidence", "reporter"])]
-    pub local: Option<String>,
     /// Exercise a project checker against declared good, defective and refactored controls.
     #[arg(
         hide_short_help = true,
@@ -40,13 +28,13 @@ pub(crate) struct Check {
         long,
         value_name = "CONTRACT/NAME",
         conflicts_with = "final_check",
-          conflicts_with_all = ["local", "paths", "base", "snapshot", "patch", "contract",
+          conflicts_with_all = ["paths", "base", "snapshot", "patch", "contract",
                                 "context", "dry_run", "fresh", "context_profile",
                                 "max_requests", "jobs", "contract_batch_size", "min_confidence",
                                 "reporter"])]
     pub qualify: Option<String>,
     /// Verify the final selected source with both semantic review and trusted project checks.
-    #[arg(long = "final", conflicts_with_all = ["local", "dry_run", "snapshot", "patch"])]
+    #[arg(long = "final", conflicts_with_all = ["dry_run", "snapshot", "patch"])]
     pub final_check: bool,
     /// Verify receipts from a trusted external checker runner instead of executing project code.
     #[arg(

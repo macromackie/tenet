@@ -8,12 +8,23 @@ type PythonPathsInput = Readonly<{
   root: string;
 }>;
 
-function readSourceFolder(path: string): Option.Option<string> {
+type SourceFolderInput = Readonly<{
+  files: ReadonlyMap<string, string>;
+  path: string;
+}>;
+
+function isPackageDirectory({ files, path }: SourceFolderInput): boolean {
+  const initPath = posix.join(path, '__init__.py');
+
+  return files.has(initPath);
+}
+
+function readSourceFolder({ files, path }: SourceFolderInput): Option.Option<string> {
   if (path.endsWith('/__init__.py')) {
     const pkg = dirname(path);
     const parent = dirname(pkg);
 
-    if (!ROOT_SEGMENTS.has(parent)) {
+    if (!ROOT_SEGMENTS.has(parent) && !isPackageDirectory({ files, path: parent })) {
       return Option.some(parent);
     }
 
@@ -27,12 +38,12 @@ function readSourceFolder(path: string): Option.Option<string> {
   return Option.none();
 }
 
-/** Build a PYTHONPATH covering the staged checkout root and any nested Python package roots. */
+/** Build a PYTHONPATH covering the staged checkout root and any nested Python source roots. */
 export function readPythonPaths({ files, root }: PythonPathsInput): string {
   const extraFolders = new Set<string>();
 
   for (const path of files.keys()) {
-    const folder = readSourceFolder(path);
+    const folder = readSourceFolder({ files, path });
 
     if (Option.isSome(folder)) {
       extraFolders.add(folder.value);

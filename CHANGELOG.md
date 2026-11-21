@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.22.0
+
+- Removed `--local` from `tenet check` and `tenet status` so `tenet check` always requires model credentials (`OPENROUTER_API_KEY` or a configured provider) and never poses as an offline substitute for semantic review. Declared project checks (`checks/NAME.json`) continue to run inside `tenet check --final` alongside semantic review.
+- Fixed `tenet status` on large and `decisions`-filtered repositories so valid `.tenet/agent-checks/` behavior receipts are preserved across `status` lookups, and surfaced verified behavioral failures directly on contract summary rows (`× <contract> fail · behavior failed · model X%`, suppressing contradictory `leans no violation` notes, plus `"behavior_failed": true` in `--json`).
+- Mounted canonicalized in-root project dependencies (`node_modules`, `.venv` `site-packages`, and prebuilt Rust artifacts in `target/debug/deps`) read-only inside macOS Seatbelt and Linux `bubblewrap` behavior-check sandboxes without running package installs or Cargo build scripts, while blocking out-of-root symlinks, dependency writes, and sibling host reads.
+- Improved behavior-check error diagnostics to extract real Node, Python, and Rust errors (`ERR_MODULE_NOT_FOUND`, `ModuleNotFoundError`, `E0432`/`E0463` with `cargo build` hints) instead of runtime version banners, and skipped futile repair turns when an external dependency is missing.
+- Ranked behavior-check file discovery by overlap with contract names and backticked identifiers or filenames while down-ranking generated (`gen/`, `generated/`), compatibility (`_future/`, `compat/`), and vendor paths.
+- Normalized oversized (`>400` character) and structured-object `open` planner items instead of discarding valid candidate bundles, and added targeted single-control repair guidance when only `refactor` fails or collides with `good`.
+- Added formatter, AST, and tokenizer surface signals in `tenet contracts recommend` for the new `code-idempotent-transformations` catalog contract.
+
 ## v0.21.0
 
 - Raised host-tool discovery and sandbox preflight timeouts in the embedded checker worker (`rustc` and `python3` discovery from 5s to 20s; sandbox preflight from 5s to 15s) to eliminate cold-runner timeout flakes on Linux and macOS CI runners.

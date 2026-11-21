@@ -1,17 +1,11 @@
-import { Option, Result, Schema } from 'effect';
+import { Result } from 'effect';
 import type { CheckerError } from '../../checker-error.mts';
 import { classifyResult } from '../../classify-result.mts';
 import { observe, validate } from '../../sandbox/index.mts';
 import type { Check, Finding, Inventory } from '../../types.d.mts';
 import { buildFinding } from '../build-finding.mts';
 import { buildOpenFinding } from '../build-open-finding.mts';
-
-const MAX_CHECKS = 12;
-const MAX_OPEN_LENGTH = 400;
-const RawChecks = Schema.Array(Schema.Unknown);
-const OpenItems = Schema.Array(Schema.String);
-const RawBundle = Schema.Struct({ checks: RawChecks, open: OpenItems });
-const decodeRawBundle = Schema.decodeUnknownOption(RawBundle, { onExcessProperty: 'error' });
+import { decodePlannerBundle } from './decode-bundle.mts';
 
 export type CandidateEvaluation = Readonly<{
   errors: readonly string[];
@@ -23,6 +17,7 @@ export type CandidateEvaluation = Readonly<{
 type QualifyBundleInput = Readonly<{
   contractName: string;
   current: Inventory;
+  projectRoot?: string;
   value: unknown;
 }>;
 
@@ -34,7 +29,11 @@ type CheckLabelInput = Readonly<{ candidate: unknown; index: number }>;
 
 type ParseSingleInput = Readonly<{ files: Inventory['files']; raw: unknown }>;
 
-type QualifySingleInput = Readonly<{ check: Check; files: Inventory['runtimeFiles'] }>;
+type QualifySingleInput = Readonly<{
+  check: Check;
+  files: Inventory['runtimeFiles'];
+  projectRoot?: string;
+}>;
 
 type FailCandidateInput = Readonly<{
   check: string;
@@ -47,12 +46,14 @@ type RunCheckQualificationInput = Readonly<{
   candidate: Check;
   contractName: string;
   files: Inventory['runtimeFiles'];
+  projectRoot?: string;
 }>;
 
 type SingleInput = Readonly<{
   contractName: string;
   current: Inventory;
   index: number;
+  projectRoot?: string;
   raw: unknown;
   seenIds: ReadonlySet<string>;
 }>;
@@ -72,6 +73,7 @@ type QualifyListInput = Readonly<{
   contractName: string;
   current: Inventory;
   open: readonly string[];
+  projectRoot?: string;
   rawChecks: readonly unknown[];
 }>;
 
@@ -101,32 +103,6 @@ function buildEmptyError({ contractName, message }: EmptyErrorInput): CandidateE
   return { errors: [message], extraUnresolved: [warning], open: [], qualified: [] };
 }
 
-function isValidOpenItem(item: string): boolean {
-  const trimmed = item.trim();
-
-  return trimmed.length > 0 && trimmed.length <= MAX_OPEN_LENGTH;
-}
-
-type FindBundleProblemInput = Readonly<{ checks: readonly unknown[]; open: readonly string[] }>;
-
-function findBundleProblem({ checks, open }: FindBundleProblemInput): Option.Option<string> {
-  if (checks.length > MAX_CHECKS || open.length > MAX_CHECKS) {
-    return Option.some('checker plan exceeds the number of allowed checks');
-  }
-
-  if (checks.length === 0 && open.length === 0) {
-    return Option.some('checker plan returned neither checks nor open items');
-  }
-
-  if (!open.every((item) => isValidOpenItem(item))) {
-    return Option.some(
-      'checker plan open items must be non-empty strings of at most 400 characters',
-    );
-  }
-
-  return Option.none();
-}
-
 function parseSingle({ files, raw }: ParseSingleInput): Result.Result<Check, string> {
   function runValidate() {
     return validate({ check: raw, files });
@@ -138,9 +114,10 @@ function parseSingle({ files, raw }: ParseSingleInput): Result.Result<Check, str
 async function qualifySingle({
   check,
   files,
+  projectRoot,
 }: QualifySingleInput): Promise<Result.Result<Check, CheckerError>> {
   async function runQualification() {
-    await observe({ check, files, qualify: true, skipActual: true });
+    await observe({ check, files, projectRoot, qualify: true, skipActual: true });
 
     return check;
   }
@@ -169,8 +146,9 @@ async function runCheckQualification({
   candidate,
   contractName,
   files,
+  projectRoot,
 }: RunCheckQualificationInput): Promise<SingleOutcome> {
-  const result = await qualifySingle({ check: candidate, files });
+  const result = await qualifySingle({ check: candidate, files, projectRoot });
 
   if (Result.isSuccess(result)) {
     return { check: result.success, kind: 'qualified' };
@@ -190,6 +168,7 @@ async function checkCandidate({
   contractName,
   current,
   index,
+  projectRoot,
   raw,
   seenIds,
 }: SingleInput): Promise<SingleOutcome> {
@@ -211,7 +190,12 @@ async function checkCandidate({
     });
   }
 
-  return await runCheckQualification({ candidate, contractName, files: current.runtimeFiles });
+  return await runCheckQualification({
+    candidate,
+    contractName,
+    files: current.runtimeFiles,
+    projectRoot,
+  });
 }
 
 function recordOutcome({ outcome, state }: RecordOutcomeInput): ListState {
@@ -236,6 +220,7 @@ async function qualifyList({
   contractName,
   current,
   open,
+  projectRoot,
   rawChecks,
 }: QualifyListInput): Promise<CandidateEvaluation> {
   let state: ListState = {
@@ -252,6 +237,7 @@ async function qualifyList({
       contractName,
       current,
       index,
+      projectRoot,
       raw,
       seenIds: state.seenIds,
     });
@@ -271,25 +257,14 @@ async function qualifyList({
 export async function qualifyBundle({
   contractName,
   current,
+  projectRoot,
   value,
 }: QualifyBundleInput): Promise<CandidateEvaluation> {
-  const decoded = decodeRawBundle(value);
+  const decoded = decodePlannerBundle(value);
 
-  if (Option.isNone(decoded)) {
-    return buildEmptyError({
-      contractName,
-      message:
-        'the checker plan has invalid top-level fields; return { checks: [...], open: [...] }',
-    });
+  if (Result.isFailure(decoded)) {
+    return buildEmptyError({ contractName, message: decoded.failure });
   }
 
-  const problem = findBundleProblem(decoded.value);
-
-  if (Option.isSome(problem)) {
-    return buildEmptyError({ contractName, message: problem.value });
-  }
-
-  const { checks: rawChecks, open } = decoded.value;
-
-  return await qualifyList({ contractName, current, open, rawChecks });
+  return await qualifyList({ contractName, current, projectRoot, ...decoded.success });
 }

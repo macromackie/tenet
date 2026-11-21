@@ -1,7 +1,7 @@
 use std::{io::Write as _, path::Path};
 
 use anyhow::Context as _;
-use tenet_engine::{Mode, Plan, PreparedSnapshot, Review, Selection, Status};
+use tenet_engine::{ContextProfile, Mode, Plan, PreparedSnapshot, Review, Selection, Status};
 
 use crate::{
     cli::{Check, ExitStatus, ReporterKind},
@@ -74,6 +74,8 @@ pub(super) async fn report_dry_run(
     )
     .await?;
     let mut errors = 0;
+    // File pairs left incomplete because their encoded input exceeded the input limit.
+    let mut oversized_files = 0_usize;
     // Contracts whose combined input stays over the limit after reduction.
     let mut over_limit = 0_i32;
     for contract in &plan.contracts {
@@ -99,6 +101,7 @@ pub(super) async fn report_dry_run(
                 Err(error) => {
                     let (status, reason) = tenet_engine::classify_input_status(&error);
                     errors += usize::from(status == Status::Error);
+                    oversized_files += usize::from(status == Status::Incomplete);
                     (None, Vec::new(), Some((status, reason)))
                 },
             };
@@ -260,6 +263,15 @@ pub(super) async fn report_dry_run(
         )?;
         if let Some(coverage) = coverage {
             writeln!(output::open_stdout(), "{coverage}")?;
+        }
+        if plan.context_profile == ContextProfile::Standard
+            && (over_limit > 0_i32 || oversized_files > 0)
+        {
+            writeln!(
+                output::open_stdout(),
+                "Hint      rerun with --context-profile long to raise the input limit from 64 KiB \
+                 to 1 MiB"
+            )?;
         }
     }
     if unsent > budget {

@@ -57,7 +57,7 @@ fn selected_source_keeps_its_contract_samples_and_respects_discovery() -> anyhow
         .contracts
         .first()
         .ok_or_else(|| io::Error::other("missing contract"))?;
-    let input = request::build_contract_input(&plan, contract, None, &[]);
+    let input = request::build_contract_input(&plan, contract, None, None, &[]);
     anyhow::ensure!(
         input.get("paths") == Some(&json!(["options.ts"])),
         "unexpected governed paths: {input:?}"

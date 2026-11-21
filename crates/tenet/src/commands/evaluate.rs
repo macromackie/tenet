@@ -36,9 +36,6 @@ pub(super) async fn evaluate(
     if let Some(selector) = &check.qualify {
         return super::qualification::run(root, selector, check.run.json).await;
     }
-    if let Some(name) = &check.local {
-        return super::local::run(root, state, name, check.fresh, check.run.json).await;
-    }
     // The summary's duration covers the whole check, from discovery to the review update.
     let started = Instant::now();
     let (plan, selection, prepared) = prepare_check(root, check)?;

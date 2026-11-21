@@ -35,6 +35,7 @@ impl Reporter<'_> {
             Event::Begin { run } => {
                 self.started = Instant::now();
                 self.diff = run.base.is_some();
+                self.context_profile = run.context_profile;
                 self.deleted = run.deleted_contracts;
                 self.min_confidence = run.min_confidence;
                 if self.kind == ReporterKind::Verbose {

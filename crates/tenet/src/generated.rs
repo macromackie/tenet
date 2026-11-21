@@ -4,6 +4,7 @@ mod declared;
 mod native;
 mod render;
 
+use alloc::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -49,7 +50,18 @@ pub(crate) fn inspect(
     if include_local {
         rows.extend(declared::inspect(&plan, state)?);
     }
-    rows.extend(agent_checks::inspect(&plan, state));
+    let decisions = entry.assessment.map(|assessment| {
+        assessment
+            .results
+            .iter()
+            .map(|result| (result.path.clone(), result.status))
+            .collect::<BTreeMap<_, _>>()
+    });
+    rows.extend(agent_checks::inspect_with_decisions(
+        &plan,
+        state,
+        decisions.as_ref(),
+    ));
     Ok(rows)
 }
 

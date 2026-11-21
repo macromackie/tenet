@@ -3,7 +3,7 @@ mod checks;
 use std::{io::Write as _, path::Path};
 
 pub(crate) use checks::write_mechanical;
-use checks::write_unchecked;
+use checks::{collect_failed_behavior_contracts, format_contract_row_state, write_unchecked};
 use serde_json::json;
 use tenet_checks::mechanical;
 use tenet_engine::{
@@ -21,7 +21,6 @@ use super::{
     format_paths_note,
     format_row_name,
     format_selection_text,
-    format_state_text,
 };
 use crate::{
     cli::ExitStatus,
@@ -121,6 +120,7 @@ pub(crate) async fn report_status(
         .map(|entry| generated::inspect(root, state, entry, evidence.is_none()))
         .collect::<Result<Vec<_>, _>>()?;
     let generated: Vec<_> = observed.into_iter().flatten().collect();
+    let behavior_failed = collect_failed_behavior_contracts(&generated);
     let semantic = review::summarize_overall(current.contracts.iter().map(|entry| &entry.state));
     let status = ExitStatus::from(semantic.max(generated::summarize_status(&generated)));
     if json {
@@ -140,6 +140,8 @@ pub(crate) async fn report_status(
                     json!(find_model(entry).and_then(|verdict| verdict.violation));
                 value["model_answer"] = json!(find_model(entry).and_then(|verdict| verdict.answer));
                 value["min_confidence"] = json!(entry.min_confidence);
+                value["behavior_failed"] =
+                    json!(behavior_failed.contains(entry.contract.name.as_str()));
                 Ok(value)
             })
             .collect::<Result<Vec<_>, CommandError>>()?;
@@ -188,7 +190,7 @@ pub(crate) async fn report_status(
         .max()
         .unwrap_or(0);
     for entry in &current.contracts {
-        let (label, mut note) = format_state_text(entry);
+        let (label, mut note) = format_contract_row_state(entry, &behavior_failed);
         if !entry.selection.is_selecting(&current.latest.paths) {
             note.push_str(&format!(
                 " \u{b7} from r{} {}",
@@ -270,10 +272,13 @@ pub(crate) async fn report_status(
             " Next  {}",
             check_command(outdated.selection, contract)
         )?;
-    } else if let Some(first) = pending
-        .iter()
-        .max_by(|left, right| violation(left).total_cmp(&violation(right)))
-    {
+    } else if let Some(first) = pending.iter().max_by(|left, right| {
+        let left_failed = behavior_failed.contains(left.contract.name.as_str());
+        let right_failed = behavior_failed.contains(right.contract.name.as_str());
+        left_failed
+            .cmp(&right_failed)
+            .then_with(|| violation(left).total_cmp(&violation(right)))
+    }) {
         writeln!(
             out,
             " Next  tenet show {}",

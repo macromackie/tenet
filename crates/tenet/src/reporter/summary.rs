@@ -1,6 +1,6 @@
 use alloc::collections::BTreeMap;
 
-use tenet_engine::{Coverage, Summary};
+use tenet_engine::{ContextProfile, Coverage, Summary};
 
 use super::Reporter;
 use crate::{
@@ -34,6 +34,24 @@ fn format_tally(counts: &BTreeMap<&'static str, usize>) -> String {
         .collect::<Vec<_>>()
         .join(" \u{b7} ");
     format!("{breakdown} {}", format_dim(&format!("({total})")))
+}
+
+fn format_size_limit_hint(
+    profile: ContextProfile,
+    oversized_files: usize,
+    oversized_combined: usize,
+) -> Option<String> {
+    if profile != ContextProfile::Standard || (oversized_files == 0 && oversized_combined == 0) {
+        return None;
+    }
+    let scope = match (oversized_files, oversized_combined) {
+        (files, 0) => format!("{files} file check(s)"),
+        (0, combined) => format!("{combined} combined scope(s)"),
+        (files, combined) => format!("{files} file check(s) and {combined} combined scope(s)"),
+    };
+    Some(format!(
+        "{scope} exceeded the 64 KiB standard limit; rerun with --context-profile long"
+    ))
 }
 
 impl Reporter<'_> {
@@ -101,6 +119,14 @@ impl Reporter<'_> {
                 format_dim("   Review"),
                 format_dim(&format!("r{number} in {}", events.display()))
             ))?;
+        }
+        if let Some(hint) = format_size_limit_hint(
+            self.context_profile,
+            self.oversized_files,
+            self.oversized_combined,
+        ) {
+            self.term
+                .write_line(&format!("  {}  {hint}", format_dim("     Hint")))?;
         }
         let exit_note = format_dim(describe_exit_code(exit_code));
         match (pending.first(), revision.is_some(), exit_note.is_empty()) {
@@ -226,6 +252,13 @@ impl Reporter<'_> {
                 " Revision   r{saved_revision} in {}",
                 self.state.join("events.jsonl").display()
             ))?;
+        }
+        if let Some(hint) = format_size_limit_hint(
+            self.context_profile,
+            self.oversized_files,
+            self.oversized_combined,
+        ) {
+            self.term.write_line(&format!(" Hint       {hint}"))?;
         }
         if summary.cancelled {
             self.term

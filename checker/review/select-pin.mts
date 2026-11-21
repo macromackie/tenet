@@ -8,6 +8,9 @@ import type { Context } from './receipt/index.mts';
 
 const MAX_REPAIR_PREVIEW_CHARS = 32_768;
 
+const MISSING_DEP_PATTERN =
+  /ERR_MODULE_NOT_FOUND|ModuleNotFoundError|error\[E04(?:32|63)\]|target\/debug\/deps/v;
+
 export type Checked = {
   cache: boolean;
   pin: Pin;
@@ -82,14 +85,23 @@ async function generateOnce(input: GenerationCallInput): Promise<GeneratedAttemp
   const evaluated = await qualifyBundle({
     contractName: ctx.job.contract.name,
     current: ctx.evaluation.current,
+    projectRoot: ctx.evaluation.root,
     value: raw,
   });
 
   return { evaluated, raw };
 }
 
+function isUnrecoverableMissingDependency(errors: readonly string[]): boolean {
+  return errors.length > 0 && errors.every((error) => MISSING_DEP_PATTERN.test(error));
+}
+
 function shouldRepair(evaluated: CandidateEvaluation): boolean {
-  return evaluated.qualified.length === 0 && evaluated.errors.length > 0;
+  if (evaluated.qualified.length > 0 || evaluated.errors.length === 0) {
+    return false;
+  }
+
+  return !isUnrecoverableMissingDependency(evaluated.errors);
 }
 
 function buildSelectedPin({ ctx, evaluated }: BuildSelectedInput): SelectedPin {

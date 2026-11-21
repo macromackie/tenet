@@ -5,10 +5,8 @@ tenet init [--starter [NAME]] [--yes] [--scope DIR] [--json]
 tenet doctor [--json]
 tenet check
 tenet check --base origin/main
-tenet check --local [CONTRACT/NAME] [--fresh] [--json]
 tenet check --qualify CONTRACT/NAME [--json]
 tenet check --final [--evidence PATH] [--json]
-tenet status --local [CONTRACT/NAME] [--json]
 tenet status [--base REF] [--evidence PATH] [--json] [--prune-cache]
 tenet show NAME [PATH ...] [--json]
 tenet show --pending [--json]

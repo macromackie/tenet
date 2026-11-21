@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { CheckerError } from '../checker-error.mts';
 import type { Check } from '../types.d.mts';
+import type { ProjectDeps } from './project-deps.mts';
 import { readPythonPaths } from './python-paths.mts';
 import { readPythonTool } from './python-tool.mts';
 import { readRustTool } from './rust-tool.mts';
@@ -18,6 +19,7 @@ const NODE_FLAGS = [
 
 type MacosSandboxInput = Readonly<{
   check: Check;
+  deps: ProjectDeps;
   files: ReadonlyMap<string, string>;
   probeFile: string;
   probeTmp: string;
@@ -32,6 +34,7 @@ export type SandboxCommand = Readonly<{
 }>;
 
 type ProfileInput = Readonly<{
+  deps: ProjectDeps;
   probeTmp: string;
   runtimeRoot: string;
   work: string;
@@ -39,6 +42,7 @@ type ProfileInput = Readonly<{
 
 type ProgramInput = Readonly<{
   check: Check;
+  deps: ProjectDeps;
   probeFile: string;
   probeTmp: string;
 }>;
@@ -108,22 +112,43 @@ async function resolvePythonRuntime({ check, probeFile }: ProgramInput): Promise
   };
 }
 
-async function resolveRustRuntime({ probeFile, probeTmp }: ProgramInput): Promise<ResolvedRuntime> {
+function buildRustDepArgs(deps: ProjectDeps): readonly string[] {
+  const { rustDepsDir } = deps;
+
+  if (rustDepsDir === undefined) {
+    return [];
+  }
+
+  const externArgs = deps.rustExterns.flatMap(({ file, name }) => [
+    '--extern',
+    `${name}=${join(rustDepsDir, file)}`,
+  ]);
+
+  return ['-L', `dependency=${rustDepsDir}`, ...externArgs];
+}
+
+async function resolveRustRuntime({
+  deps,
+  probeFile,
+  probeTmp,
+}: ProgramInput): Promise<ResolvedRuntime> {
   const sysroot = await readRustTool('--print=sysroot');
   const resolved = await realpath(sysroot);
   const runtimeRoot = assertBoundedRuntimeRoot(resolved);
   const rustc = join(runtimeRoot, 'bin', 'rustc');
   const output = join(probeTmp, 'observe');
+  const depArgs = buildRustDepArgs(deps);
 
   return {
     command: [
       '/bin/sh',
       '-c',
-      '"$1" --edition=2021 --crate-name tenet_probe ./"$2" -o "$3" && exec "$3"',
+      'rustc="$1"; probe="$2"; out="$3"; shift 3; "$rustc" --edition=2021 --crate-name tenet_probe "$@" ./"$probe" -o "$out" && exec "$out"',
       'tenet-rust',
       rustc,
       probeFile,
       output,
+      ...depArgs,
     ],
     runtimeRoot,
   };
@@ -143,9 +168,27 @@ async function resolveRuntime(input: ProgramInput): Promise<ResolvedRuntime> {
   }
 }
 
-function buildSeatbeltProfile({ probeTmp, runtimeRoot, work }: ProfileInput): string {
-  const safeRuntime = escapeScheme(runtimeRoot);
-  const safeWork = escapeScheme(work);
+function collectReadOnlyDepPaths(deps: ProjectDeps): readonly string[] {
+  const paths: string[] = [];
+
+  if (deps.nodeModules !== undefined) {
+    paths.push(deps.nodeModules);
+  }
+
+  if (deps.pythonSitePackages !== undefined) {
+    paths.push(deps.pythonSitePackages);
+  }
+
+  if (deps.rustDepsDir !== undefined) {
+    paths.push(deps.rustDepsDir);
+  }
+
+  return paths;
+}
+
+function buildSeatbeltProfile({ deps, probeTmp, runtimeRoot, work }: ProfileInput): string {
+  const allowedReadPaths = [runtimeRoot, work, probeTmp, ...collectReadOnlyDepPaths(deps)];
+  const readRules = allowedReadPaths.map((entry) => `(subpath "${escapeScheme(entry)}")`).join(' ');
   const safeTmp = escapeScheme(probeTmp);
 
   return [
@@ -159,13 +202,14 @@ function buildSeatbeltProfile({ probeTmp, runtimeRoot, work }: ProfileInput): st
     '(allow file-read*)',
     '(allow file-map-executable)',
     '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath "/private/var/folders"))',
-    `(allow file-read-data (subpath "${safeRuntime}") (subpath "${safeWork}") (subpath "${safeTmp}"))`,
+    `(allow file-read-data ${readRules})`,
     `(allow file-write* (subpath "${safeTmp}") (literal "/dev/null") (literal "/dev/zero"))`,
     '(deny network*)',
   ].join('\n');
 }
 
 type SandboxEnvInput = Readonly<{
+  deps: ProjectDeps;
   files: ReadonlyMap<string, string>;
   probeTmp: string;
   runtime: Check['runtime'];
@@ -173,6 +217,7 @@ type SandboxEnvInput = Readonly<{
 }>;
 
 function buildSandboxEnv({
+  deps,
   files,
   probeTmp,
   runtime,
@@ -193,14 +238,19 @@ function buildSandboxEnv({
     return commonEnv;
   }
 
-  const pythonPath = readPythonPaths({ files, root: work });
+  const basePath = readPythonPaths({ files, root: work });
 
-  return { ...commonEnv, PYTHONPATH: pythonPath };
+  if (deps.pythonSitePackages === undefined) {
+    return { ...commonEnv, PYTHONPATH: basePath };
+  }
+
+  return { ...commonEnv, PYTHONPATH: `${basePath}:${deps.pythonSitePackages}` };
 }
 
 /** Build a macOS Seatbelt sandbox invocation with read-only source, private tmpdir and no network. */
 export async function createMacosSandbox({
   check,
+  deps,
   files,
   probeFile,
   probeTmp,
@@ -213,17 +263,20 @@ export async function createMacosSandbox({
 
   const { command, runtimeRoot } = await resolveRuntime({
     check,
+    deps,
     probeFile,
     probeTmp: canonicalTmp,
   });
 
   const profile = buildSeatbeltProfile({
+    deps,
     probeTmp: canonicalTmp,
     runtimeRoot,
     work: canonicalWork,
   });
 
   const env = buildSandboxEnv({
+    deps,
     files,
     probeTmp: canonicalTmp,
     runtime: check.runtime,
