@@ -2,9 +2,9 @@ import { access, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { env as hostEnvironment } from 'node:process';
 import { Result } from 'effect';
-import { CheckerError } from '../checker-error.mts';
-import { classifyResult } from '../classify-result.mts';
-import { runFile } from './host-tool.mts';
+import { CheckerError } from '../../checker-error.mts';
+import { classifyResult } from '../../classify-result.mts';
+import { runFile } from '../host-tool.mts';
 
 const SYSTEM_PYTHON = '/usr/bin/python3';
 const TOOL_TIMEOUT_MS = 20_000;

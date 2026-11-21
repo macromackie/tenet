@@ -1,21 +1,28 @@
 import { access, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
-import { CheckerError } from '../checker-error.mts';
-import type { Check } from '../types.d.mts';
-import type { ProjectDeps } from './project-deps.mts';
-import { readPythonPaths } from './python-paths.mts';
-import { readPythonTool } from './python-tool.mts';
-import { readRustTool } from './rust-tool.mts';
+import { dirname, join } from 'node:path';
+import { CheckerError } from '../../checker-error.mts';
+import type { Check } from '../../types.d.mts';
+import type { ProjectDeps } from '../project-deps.mts';
+import {
+  buildGoCommand,
+  buildGoEnv,
+  buildNodeCommand,
+  buildPythonCommand,
+  buildRustCommand,
+  readGoTool,
+  readPythonPaths,
+  readPythonTool,
+  readRustCrate,
+  readRustTool,
+} from '../runtimes/index.mts';
+import { buildSeatbeltProfile } from './macos-profile.mts';
 
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 const SYSTEM_PATH = '/usr/bin:/bin';
-
-const NODE_FLAGS = [
-  '--disable-wasm-trap-handler',
-  '--max-old-space-size=96',
-  '--v8-pool-size=2',
-] as const;
+const DEFAULT_CPU_LIMIT = '8';
+const COMPILED_CPU_LIMIT = '20';
+const COMPILED_RUNTIMES: ReadonlySet<string> = new Set(['go', 'rust']);
 
 type MacosSandboxInput = Readonly<{
   check: Check;
@@ -23,6 +30,7 @@ type MacosSandboxInput = Readonly<{
   files: ReadonlyMap<string, string>;
   probeFile: string;
   probeTmp: string;
+  projectRoot?: string;
   work: string;
 }>;
 
@@ -33,28 +41,29 @@ export type SandboxCommand = Readonly<{
   file: string;
 }>;
 
-type ProfileInput = Readonly<{
-  deps: ProjectDeps;
-  probeTmp: string;
-  runtimeRoot: string;
-  work: string;
-}>;
-
 type ProgramInput = Readonly<{
   check: Check;
   deps: ProjectDeps;
+  files: ReadonlyMap<string, string>;
   probeFile: string;
   probeTmp: string;
+  projectRoot?: string;
 }>;
 
 type ResolvedRuntime = Readonly<{
   command: readonly string[];
+  extraEnv?: Readonly<Record<string, string>>;
   runtimeRoot: string;
 }>;
 
-function escapeScheme(value: string): string {
-  return value.replaceAll('\\', String.raw`\\`).replaceAll('"', String.raw`\"`);
-}
+type SandboxEnvInput = Readonly<{
+  deps: ProjectDeps;
+  extraEnv?: Readonly<Record<string, string>>;
+  files: ReadonlyMap<string, string>;
+  probeTmp: string;
+  runtime: Check['runtime'];
+  work: string;
+}>;
 
 function assertBoundedRuntimeRoot(root: string): string {
   const userHome = homedir();
@@ -77,85 +86,60 @@ function readInstallRoot(binary: string): string {
 async function resolveNodeRuntime({ check, probeFile }: ProgramInput): Promise<ResolvedRuntime> {
   const binary = await realpath(process.execPath);
   const runtimeRoot = readInstallRoot(binary);
+  const command = buildNodeCommand({ binary, check, probeFile });
 
-  if (check.testFile === undefined) {
-    return { command: [binary, ...NODE_FLAGS, `./${probeFile}`], runtimeRoot };
-  }
-
-  return {
-    command: [binary, ...NODE_FLAGS, '--test', '--test-reporter=tap', '--', `./${check.testFile}`],
-    runtimeRoot,
-  };
+  return { command, runtimeRoot };
 }
 
 async function resolvePythonRuntime({ check, probeFile }: ProgramInput): Promise<ResolvedRuntime> {
   const binary = await readPythonTool();
   const runtimeRoot = readInstallRoot(binary);
+  const command = buildPythonCommand({ binary, check, probeFile });
 
-  if (check.testFile === undefined) {
-    return { command: [binary, '-B', `./${probeFile}`], runtimeRoot };
-  }
-
-  return {
-    command: [
-      binary,
-      '-B',
-      '-m',
-      'unittest',
-      'discover',
-      '-s',
-      `./${dirname(check.testFile)}`,
-      '-p',
-      basename(check.testFile),
-    ],
-    runtimeRoot,
-  };
-}
-
-function buildRustDepArgs(deps: ProjectDeps): readonly string[] {
-  const { rustDepsDir } = deps;
-
-  if (rustDepsDir === undefined) {
-    return [];
-  }
-
-  const externArgs = deps.rustExterns.flatMap(({ file, name }) => [
-    '--extern',
-    `${name}=${join(rustDepsDir, file)}`,
-  ]);
-
-  return ['-L', `dependency=${rustDepsDir}`, ...externArgs];
+  return { command, runtimeRoot };
 }
 
 async function resolveRustRuntime({
   deps,
+  files,
   probeFile,
   probeTmp,
+  projectRoot,
 }: ProgramInput): Promise<ResolvedRuntime> {
   const sysroot = await readRustTool('--print=sysroot');
   const resolved = await realpath(sysroot);
   const runtimeRoot = assertBoundedRuntimeRoot(resolved);
   const rustc = join(runtimeRoot, 'bin', 'rustc');
-  const output = join(probeTmp, 'observe');
-  const depArgs = buildRustDepArgs(deps);
+  const rustCrate = await readRustCrate({ files, projectRoot });
+  const depsMount = deps.rustDepsDir ?? '';
+  const command = buildRustCommand({ deps, depsMount, probeFile, probeTmp, rustCrate, rustc });
 
-  return {
-    command: [
-      '/bin/sh',
-      '-c',
-      'rustc="$1"; probe="$2"; out="$3"; shift 3; "$rustc" --edition=2021 --crate-name tenet_probe "$@" ./"$probe" -o "$out" && exec "$out"',
-      'tenet-rust',
-      rustc,
-      probeFile,
-      output,
-      ...depArgs,
-    ],
-    runtimeRoot,
-  };
+  return { command, runtimeRoot };
+}
+
+async function resolveGoRuntime({
+  deps,
+  files,
+  probeFile,
+  probeTmp,
+}: ProgramInput): Promise<ResolvedRuntime> {
+  const rawGoroot = await readGoTool(['env', 'GOROOT']);
+  const canonicalGoroot = await realpath(rawGoroot);
+  const runtimeRoot = assertBoundedRuntimeRoot(canonicalGoroot);
+  const binary = join(runtimeRoot, 'bin', 'go');
+  const probeDir = dirname(probeFile);
+  const output = join(probeTmp, 'observe');
+  const command = buildGoCommand({ binary, deps, files, output, probeDir });
+  const extraEnv = buildGoEnv({ goroot: runtimeRoot, probeTmp });
+
+  return { command, extraEnv, runtimeRoot };
 }
 
 async function resolveRuntime(input: ProgramInput): Promise<ResolvedRuntime> {
   switch (input.check.runtime) {
+    case 'go': {
+      return await resolveGoRuntime(input);
+    }
     case 'node': {
       return await resolveNodeRuntime(input);
     }
@@ -168,56 +152,9 @@ async function resolveRuntime(input: ProgramInput): Promise<ResolvedRuntime> {
   }
 }
 
-function collectReadOnlyDepPaths(deps: ProjectDeps): readonly string[] {
-  const paths: string[] = [];
-
-  if (deps.nodeModules !== undefined) {
-    paths.push(deps.nodeModules);
-  }
-
-  if (deps.pythonSitePackages !== undefined) {
-    paths.push(deps.pythonSitePackages);
-  }
-
-  if (deps.rustDepsDir !== undefined) {
-    paths.push(deps.rustDepsDir);
-  }
-
-  return paths;
-}
-
-function buildSeatbeltProfile({ deps, probeTmp, runtimeRoot, work }: ProfileInput): string {
-  const allowedReadPaths = [runtimeRoot, work, probeTmp, ...collectReadOnlyDepPaths(deps)];
-  const readRules = allowedReadPaths.map((entry) => `(subpath "${escapeScheme(entry)}")`).join(' ');
-  const safeTmp = escapeScheme(probeTmp);
-
-  return [
-    '(version 1)',
-    '(deny default)',
-    '(allow process-fork process-exec)',
-    '(allow signal (target same-sandbox))',
-    '(allow process-info* (target same-sandbox))',
-    '(allow sysctl-read)',
-    '(allow mach-lookup)',
-    '(allow file-read*)',
-    '(allow file-map-executable)',
-    '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath "/private/var/folders"))',
-    `(allow file-read-data ${readRules})`,
-    `(allow file-write* (subpath "${safeTmp}") (literal "/dev/null") (literal "/dev/zero"))`,
-    '(deny network*)',
-  ].join('\n');
-}
-
-type SandboxEnvInput = Readonly<{
-  deps: ProjectDeps;
-  files: ReadonlyMap<string, string>;
-  probeTmp: string;
-  runtime: Check['runtime'];
-  work: string;
-}>;
-
 function buildSandboxEnv({
   deps,
+  extraEnv,
   files,
   probeTmp,
   runtime,
@@ -232,6 +169,7 @@ function buildSandboxEnv({
     RAYON_NUM_THREADS: '2',
     TMPDIR: probeTmp,
     UV_THREADPOOL_SIZE: '2',
+    ...extraEnv,
   };
 
   if (runtime !== 'python') {
@@ -247,6 +185,14 @@ function buildSandboxEnv({
   return { ...commonEnv, PYTHONPATH: `${basePath}:${deps.pythonSitePackages}` };
 }
 
+function readCpuLimit(runtime: Check['runtime']): string {
+  if (COMPILED_RUNTIMES.has(runtime)) {
+    return COMPILED_CPU_LIMIT;
+  }
+
+  return DEFAULT_CPU_LIMIT;
+}
+
 /** Build a macOS Seatbelt sandbox invocation with read-only source, private tmpdir and no network. */
 export async function createMacosSandbox({
   check,
@@ -254,6 +200,7 @@ export async function createMacosSandbox({
   files,
   probeFile,
   probeTmp,
+  projectRoot,
   work,
 }: MacosSandboxInput): Promise<SandboxCommand> {
   await access(SANDBOX_EXEC);
@@ -261,11 +208,13 @@ export async function createMacosSandbox({
   const canonicalWork = await realpath(work);
   const canonicalTmp = await realpath(probeTmp);
 
-  const { command, runtimeRoot } = await resolveRuntime({
+  const { command, extraEnv, runtimeRoot } = await resolveRuntime({
     check,
     deps,
+    files,
     probeFile,
     probeTmp: canonicalTmp,
+    projectRoot,
   });
 
   const profile = buildSeatbeltProfile({
@@ -277,22 +226,18 @@ export async function createMacosSandbox({
 
   const env = buildSandboxEnv({
     deps,
+    extraEnv,
     files,
     probeTmp: canonicalTmp,
     runtime: check.runtime,
     work: canonicalWork,
   });
 
+  const cpuLimit = readCpuLimit(check.runtime);
+  const limitScript = `ulimit -t ${cpuLimit} -f 65536 -c 0 && exec "$@"`;
+
   return {
-    args: [
-      '-p',
-      profile,
-      '/bin/sh',
-      '-c',
-      'ulimit -t 8 -f 65536 -c 0 && exec "$@"',
-      'tenet-limit',
-      ...command,
-    ],
+    args: ['-p', profile, '/bin/sh', '-c', limitScript, 'tenet-limit', ...command],
     cwd: canonicalWork,
     env,
     file: SANDBOX_EXEC,

@@ -1,4 +1,4 @@
-import { CheckerError } from '../checker-error.mts';
+import { CheckerError } from '../../checker-error.mts';
 
 const MAX_PREVIEW_CHARS = 96;
 const MAX_NEARBY_HINTS = 3;

@@ -9,6 +9,7 @@ import { OpenRouterTurn, ROUTER_BASE } from './openrouter.mts';
 
 const TURN_TIMEOUT_MS = 120_000;
 const CONTEXT_WINDOW = 128_000;
+const CONTEXT_LIMIT_PATTERN = /context|token|window|too long|exceeds/iv;
 const CheckerObject = Schema.Record(Schema.String, Schema.Unknown);
 const CheckerJson = Schema.fromJsonString(CheckerObject);
 const decodeJson = Schema.decodeUnknownOption(CheckerJson, { onExcessProperty: 'error' });
@@ -90,6 +91,14 @@ type RunTurnInput = Readonly<{
   timeoutMs: number;
 }>;
 
+function formatTurnFailure(cause: unknown): string {
+  if (cause instanceof Error && CONTEXT_LIMIT_PATTERN.test(cause.message)) {
+    return "governed source exceeded the checker context window; narrow the contract's paths (for example excluding testdata or *_test files) and rerun";
+  }
+
+  return 'could not return a usable checker';
+}
+
 async function runTurn({
   agent,
   onRequest,
@@ -98,7 +107,7 @@ async function runTurn({
   timeoutMs,
 }: RunTurnInput): Promise<unknown> {
   function fail(cause: unknown) {
-    const message = Option.getOrElse(router.failure, () => 'could not return a usable checker');
+    const message = Option.getOrElse(router.failure, () => formatTurnFailure(cause));
 
     return new CheckerError({ cause, message });
   }

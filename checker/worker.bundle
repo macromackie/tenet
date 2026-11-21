@@ -4583,7 +4583,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   let expiresAt = 0;
   let exit3;
   let current;
-  const join12 = (fiber3, run3) => {
+  const join13 = (fiber3, run3) => {
     run3.awaiters++;
     onExitUnsafe(fiber3, () => {
       if (--run3.awaiters > 0 || current !== run3) return;
@@ -4594,7 +4594,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   };
   return [withFiber((fiber3) => {
     if (current !== void 0) {
-      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join12(fiber3, current);
+      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join13(fiber3, current);
     }
     if (exit3 !== void 0 && (expiresAt === Infinity || fiber3.getRef(ClockRef).currentTimeMillisUnsafe() < expiresAt)) {
       return exit3;
@@ -4606,7 +4606,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
       awaiters: 0
     };
     current = run3;
-    const joined = join12(fiber3, run3);
+    const joined = join13(fiber3, run3);
     run3.fiber.evaluate(onExitPrimitive(self, (exit_) => {
       if (current !== run3) return;
       current = void 0;
@@ -20809,945 +20809,15 @@ function hasCheckInputs({ check: check2, files }) {
   return files.has(check2.subject) && (check2.testFile === void 0 || files.has(check2.testFile));
 }
 
-// sandbox/preflight.mts
-import { access } from "node:fs/promises";
-
-// try-operation.mts
-function tryOperation(input) {
-  function fail7(cause) {
-    return new CheckerError({ cause, message: input.message });
-  }
-  return Effect_exports.tryPromise({ catch: fail7, try: input.run });
-}
-
-// sandbox/host-tool.mts
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-var executeFile = promisify(execFile);
-function readCompletedExit(error) {
-  const failure = new CheckerError({
-    cause: error,
-    message: "the isolated tool could not run to completion"
-  });
-  if (!(error instanceof Error) || !("code" in error) || typeof error.code !== "number") {
-    throw failure;
-  }
-  if (!("stdout" in error) || typeof error.stdout !== "string") {
-    throw failure;
-  }
-  if (!("stderr" in error) || typeof error.stderr !== "string") {
-    throw failure;
-  }
-  return { status: error.code, stderr: error.stderr, stdout: error.stdout };
-}
-function createToolFailure(cause) {
-  return new CheckerError({ cause, message: "external tool did not complete" });
-}
-function readFailedExecution(error) {
-  return readCompletedExit(error.cause);
-}
-function buildExecution(streams) {
-  return { ...streams, status: 0 };
-}
-async function runFile({ file, args: args2, options }) {
-  async function run3() {
-    return await executeFile(file, args2, options);
-  }
-  const launch = Effect_exports.tryPromise({ catch: createToolFailure, try: run3 });
-  const result3 = Effect_exports.match(launch, {
-    onFailure: readFailedExecution,
-    onSuccess: buildExecution
-  });
-  return await Effect_exports.runPromise(result3);
-}
-
-// sandbox/preflight.mts
-var BWRAP = "/usr/bin/bwrap";
-var PRLIMIT = "/usr/bin/prlimit";
-var SANDBOX_EXEC = "/usr/bin/sandbox-exec";
-var PREFLIGHT_TIMEOUT_MS = 15e3;
-var OUTPUT_BYTES = 16384;
-var SYSTEM_PATH = "/usr/bin:/bin";
-var MACOS_PREFLIGHT_PROFILE = "(version 1)(deny default)(allow process-exec)(allow file-read*)(allow file-map-executable)(allow sysctl-read)(deny network*)";
-var LINUX_PREFLIGHT_ARGS = [
-  ["--unshare-all", "--new-session", "--die-with-parent", "--clearenv"],
-  ["--cap-drop", "ALL", "--ro-bind", "/", "/"],
-  ["--proc", "/proc", "--dev", "/dev"],
-  ["--size", "67108864", "--tmpfs", "/tmp"],
-  ["--", PRLIMIT, "--cpu=2", "--", "/usr/bin/true"]
-].flat();
-async function checkLinuxTools() {
-  await access(BWRAP);
-  await access(PRLIMIT);
-}
-async function ensureLinuxTools() {
-  const check2 = tryOperation({
-    message: "an isolated Linux runner with bubblewrap and prlimit is required",
-    run: checkLinuxTools
-  });
-  await Effect_exports.runPromise(check2);
-}
-async function verifyLinuxSandbox() {
-  await ensureLinuxTools();
-  const result3 = await runFile({
-    args: LINUX_PREFLIGHT_ARGS,
-    file: BWRAP,
-    options: {
-      encoding: "utf-8",
-      env: { PATH: SYSTEM_PATH },
-      killSignal: "SIGKILL",
-      maxBuffer: OUTPUT_BYTES,
-      timeout: PREFLIGHT_TIMEOUT_MS
-    }
-  });
-  if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
-    throw new CheckerError({
-      message: "install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit"
-    });
-  }
-  if (result3.status !== 0) {
-    throw new CheckerError({
-      message: "the Linux bubblewrap sandbox is unavailable in this environment"
-    });
-  }
-}
-async function checkMacosTool() {
-  await access(SANDBOX_EXEC);
-}
-async function ensureMacosTool() {
-  const check2 = tryOperation({
-    message: "macOS sandbox-exec is unavailable in this environment",
-    run: checkMacosTool
-  });
-  await Effect_exports.runPromise(check2);
-}
-async function verifyMacosSandbox() {
-  await ensureMacosTool();
-  const result3 = await runFile({
-    args: ["-p", MACOS_PREFLIGHT_PROFILE, "/usr/bin/true"],
-    file: SANDBOX_EXEC,
-    options: {
-      encoding: "utf-8",
-      env: { PATH: SYSTEM_PATH },
-      killSignal: "SIGKILL",
-      maxBuffer: OUTPUT_BYTES,
-      timeout: PREFLIGHT_TIMEOUT_MS
-    }
-  });
-  if (result3.status !== 0) {
-    throw new CheckerError({
-      message: "the macOS sandbox-exec runner is unavailable in this environment"
-    });
-  }
-}
-async function assertSandboxAvailable() {
-  if (process.platform === "linux") {
-    await verifyLinuxSandbox();
-    return;
-  }
-  if (process.platform === "darwin") {
-    await verifyMacosSandbox();
-    return;
-  }
-  throw new CheckerError({
-    message: "an isolated Linux or macOS runner is required for behavior checks"
-  });
-}
-
-// sandbox/python-paths.mts
-import { dirname, posix } from "node:path";
-var ROOT_SEGMENTS = /* @__PURE__ */ new Set([".", "/"]);
-function isPackageDirectory({ files, path }) {
-  const initPath = posix.join(path, "__init__.py");
-  return files.has(initPath);
-}
-function readSourceFolder({ files, path }) {
-  if (path.endsWith("/__init__.py")) {
-    const pkg = dirname(path);
-    const parent = dirname(pkg);
-    if (!ROOT_SEGMENTS.has(parent) && !isPackageDirectory({ files, path: parent })) {
-      return Option_exports.some(parent);
-    }
-    return Option_exports.none();
-  }
-  if (path.startsWith("src/") && path.endsWith(".py")) {
-    return Option_exports.some("src");
-  }
-  return Option_exports.none();
-}
-function readPythonPaths({ files, root }) {
-  const extraFolders = /* @__PURE__ */ new Set();
-  for (const path of files.keys()) {
-    const folder = readSourceFolder({ files, path });
-    if (Option_exports.isSome(folder)) {
-      extraFolders.add(folder.value);
-    }
-  }
-  const sorted = [...extraFolders].toSorted();
-  const resolved = sorted.map((folder) => posix.join(root, folder));
-  return [root, ...resolved].join(":");
-}
-
-// sandbox/runner.mts
-import { mkdir as mkdir2, mkdtemp, rm, writeFile as writeFile2 } from "node:fs/promises";
-import { tmpdir as tmpdir3 } from "node:os";
-import { dirname as dirname4, join as join5, resolve as resolve3, sep as sep2 } from "node:path";
-import { isDeepStrictEqual } from "node:util";
-
-// sandbox/runner-sandbox.mts
-import { mkdir, symlink, writeFile } from "node:fs/promises";
-import { join as join4 } from "node:path";
-
-// sandbox/linux-sandbox.mts
-import { access as access2, realpath } from "node:fs/promises";
-import { basename, dirname as dirname2 } from "node:path";
-
-// sandbox/rust-tool.mts
-import { tmpdir } from "node:os";
-import { env as hostEnvironment } from "node:process";
-var TOOL_TIMEOUT_MS = 2e4;
-var OUTPUT_BYTES2 = 65536;
-async function readRustTool(arg) {
-  const env6 = {
-    CARGO_HOME: hostEnvironment.CARGO_HOME,
-    HOME: hostEnvironment.HOME,
-    PATH: hostEnvironment.PATH,
-    RUSTUP_HOME: hostEnvironment.RUSTUP_HOME,
-    RUSTUP_TOOLCHAIN: hostEnvironment.RUSTUP_TOOLCHAIN
-  };
-  const cwd2 = tmpdir();
-  const result3 = await runFile({
-    args: [arg],
-    file: "rustc",
-    options: {
-      cwd: cwd2,
-      encoding: "utf-8",
-      env: env6,
-      killSignal: "SIGKILL",
-      maxBuffer: OUTPUT_BYTES2,
-      timeout: TOOL_TIMEOUT_MS
-    }
-  });
-  if (result3.status !== 0) {
-    throw new CheckerError({ message: "the Rust toolchain is unavailable" });
-  }
-  return result3.stdout.trim();
-}
-
-// sandbox/linux-sandbox.mts
-var BWRAP2 = "/usr/bin/bwrap";
-var PYTHON = "/usr/bin/python3";
-var PRLIMIT2 = "/usr/bin/prlimit";
-var SYSTEM_PATH2 = "/usr/bin:/bin";
-var NODE = "/runtime/node";
-var NODE_FLAGS = [
-  "--disable-wasm-trap-handler",
-  "--max-old-space-size=96",
-  "--v8-pool-size=2"
-];
-var LIMITS = [
-  PRLIMIT2,
-  "--cpu=8",
-  "--as=4294967296",
-  "--nproc=512",
-  "--fsize=33554432",
-  "--nofile=256",
-  "--core=0",
-  "--"
-];
-var RUST_COMMAND = [
-  "/bin/sh",
-  "-c",
-  '/toolchain/bin/rustc --edition=2021 --crate-name tenet_probe -C linker=/usr/bin/gcc "$@" .tenet-observe.rs -o /tmp/observe && exec /tmp/observe',
-  "tenet-rust"
-];
-var ISOLATION = [
-  ["--unshare-all", "--new-session", "--die-with-parent", "--clearenv"],
-  ["--cap-drop", "ALL"],
-  ["--dir", "/usr"],
-  ["--ro-bind", "/usr/bin", "/usr/bin"],
-  ["--ro-bind", "/usr/lib", "/usr/lib"],
-  ["--ro-bind-try", "/usr/lib64", "/usr/lib64"],
-  ["--symlink", "usr/bin", "/bin"],
-  ["--symlink", "usr/lib", "/lib"],
-  ["--symlink", "usr/lib64", "/lib64"],
-  ["--proc", "/proc"],
-  ["--dev", "/dev"],
-  ["--size", "67108864", "--tmpfs", "/tmp"],
-  ["--dir", "/runtime"],
-  ["--dir", "/deps"]
-].flat();
-var BASE_ENV_FLAGS = [
-  ["--setenv", "PATH", SYSTEM_PATH2],
-  ["--setenv", "HOME", "/tmp"],
-  ["--setenv", "TMPDIR", "/tmp"],
-  ["--setenv", "UV_THREADPOOL_SIZE", "2"],
-  ["--setenv", "OMP_NUM_THREADS", "1"],
-  ["--setenv", "OPENBLAS_NUM_THREADS", "1"],
-  ["--setenv", "RAYON_NUM_THREADS", "2"],
-  ["--setenv", "PYTHONDONTWRITEBYTECODE", "1"]
-].flat();
-async function buildRuntimeMount(runtime) {
-  switch (runtime) {
-    case "node": {
-      return ["--ro-bind", await realpath(process.execPath), NODE];
-    }
-    case "python": {
-      return [];
-    }
-    case "rust": {
-      const sysroot = await readRustTool("--print=sysroot");
-      const toolchain = await realpath(sysroot);
-      return [
-        "--ro-bind",
-        toolchain,
-        "/toolchain",
-        "--ro-bind-try",
-        "/usr/libexec/gcc",
-        "/usr/libexec/gcc"
-      ];
-    }
-  }
-}
-function buildDepMounts(deps) {
-  const mounts = [];
-  if (deps.nodeModules !== void 0) {
-    mounts.push("--ro-bind", deps.nodeModules, "/project/node_modules");
-  }
-  if (deps.pythonSitePackages !== void 0) {
-    mounts.push("--ro-bind", deps.pythonSitePackages, "/deps/python");
-  }
-  if (deps.rustDepsDir !== void 0) {
-    mounts.push("--ro-bind", deps.rustDepsDir, "/deps/rust");
-  }
-  return mounts;
-}
-function buildPythonProgram({ check: check2, probeFile: probeFile2 }) {
-  if (check2.testFile === void 0) {
-    return [PYTHON, "-B", `./${probeFile2}`];
-  }
-  return [
-    PYTHON,
-    "-B",
-    "-m",
-    "unittest",
-    "discover",
-    "-s",
-    `./${dirname2(check2.testFile)}`,
-    "-p",
-    basename(check2.testFile)
-  ];
-}
-function buildNodeProgram({ check: check2, probeFile: probeFile2 }) {
-  if (check2.testFile === void 0) {
-    return [NODE, ...NODE_FLAGS, `./${probeFile2}`];
-  }
-  return [NODE, ...NODE_FLAGS, "--test", "--test-reporter=tap", "--", `./${check2.testFile}`];
-}
-function buildRustProgram(deps) {
-  if (deps.rustDepsDir === void 0) {
-    return RUST_COMMAND;
-  }
-  const externArgs = deps.rustExterns.flatMap(({ file, name }) => [
-    "--extern",
-    `${name}=/deps/rust/${file}`
-  ]);
-  return [...RUST_COMMAND, "-L", "dependency=/deps/rust", ...externArgs];
-}
-function buildProgram({ check: check2, deps, probeFile: probeFile2 }) {
-  switch (check2.runtime) {
-    case "node": {
-      return buildNodeProgram({ check: check2, deps, probeFile: probeFile2 });
-    }
-    case "python": {
-      return buildPythonProgram({ check: check2, deps, probeFile: probeFile2 });
-    }
-    case "rust": {
-      return buildRustProgram(deps);
-    }
-  }
-}
-function buildEnvFlags({ deps, files, runtime }) {
-  if (runtime !== "python") {
-    return BASE_ENV_FLAGS;
-  }
-  const basePath = readPythonPaths({ files, root: "/project" });
-  if (deps.pythonSitePackages === void 0) {
-    return [...BASE_ENV_FLAGS, "--setenv", "PYTHONPATH", basePath];
-  }
-  return [...BASE_ENV_FLAGS, "--setenv", "PYTHONPATH", `${basePath}:/deps/python`];
-}
-async function createLinuxSandbox({
-  check: check2,
-  deps,
-  files,
-  probeFile: probeFile2,
-  work
-}) {
-  await access2(BWRAP2);
-  await access2(PRLIMIT2);
-  const mounts = await buildRuntimeMount(check2.runtime);
-  const depMounts = buildDepMounts(deps);
-  const envFlags = buildEnvFlags({ deps, files, runtime: check2.runtime });
-  const program = buildProgram({ check: check2, deps, probeFile: probeFile2 });
-  return {
-    args: [
-      ...ISOLATION,
-      ...mounts,
-      "--ro-bind",
-      work,
-      "/project",
-      ...depMounts,
-      "--chdir",
-      "/project",
-      ...envFlags,
-      "--",
-      ...LIMITS,
-      ...program
-    ],
-    env: { PATH: SYSTEM_PATH2 },
-    file: BWRAP2
-  };
-}
-
-// sandbox/macos-sandbox.mts
-import { access as access4, realpath as realpath3 } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename as basename2, dirname as dirname3, join } from "node:path";
-
-// sandbox/python-tool.mts
-import { access as access3, realpath as realpath2 } from "node:fs/promises";
-import { tmpdir as tmpdir2 } from "node:os";
-import { env as hostEnvironment2 } from "node:process";
-
-// classify-result.mts
-async function classifyResult(input) {
-  const work = tryOperation(input);
-  const classified = Effect_exports.result(work);
-  return await Effect_exports.runPromise(classified);
-}
-
-// sandbox/python-tool.mts
-var SYSTEM_PYTHON = "/usr/bin/python3";
-var TOOL_TIMEOUT_MS2 = 2e4;
-var OUTPUT_BYTES3 = 8192;
-async function probeHostPython() {
-  const env6 = {
-    HOME: hostEnvironment2.HOME,
-    PATH: hostEnvironment2.PATH
-  };
-  const cwd2 = tmpdir2();
-  const result3 = await runFile({
-    args: ["-c", "import os, sys; print(os.path.realpath(sys.executable))"],
-    file: "python3",
-    options: {
-      cwd: cwd2,
-      encoding: "utf-8",
-      env: env6,
-      killSignal: "SIGKILL",
-      maxBuffer: OUTPUT_BYTES3,
-      timeout: TOOL_TIMEOUT_MS2
-    }
-  });
-  if (result3.status !== 0) {
-    throw new CheckerError({ message: "python3 is unavailable" });
-  }
-  const executable = result3.stdout.trim();
-  if (executable.length === 0) {
-    throw new CheckerError({ message: "python3 returned an empty executable path" });
-  }
-  return await realpath2(executable);
-}
-async function readPythonTool() {
-  const probed = await classifyResult({
-    message: "python3 probe failed",
-    run: probeHostPython
-  });
-  if (Result_exports.isSuccess(probed)) {
-    return probed.success;
-  }
-  await access3(SYSTEM_PYTHON);
-  return await realpath2(SYSTEM_PYTHON);
-}
-
-// sandbox/macos-sandbox.mts
-var SANDBOX_EXEC2 = "/usr/bin/sandbox-exec";
-var SYSTEM_PATH3 = "/usr/bin:/bin";
-var NODE_FLAGS2 = [
-  "--disable-wasm-trap-handler",
-  "--max-old-space-size=96",
-  "--v8-pool-size=2"
-];
-function escapeScheme(value3) {
-  return value3.replaceAll("\\", String.raw`\\`).replaceAll('"', String.raw`\"`);
-}
-function assertBoundedRuntimeRoot(root) {
-  const userHome = homedir();
-  const forbiddenRoots = /* @__PURE__ */ new Set(["/", "/Users", "/private", "/var", userHome]);
-  if (forbiddenRoots.has(root)) {
-    throw new CheckerError({ message: "runtime installation path cannot be safely sandboxed" });
-  }
-  return root;
-}
-function readInstallRoot(binary) {
-  const binDir = dirname3(binary);
-  const installRoot = dirname3(binDir);
-  return assertBoundedRuntimeRoot(installRoot);
-}
-async function resolveNodeRuntime({ check: check2, probeFile: probeFile2 }) {
-  const binary = await realpath3(process.execPath);
-  const runtimeRoot = readInstallRoot(binary);
-  if (check2.testFile === void 0) {
-    return { command: [binary, ...NODE_FLAGS2, `./${probeFile2}`], runtimeRoot };
-  }
-  return {
-    command: [binary, ...NODE_FLAGS2, "--test", "--test-reporter=tap", "--", `./${check2.testFile}`],
-    runtimeRoot
-  };
-}
-async function resolvePythonRuntime({ check: check2, probeFile: probeFile2 }) {
-  const binary = await readPythonTool();
-  const runtimeRoot = readInstallRoot(binary);
-  if (check2.testFile === void 0) {
-    return { command: [binary, "-B", `./${probeFile2}`], runtimeRoot };
-  }
-  return {
-    command: [
-      binary,
-      "-B",
-      "-m",
-      "unittest",
-      "discover",
-      "-s",
-      `./${dirname3(check2.testFile)}`,
-      "-p",
-      basename2(check2.testFile)
-    ],
-    runtimeRoot
-  };
-}
-function buildRustDepArgs(deps) {
-  const { rustDepsDir } = deps;
-  if (rustDepsDir === void 0) {
-    return [];
-  }
-  const externArgs = deps.rustExterns.flatMap(({ file, name }) => [
-    "--extern",
-    `${name}=${join(rustDepsDir, file)}`
-  ]);
-  return ["-L", `dependency=${rustDepsDir}`, ...externArgs];
-}
-async function resolveRustRuntime({
-  deps,
-  probeFile: probeFile2,
-  probeTmp
-}) {
-  const sysroot = await readRustTool("--print=sysroot");
-  const resolved = await realpath3(sysroot);
-  const runtimeRoot = assertBoundedRuntimeRoot(resolved);
-  const rustc = join(runtimeRoot, "bin", "rustc");
-  const output = join(probeTmp, "observe");
-  const depArgs = buildRustDepArgs(deps);
-  return {
-    command: [
-      "/bin/sh",
-      "-c",
-      'rustc="$1"; probe="$2"; out="$3"; shift 3; "$rustc" --edition=2021 --crate-name tenet_probe "$@" ./"$probe" -o "$out" && exec "$out"',
-      "tenet-rust",
-      rustc,
-      probeFile2,
-      output,
-      ...depArgs
-    ],
-    runtimeRoot
-  };
-}
-async function resolveRuntime(input) {
-  switch (input.check.runtime) {
-    case "node": {
-      return await resolveNodeRuntime(input);
-    }
-    case "python": {
-      return await resolvePythonRuntime(input);
-    }
-    case "rust": {
-      return await resolveRustRuntime(input);
-    }
-  }
-}
-function collectReadOnlyDepPaths(deps) {
-  const paths = [];
-  if (deps.nodeModules !== void 0) {
-    paths.push(deps.nodeModules);
-  }
-  if (deps.pythonSitePackages !== void 0) {
-    paths.push(deps.pythonSitePackages);
-  }
-  if (deps.rustDepsDir !== void 0) {
-    paths.push(deps.rustDepsDir);
-  }
-  return paths;
-}
-function buildSeatbeltProfile({ deps, probeTmp, runtimeRoot, work }) {
-  const allowedReadPaths = [runtimeRoot, work, probeTmp, ...collectReadOnlyDepPaths(deps)];
-  const readRules = allowedReadPaths.map((entry) => `(subpath "${escapeScheme(entry)}")`).join(" ");
-  const safeTmp = escapeScheme(probeTmp);
-  return [
-    "(version 1)",
-    "(deny default)",
-    "(allow process-fork process-exec)",
-    "(allow signal (target same-sandbox))",
-    "(allow process-info* (target same-sandbox))",
-    "(allow sysctl-read)",
-    "(allow mach-lookup)",
-    "(allow file-read*)",
-    "(allow file-map-executable)",
-    '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath "/private/var/folders"))',
-    `(allow file-read-data ${readRules})`,
-    `(allow file-write* (subpath "${safeTmp}") (literal "/dev/null") (literal "/dev/zero"))`,
-    "(deny network*)"
-  ].join("\n");
-}
-function buildSandboxEnv({
-  deps,
-  files,
-  probeTmp,
-  runtime,
-  work
-}) {
-  const commonEnv = {
-    HOME: probeTmp,
-    OMP_NUM_THREADS: "1",
-    OPENBLAS_NUM_THREADS: "1",
-    PATH: SYSTEM_PATH3,
-    PYTHONDONTWRITEBYTECODE: "1",
-    RAYON_NUM_THREADS: "2",
-    TMPDIR: probeTmp,
-    UV_THREADPOOL_SIZE: "2"
-  };
-  if (runtime !== "python") {
-    return commonEnv;
-  }
-  const basePath = readPythonPaths({ files, root: work });
-  if (deps.pythonSitePackages === void 0) {
-    return { ...commonEnv, PYTHONPATH: basePath };
-  }
-  return { ...commonEnv, PYTHONPATH: `${basePath}:${deps.pythonSitePackages}` };
-}
-async function createMacosSandbox({
-  check: check2,
-  deps,
-  files,
-  probeFile: probeFile2,
-  probeTmp,
-  work
-}) {
-  await access4(SANDBOX_EXEC2);
-  const canonicalWork = await realpath3(work);
-  const canonicalTmp = await realpath3(probeTmp);
-  const { command, runtimeRoot } = await resolveRuntime({
-    check: check2,
-    deps,
-    probeFile: probeFile2,
-    probeTmp: canonicalTmp
-  });
-  const profile = buildSeatbeltProfile({
-    deps,
-    probeTmp: canonicalTmp,
-    runtimeRoot,
-    work: canonicalWork
-  });
-  const env6 = buildSandboxEnv({
-    deps,
-    files,
-    probeTmp: canonicalTmp,
-    runtime: check2.runtime,
-    work: canonicalWork
-  });
-  return {
-    args: [
-      "-p",
-      profile,
-      "/bin/sh",
-      "-c",
-      'ulimit -t 8 -f 65536 -c 0 && exec "$@"',
-      "tenet-limit",
-      ...command
-    ],
-    cwd: canonicalWork,
-    env: env6,
-    file: SANDBOX_EXEC2
-  };
-}
-
-// sandbox/project-deps.mts
-import { access as access5, readdir as readdir2, realpath as realpath4, stat as stat2 } from "node:fs/promises";
-import { homedir as homedir2 } from "node:os";
-import { join as join3, sep } from "node:path";
-
-// sandbox/run-optional.mts
-async function runOptional(run3) {
-  const attempt = Effect_exports.tryPromise(run3);
-  const optional3 = Effect_exports.option(attempt);
-  return await Effect_exports.runPromise(optional3);
-}
-
-// sandbox/rust-deps.mts
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join as join2 } from "node:path";
-var MAX_RUST_EXTERNS = 64;
-var RUST_CRATE_PATTERN = new RegExp("^lib(?<name>[A-Za-z0-9_]+)-[0-9a-f]{16}\\.(?<ext>rlib|dylib|so)$", "v");
-var CARGO_NAME_PATTERN = new RegExp('^\\s*name\\s*=\\s*"(?<name>[^"]+)"', "mv");
-async function readCargoPackageName(projectRoot) {
-  const manifestPath = join2(projectRoot, "Cargo.toml");
-  const manifest = await runOptional(async () => await readFile(manifestPath, "utf-8"));
-  if (Option_exports.isNone(manifest)) {
-    return Option_exports.none();
-  }
-  const match7 = CARGO_NAME_PATTERN.exec(manifest.value);
-  const rawName = match7?.groups?.["name"];
-  if (rawName === void 0) {
-    return Option_exports.none();
-  }
-  const normalized = rawName.replaceAll("-", "_");
-  return Option_exports.some(normalized);
-}
-async function readRustFileMtime(fullPath) {
-  const info = await runOptional(async () => await stat(fullPath));
-  if (Option_exports.isNone(info) || !info.value.isFile()) {
-    return Option_exports.none();
-  }
-  return Option_exports.some(info.value.mtimeMs);
-}
-async function readRustArtifact({
-  depsDir,
-  entry,
-  selfCrate
-}) {
-  const match7 = RUST_CRATE_PATTERN.exec(entry);
-  const name = match7?.groups?.["name"];
-  const selfName = Option_exports.getOrUndefined(selfCrate);
-  if (name === void 0 || name === selfName) {
-    return Option_exports.none();
-  }
-  const artifactPath = join2(depsDir, entry);
-  const mtimeMs = await readRustFileMtime(artifactPath);
-  if (Option_exports.isNone(mtimeMs)) {
-    return Option_exports.none();
-  }
-  return Option_exports.some({ file: entry, mtimeMs: mtimeMs.value, name });
-}
-function listOrderedExterns(latestArtifacts) {
-  const orderedNames = [...latestArtifacts.keys()].toSorted().slice(0, MAX_RUST_EXTERNS);
-  const externs = [];
-  for (const name of orderedNames) {
-    const artifact = latestArtifacts.get(name);
-    if (artifact !== void 0) {
-      externs.push({ file: artifact.file, name: artifact.name });
-    }
-  }
-  return externs;
-}
-function indexLatestArtifacts(artifacts) {
-  const latestArtifacts = /* @__PURE__ */ new Map();
-  for (const artifact of artifacts) {
-    const prior = latestArtifacts.get(artifact.name);
-    if (prior === void 0 || artifact.mtimeMs > prior.mtimeMs) {
-      latestArtifacts.set(artifact.name, artifact);
-    }
-  }
-  return latestArtifacts;
-}
-async function readAllArtifacts({
-  depsDir,
-  entries: entries3,
-  selfCrate
-}) {
-  const found = [];
-  for (const entry of entries3) {
-    const artifact = await readRustArtifact({ depsDir, entry, selfCrate });
-    if (Option_exports.isSome(artifact)) {
-      found.push(artifact.value);
-    }
-  }
-  return found;
-}
-async function collectRustExterns({
-  depsDir,
-  projectRoot
-}) {
-  const listed = await runOptional(async () => await readdir(depsDir));
-  if (Option_exports.isNone(listed)) {
-    return [];
-  }
-  const selfCrate = await readCargoPackageName(projectRoot);
-  const entries3 = listed.value.toSorted();
-  const found = await readAllArtifacts({ depsDir, entries: entries3, selfCrate });
-  const latestArtifacts = indexLatestArtifacts(found);
-  return listOrderedExterns(latestArtifacts);
-}
-
-// sandbox/project-deps.mts
-var EMPTY_DEPS = { rustExterns: [] };
-function isBoundedDepPath(candidate) {
-  const userHome = homedir2();
-  const forbiddenPaths = ["/", "/Users", "/private", "/var", userHome];
-  const forbiddenRoots = new Set(forbiddenPaths);
-  return !forbiddenRoots.has(candidate);
-}
-async function readCanonicalDirectory(candidate) {
-  await access5(candidate);
-  const canonical = await realpath4(candidate);
-  const info = await stat2(canonical);
-  if (!info.isDirectory() || !isBoundedDepPath(canonical)) {
-    throw new CheckerError({ message: "dependency path is not a bounded directory" });
-  }
-  return canonical;
-}
-async function resolveDirectory(candidate) {
-  return await runOptional(async () => await readCanonicalDirectory(candidate));
-}
-async function resolveNodeDeps(projectRoot) {
-  const candidate = join3(projectRoot, "node_modules");
-  const nodeModules = await resolveDirectory(candidate);
-  if (Option_exports.isNone(nodeModules)) {
-    return EMPTY_DEPS;
-  }
-  return { nodeModules: nodeModules.value, rustExterns: [] };
-}
-async function findSitePackagesInLib(libDir) {
-  const listed = await runOptional(async () => await readdir2(libDir));
-  if (Option_exports.isNone(listed)) {
-    return Option_exports.none();
-  }
-  const pythonDirs = listed.value.filter((entry) => entry.startsWith("python")).toSorted();
-  for (const entry of pythonDirs) {
-    const candidate = join3(libDir, entry, "site-packages");
-    const sitePackages = await resolveDirectory(candidate);
-    if (Option_exports.isSome(sitePackages)) {
-      return sitePackages;
-    }
-  }
-  return Option_exports.none();
-}
-async function resolvePythonSitePackages(venvDir) {
-  const libCandidate = join3(venvDir, "lib");
-  const libDir = await resolveDirectory(libCandidate);
-  if (Option_exports.isSome(libDir)) {
-    return await findSitePackagesInLib(libDir.value);
-  }
-  const winCandidate = join3(venvDir, "Lib", "site-packages");
-  return await resolveDirectory(winCandidate);
-}
-async function resolvePythonDeps(projectRoot) {
-  const venvDir = join3(projectRoot, ".venv");
-  const pythonSitePackages = await resolvePythonSitePackages(venvDir);
-  if (Option_exports.isNone(pythonSitePackages)) {
-    return EMPTY_DEPS;
-  }
-  return { pythonSitePackages: pythonSitePackages.value, rustExterns: [] };
-}
-async function resolveRustDeps(projectRoot) {
-  const candidate = join3(projectRoot, "target", "debug", "deps");
-  const rustDepsDir = await resolveDirectory(candidate);
-  if (Option_exports.isNone(rustDepsDir)) {
-    return EMPTY_DEPS;
-  }
-  const rustExterns = await collectRustExterns({ depsDir: rustDepsDir.value, projectRoot });
-  return { rustDepsDir: rustDepsDir.value, rustExterns };
-}
-async function selectDepsForRuntime({
-  projectRoot,
-  runtime
-}) {
-  switch (runtime) {
-    case "node": {
-      return await resolveNodeDeps(projectRoot);
-    }
-    case "python": {
-      return await resolvePythonDeps(projectRoot);
-    }
-    case "rust": {
-      return await resolveRustDeps(projectRoot);
-    }
-  }
-}
-function readSafeWithinRoot({ candidate, root }) {
-  if (candidate === void 0) {
-    return Option_exports.none();
-  }
-  const prefix = `${root}${sep}`;
-  if (!candidate.startsWith(prefix)) {
-    return Option_exports.none();
-  }
-  return Option_exports.some(candidate);
-}
-function selectSafeRustExterns({ deps, rustDepsDir }) {
-  if (rustDepsDir === void 0) {
-    return [];
-  }
-  return deps.rustExterns;
-}
-function filterInsideRoot({ deps, projectRoot }) {
-  const safeNode = readSafeWithinRoot({ candidate: deps.nodeModules, root: projectRoot });
-  const nodeModules = Option_exports.getOrUndefined(safeNode);
-  const safePython = readSafeWithinRoot({ candidate: deps.pythonSitePackages, root: projectRoot });
-  const pythonSitePackages = Option_exports.getOrUndefined(safePython);
-  const safeRust = readSafeWithinRoot({ candidate: deps.rustDepsDir, root: projectRoot });
-  const rustDepsDir = Option_exports.getOrUndefined(safeRust);
-  const rustExterns = selectSafeRustExterns({ deps, rustDepsDir });
-  return { nodeModules, pythonSitePackages, rustDepsDir, rustExterns };
-}
-async function resolveProjectDeps({
-  projectRoot,
-  runtime
-}) {
-  if (projectRoot === void 0 || projectRoot.length === 0) {
-    return EMPTY_DEPS;
-  }
-  const canonicalRoot = await resolveDirectory(projectRoot);
-  if (Option_exports.isNone(canonicalRoot)) {
-    return EMPTY_DEPS;
-  }
-  const deps = await selectDepsForRuntime({ projectRoot: canonicalRoot.value, runtime });
-  return filterInsideRoot({ deps, projectRoot: canonicalRoot.value });
-}
-
-// sandbox/runner-sandbox.mts
-var PROBE_TIMEOUT_MS = 15e3;
-var RUST_PROBE_TIMEOUT_MS = 3e4;
-var OUTPUT_BYTES4 = 65536;
+// sandbox/controls/probe-diagnostics.mts
 var DIAGNOSTIC_LINES = 2;
 var DIAGNOSTIC_CHARS = 240;
 var ASCII_SPACE = 32;
 var ASCII_DEL = 127;
 var DIAGNOSTIC_FOOTER = new RegExp("^(?:error: aborting due to |For more information about this error|Node\\.js v\\d)", "v");
-var DIAGNOSTIC_ERROR = new RegExp("^(?:error(?:\\[|:)|Error\\b|TypeError:|RangeError:|ReferenceError:|SyntaxError:|URIError:|EvalError:|ModuleNotFoundError:|ImportError:|AttributeError:|ValueError:|KeyError:|AssertionError:|NameError:|RuntimeError:|ZeroDivisionError:|FileNotFoundError:|OSError:|Exception:)", "v");
+var DIAGNOSTIC_ERROR = new RegExp("^(?:error(?:\\[|:)|Error\\b|TypeError:|RangeError:|ReferenceError:|SyntaxError:|URIError:|EvalError:|ModuleNotFoundError:|ImportError:|AttributeError:|ValueError:|KeyError:|AssertionError:|NameError:|RuntimeError:|ZeroDivisionError:|FileNotFoundError:|OSError:|Exception:|panic:|cannot find package|no required module provides package|\\.?\\/?[^\\s:]+\\.go:\\d+:)", "v");
 var RUST_MISSING_CRATE_PATTERN = new RegExp("error\\[E04(?:32|63)\\]", "v");
-var PROBE_FILES = {
-  node: ".tenet-observe.mjs",
-  python: ".tenet-observe.py",
-  rust: ".tenet-observe.rs"
-};
-var ASSERTION_MARKERS = /* @__PURE__ */ new Map([
-  [
-    "node",
-    {
-      failed: new RegExp("^\\s*code: 'ERR_ASSERTION'$", "mv"),
-      passed: new RegExp("^# pass [1-9]\\d*$", "mv")
-    }
-  ],
-  [
-    "python",
-    {
-      failed: new RegExp("^FAILED \\(failures=[1-9]\\d*\\)$", "mv"),
-      passed: new RegExp("^Ran [1-9]\\d* tests? in [^\\n]+\\n\\s*OK\\s*$", "mv")
-    }
-  ]
-]);
-function probeFile(runtime) {
-  return PROBE_FILES[runtime];
-}
+var GO_MISSING_MODULE_PATTERN = new RegExp("no required module provides package|cannot find package", "v");
 function stripControlChars(text2) {
   let clean = "";
   for (const character of text2) {
@@ -21780,9 +20850,12 @@ function readMissingDepHint({ deps, runtime, stderr }) {
   if (runtime === "rust" && deps?.rustDepsDir === void 0 && RUST_MISSING_CRATE_PATTERN.test(stderr)) {
     return " (run cargo build locally so compiled crate deps exist in target/debug/deps)";
   }
+  if (runtime === "go" && deps?.goVendor === void 0 && GO_MISSING_MODULE_PATTERN.test(stderr)) {
+    return " (run go mod vendor locally so Go module dependencies exist in vendor/)";
+  }
   return "";
 }
-function formatFailure({ base, deps, runtime, stderr }) {
+function formatProbeFailure({ base, deps, runtime, stderr }) {
   const detail = summarizeDiagnostic(stderr);
   const hint = readMissingDepHint({ deps, runtime, stderr });
   if (detail.length === 0) {
@@ -21790,280 +20863,8 @@ function formatFailure({ base, deps, runtime, stderr }) {
   }
   return `${base}: ${detail}${hint}`;
 }
-async function createNodeModulesLink({ deps, work }) {
-  if (deps.nodeModules === void 0) {
-    return;
-  }
-  const target = join4(work, "node_modules");
-  if (process.platform === "darwin") {
-    await symlink(deps.nodeModules, target, "dir");
-    return;
-  }
-  await mkdir(target, { recursive: true });
-}
-async function buildCommand({
-  check: check2,
-  deps,
-  files,
-  probeTmp,
-  work
-}) {
-  const entry = probeFile(check2.runtime);
-  if (process.platform === "darwin") {
-    return await createMacosSandbox({ check: check2, deps, files, probeFile: entry, probeTmp, work });
-  }
-  if (process.platform === "linux") {
-    return await createLinuxSandbox({ check: check2, deps, files, probeFile: entry, work });
-  }
-  throw new CheckerError({
-    message: "an isolated Linux or macOS runner is required for behavior checks"
-  });
-}
-function readProbeTimeout(runtime) {
-  if (runtime === "rust") {
-    return RUST_PROBE_TIMEOUT_MS;
-  }
-  return PROBE_TIMEOUT_MS;
-}
-async function execute(probe) {
-  const { args: args2, cwd: cwd2, env: env6, file } = probe.command;
-  const timeout3 = readProbeTimeout(probe.check.runtime);
-  return await runFile({
-    args: args2,
-    file,
-    options: {
-      cwd: cwd2,
-      encoding: "utf-8",
-      env: env6,
-      killSignal: "SIGKILL",
-      maxBuffer: OUTPUT_BYTES4,
-      timeout: timeout3
-    }
-  });
-}
-function isPassing({ result: result3, runtime }) {
-  const logs = [result3.stdout, result3.stderr].join("\n");
-  if (runtime === "node" && new RegExp("^# (?:skipped|todo) [1-9]", "mv").test(logs)) {
-    throw new CheckerError({ message: "the selected native test skipped an observation" });
-  }
-  const markers = ASSERTION_MARKERS.get(runtime);
-  if (markers !== void 0 && result3.status === 0 && markers.passed.test(logs)) {
-    return true;
-  }
-  if (markers !== void 0 && result3.status === 1 && markers.failed.test(logs)) {
-    return false;
-  }
-  const message = formatFailure({
-    base: "the selected native test produced no clear assertion result",
-    stderr: result3.stderr
-  });
-  throw new CheckerError({ message });
-}
-function assertCompleted({ deps, result: result3, runtime }) {
-  if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
-    throw new CheckerError({
-      message: "install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit"
-    });
-  }
-  if (result3.status !== 0) {
-    const code = String(result3.status);
-    const message = formatFailure({
-      base: `the isolated test exited with status ${code}`,
-      deps,
-      runtime,
-      stderr: result3.stderr
-    });
-    throw new CheckerError({ message });
-  }
-}
-async function runProbe(probe) {
-  const result3 = await execute(probe);
-  if (probe.check.testFile !== void 0) {
-    if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
-      throw new CheckerError({
-        message: "install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit"
-      });
-    }
-    return isPassing({ result: result3, runtime: probe.check.runtime });
-  }
-  assertCompleted({ deps: probe.deps, result: result3, runtime: probe.check.runtime });
-  const observed = JSON.parse(result3.stdout);
-  return observed;
-}
-async function createSandbox(input) {
-  const { check: check2, projectRoot, work } = input;
-  const deps = await resolveProjectDeps({ projectRoot, runtime: check2.runtime });
-  await createNodeModulesLink({ deps, work });
-  if (check2.test !== void 0) {
-    const entry = probeFile(check2.runtime);
-    const targetPath = join4(work, entry);
-    await writeFile(targetPath, check2.test, { flag: "wx" });
-  }
-  const command = await buildCommand({ ...input, deps });
-  return async () => await runProbe({ check: check2, command, deps });
-}
 
-// sandbox/runner.mts
-async function copySource({ path, source, work }) {
-  const file = resolve3(work, path);
-  const prefix = join5(work, sep2);
-  if (!file.startsWith(prefix)) {
-    throw new CheckerError({ message: "a staged source path falls outside the checkout" });
-  }
-  const parent = dirname4(file);
-  await mkdir2(parent, { recursive: true });
-  await writeFile2(file, source, { flag: "wx" });
-}
-async function prepareProject(project) {
-  const copies = Effect_exports.forEach(
-    project.files,
-    ([path, source]) => Effect_exports.tryPromise(async () => await copySource({ path, source, work: project.work })),
-    { concurrency: 16 }
-  );
-  await Effect_exports.runPromise(copies);
-  const run3 = await createSandbox({
-    check: project.check,
-    files: project.files,
-    probeTmp: project.probeTmp,
-    projectRoot: project.projectRoot,
-    work: project.work
-  });
-  return { ...project, run: run3 };
-}
-async function restoreSubject({ project, variant }) {
-  const { check: check2, files, work } = project;
-  const sources = { ...check2, actual: files.get(check2.subject) };
-  const source = sources[variant];
-  if (source === void 0) {
-    throw new CheckerError({ message: "the checker subject disappeared" });
-  }
-  const targetPath = join5(work, check2.subject);
-  await writeFile2(targetPath, source);
-}
-function readObservationHint(variant) {
-  if (variant === "refactor") {
-    return " (good and defect already passed; fix only the refactor control)";
-  }
-  return "";
-}
-async function readObservation({ project, variant }) {
-  await restoreSubject({ project, variant });
-  const { check: check2 } = project;
-  const suffix = readObservationHint(variant);
-  function createObservationError(cause) {
-    const name = JSON.stringify(variant);
-    if (cause instanceof Error) {
-      const detail = `could not observe ${name} variant: ${cause.message}${suffix}`;
-      return new CheckerError({ cause, message: detail });
-    }
-    const message = `could not observe ${name} variant${suffix}`;
-    return new CheckerError({ cause, message });
-  }
-  const attempt = Effect_exports.tryPromise({ catch: createObservationError, try: project.run });
-  const value3 = await Effect_exports.runPromise(attempt);
-  return { passed: isDeepStrictEqual(value3, check2.expected), value: value3 };
-}
-function readQualificationHint(variant) {
-  if (variant === "good") {
-    return "; if the unmodified subject already violates the contract, set defect to [] and put the fix in good and refactor";
-  }
-  if (variant === "refactor") {
-    return "; good and defect already passed — keep them and rewrite only refactor as a distinct behavior-preserving variant (for example, extract a helper or invert the condition)";
-  }
-  return "";
-}
-async function qualifyControl({ project, variant }) {
-  const result3 = await readObservation({ project, variant });
-  if (result3.passed !== (variant !== "defect")) {
-    const name = JSON.stringify(variant);
-    const observed = JSON.stringify(result3.value);
-    const expected = JSON.stringify(project.check.expected);
-    const suffix = readQualificationHint(variant);
-    const message = `test did not distinguish its ${name} control (expected ${expected}, observed ${observed})${suffix}`;
-    throw new CheckerError({ message });
-  }
-}
-async function verifyControls(project) {
-  await qualifyControl({ project, variant: "good" });
-  await qualifyControl({ project, variant: "defect" });
-  await qualifyControl({ project, variant: "refactor" });
-}
-async function executeObservation({
-  check: check2,
-  project,
-  qualify,
-  skipActual
-}) {
-  if (qualify) {
-    await verifyControls(project);
-  }
-  if (skipActual) {
-    return { passed: true, value: check2.expected };
-  }
-  return await readObservation({ project, variant: "actual" });
-}
-async function observe({
-  check: check2,
-  files,
-  projectRoot,
-  qualify,
-  skipActual = false
-}) {
-  const temporary = tmpdir3();
-  const workPrefix = join5(temporary, "tenet-observe-");
-  const tmpPrefix = join5(temporary, "tenet-probe-tmp-");
-  const work = await mkdtemp(workPrefix);
-  const probeTmp = await mkdtemp(tmpPrefix);
-  try {
-    const project = await prepareProject({ check: check2, files, probeTmp, projectRoot, work });
-    return await executeObservation({ check: check2, project, qualify, skipActual });
-  } finally {
-    await rm(work, { force: true, recursive: true });
-    await rm(probeTmp, { force: true, recursive: true });
-  }
-}
-
-// sandbox/runner-version.mts
-import { stat as stat3 } from "node:fs/promises";
-var BWRAP3 = "/usr/bin/bwrap";
-var PYTHON2 = "/usr/bin/python3";
-var PRLIMIT3 = "/usr/bin/prlimit";
-var SANDBOX_EXEC3 = "/usr/bin/sandbox-exec";
-var RUNNER_REVISION = 4;
-function readBinaryIdentity(path) {
-  const read = Effect_exports.tryPromise(async () => await stat3(path));
-  function buildMissingIdentity() {
-    return [path, null];
-  }
-  function buildToolIdentity(info) {
-    return [path, info.size, info.mtimeMs];
-  }
-  return Effect_exports.match(read, { onFailure: buildMissingIdentity, onSuccess: buildToolIdentity });
-}
-async function readToolPaths() {
-  if (process.platform === "darwin") {
-    const pythonProbe = Effect_exports.tryPromise(async () => await readPythonTool());
-    const pythonOption = Effect_exports.option(pythonProbe);
-    const pythonResult = await Effect_exports.runPromise(pythonOption);
-    const pythonPath = Option_exports.getOrElse(pythonResult, () => PYTHON2);
-    return [SANDBOX_EXEC3, pythonPath, process.execPath];
-  }
-  return [BWRAP3, PYTHON2, PRLIMIT3, "/usr/bin/gcc", process.execPath];
-}
-async function readRunnerVersion() {
-  const paths = await readToolPaths();
-  const identities = Effect_exports.forEach(paths, (path) => readBinaryIdentity(path), {
-    concurrency: 4
-  });
-  const binaries = await Effect_exports.runPromise(identities);
-  const tool = Effect_exports.tryPromise(async () => await readRustTool("-Vv"));
-  const version = Effect_exports.option(tool);
-  const installed = await Effect_exports.runPromise(version);
-  const rust = Option_exports.getOrNull(installed);
-  return JSON.stringify([RUNNER_REVISION, process.version, process.platform, binaries, rust]);
-}
-
-// sandbox/control-diagnostics.mts
+// sandbox/controls/control-diagnostics.mts
 var MAX_PREVIEW_CHARS = 96;
 var MAX_NEARBY_HINTS = 3;
 var MIN_ANCHOR_CHARS = 6;
@@ -22137,7 +20938,7 @@ function buildEditError({ current, find, kind, label }) {
   return new CheckerError({ message: ambiguousMessage });
 }
 
-// sandbox/apply-control.mts
+// sandbox/controls/apply-control.mts
 var MAX_CONTROL_EDITS = 8;
 var MAX_EDIT_BYTES = 65536;
 function readEditText({ allowEmpty, value: value3 }) {
@@ -22248,9 +21049,10 @@ function applyControl({ control, label = "control", limit, source }) {
   throw new CheckerError({ message });
 }
 
-// sandbox/validate-check.mts
+// sandbox/controls/validate-check.mts
 var MAX_FIELD_BYTES = 131072;
 var ID_PATTERN = new RegExp("^[a-z][a-z0-9\\-]{0,63}$", "v");
+var NATIVE_TEST_RUNTIMES = /* @__PURE__ */ new Set(["node", "python"]);
 function readFields(candidate) {
   if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
     throw new CheckerError({ message: "the generated checker must be an object" });
@@ -22269,6 +21071,7 @@ function readText(value3) {
 }
 function readRuntime(value3) {
   switch (value3) {
+    case "go":
     case "node":
     case "python":
     case "rust": {
@@ -22335,7 +21138,7 @@ function attachEntry({ base, fields, files }) {
     return { ...base, test: readField({ fields, key: "test" }) };
   }
   const testFile = readField({ fields, key: "testFile" });
-  const isNative = base.runtime !== "rust" && base.expected === true;
+  const isNative = NATIVE_TEST_RUNTIMES.has(base.runtime) && base.expected === true;
   const hasTest = files.has(testFile) && testFile !== base.subject;
   if (!hasTest || !isNative) {
     throw new CheckerError({
@@ -22353,6 +21156,1613 @@ function validate3({ check: check2, files }) {
   }
   const base = { ...target, ...readControls({ fields, source }) };
   return attachEntry({ base, fields, files });
+}
+
+// sandbox/os/linux-sandbox.mts
+import { access as access2, realpath as realpath2 } from "node:fs/promises";
+import { dirname as dirname3 } from "node:path";
+
+// sandbox/runtimes/build-go-command.mts
+var GO_SCRIPT = 'go="$1"; out="$2"; probe="$3"; mode="$4"; "$go" build -mod="$mode" -o "$out" "./$probe" && exec "$out"';
+function readGoModMode({ deps, files }) {
+  if (deps.goVendor !== void 0 || [...files.keys()].some((path) => path.startsWith("vendor/"))) {
+    return "vendor";
+  }
+  return "readonly";
+}
+function buildGoCommand({
+  binary,
+  deps,
+  files,
+  output,
+  probeDir
+}) {
+  const mode = readGoModMode({ deps, files });
+  return ["/bin/sh", "-c", GO_SCRIPT, "tenet-go", binary, output, probeDir, mode];
+}
+
+// sandbox/runtimes/build-go-env.mts
+function buildGoEnv({ goroot, probeTmp }) {
+  return {
+    CGO_ENABLED: "0",
+    GOCACHE: `${probeTmp}/gocache`,
+    GOMODCACHE: `${probeTmp}/gomodcache`,
+    GOPATH: `${probeTmp}/gopath`,
+    GOPROXY: "off",
+    GOROOT: goroot,
+    GOSUMDB: "off"
+  };
+}
+
+// sandbox/runtimes/build-node-command.mts
+var NODE_FLAGS = [
+  "--disable-wasm-trap-handler",
+  "--max-old-space-size=96",
+  "--v8-pool-size=2"
+];
+function buildNodeCommand({
+  binary,
+  check: check2,
+  probeFile: probeFile2
+}) {
+  if (check2.testFile === void 0) {
+    return [binary, ...NODE_FLAGS, `./${probeFile2}`];
+  }
+  return [binary, ...NODE_FLAGS, "--test", "--test-reporter=tap", "--", `./${check2.testFile}`];
+}
+
+// sandbox/runtimes/build-python-command.mts
+import { basename, dirname } from "node:path";
+function buildPythonCommand({
+  binary,
+  check: check2,
+  probeFile: probeFile2
+}) {
+  if (check2.testFile === void 0) {
+    return [binary, "-B", `./${probeFile2}`];
+  }
+  const testDir = dirname(check2.testFile);
+  const testPattern = basename(check2.testFile);
+  return [binary, "-B", "-m", "unittest", "discover", "-s", `./${testDir}`, "-p", testPattern];
+}
+
+// sandbox/runtimes/build-rust-command.mts
+var SINGLE_FILE_SCRIPT = 'rustc="$1"; probe="$2"; out="$3"; shift 3; "$rustc" --edition=2021 --crate-name tenet_probe "$@" ./"$probe" -o "$out" && exec "$out"';
+var LIB_CRATE_SCRIPT = 'rustc="$1"; probe="$2"; out="$3"; libout="$4"; crate="$5"; edition="$6"; shift 6; "$rustc" --crate-type=lib --crate-name="$crate" --edition="$edition" "$@" ./src/lib.rs -o "$libout" && "$rustc" --edition="$edition" --crate-name=tenet_probe --extern "$crate=$libout" "$@" ./"$probe" -o "$out" && exec "$out"';
+function buildDepFlags({ deps, depsMount, linkerArg }) {
+  const flags = [];
+  if (linkerArg !== void 0) {
+    flags.push("-C", `linker=${linkerArg}`);
+  }
+  if (deps.rustDepsDir === void 0) {
+    return flags;
+  }
+  const externArgs = deps.rustExterns.flatMap(({ file, name }) => [
+    "--extern",
+    `${name}=${depsMount}/${file}`
+  ]);
+  return [...flags, "-L", `dependency=${depsMount}`, ...externArgs];
+}
+function buildCfgFlags(features) {
+  return features.flatMap((feature) => ["--cfg", `feature="${feature}"`]);
+}
+function buildRustCommand({
+  deps,
+  depsMount,
+  linkerArg,
+  probeFile: probeFile2,
+  probeTmp,
+  rustCrate,
+  rustc
+}) {
+  const depFlags = buildDepFlags({ deps, depsMount, linkerArg });
+  const output = `${probeTmp}/observe`;
+  if (Option_exports.isNone(rustCrate)) {
+    return ["/bin/sh", "-c", SINGLE_FILE_SCRIPT, "tenet-rust", rustc, probeFile2, output, ...depFlags];
+  }
+  const { edition, features, name } = rustCrate.value;
+  const libOutput = `${probeTmp}/lib${name}.rlib`;
+  const cfgFlags = buildCfgFlags(features);
+  const head3 = [
+    "/bin/sh",
+    "-c",
+    LIB_CRATE_SCRIPT,
+    "tenet-rust",
+    rustc,
+    probeFile2,
+    output,
+    libOutput,
+    name,
+    edition
+  ];
+  return [...head3, ...cfgFlags, ...depFlags];
+}
+
+// sandbox/runtimes/python-paths.mts
+import { dirname as dirname2, posix } from "node:path";
+var ROOT_SEGMENTS = /* @__PURE__ */ new Set([".", "/"]);
+function isPackageDirectory({ files, path }) {
+  const initPath = posix.join(path, "__init__.py");
+  return files.has(initPath);
+}
+function readSourceFolder({ files, path }) {
+  if (path.endsWith("/__init__.py")) {
+    const pkg = dirname2(path);
+    const parent = dirname2(pkg);
+    if (!ROOT_SEGMENTS.has(parent) && !isPackageDirectory({ files, path: parent })) {
+      return Option_exports.some(parent);
+    }
+    return Option_exports.none();
+  }
+  if (path.startsWith("src/") && path.endsWith(".py")) {
+    return Option_exports.some("src");
+  }
+  return Option_exports.none();
+}
+function readPythonPaths({ files, root }) {
+  const extraFolders = /* @__PURE__ */ new Set();
+  for (const path of files.keys()) {
+    const folder = readSourceFolder({ files, path });
+    if (Option_exports.isSome(folder)) {
+      extraFolders.add(folder.value);
+    }
+  }
+  const sorted = [...extraFolders].toSorted();
+  const resolved = sorted.map((folder) => posix.join(root, folder));
+  return [root, ...resolved].join(":");
+}
+
+// sandbox/runtimes/python-tool.mts
+import { access, realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { env as hostEnvironment } from "node:process";
+
+// try-operation.mts
+function tryOperation(input) {
+  function fail7(cause) {
+    return new CheckerError({ cause, message: input.message });
+  }
+  return Effect_exports.tryPromise({ catch: fail7, try: input.run });
+}
+
+// classify-result.mts
+async function classifyResult(input) {
+  const work = tryOperation(input);
+  const classified = Effect_exports.result(work);
+  return await Effect_exports.runPromise(classified);
+}
+
+// sandbox/host-tool.mts
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var executeFile = promisify(execFile);
+function readCompletedExit(error) {
+  const failure = new CheckerError({
+    cause: error,
+    message: "the isolated tool could not run to completion"
+  });
+  if (!(error instanceof Error) || !("code" in error) || typeof error.code !== "number") {
+    throw failure;
+  }
+  if (!("stdout" in error) || typeof error.stdout !== "string") {
+    throw failure;
+  }
+  if (!("stderr" in error) || typeof error.stderr !== "string") {
+    throw failure;
+  }
+  return { status: error.code, stderr: error.stderr, stdout: error.stdout };
+}
+function createToolFailure(cause) {
+  return new CheckerError({ cause, message: "external tool did not complete" });
+}
+function readFailedExecution(error) {
+  return readCompletedExit(error.cause);
+}
+function buildExecution(streams) {
+  return { ...streams, status: 0 };
+}
+async function runFile({ file, args: args2, options }) {
+  async function run3() {
+    return await executeFile(file, args2, options);
+  }
+  const launch = Effect_exports.tryPromise({ catch: createToolFailure, try: run3 });
+  const result3 = Effect_exports.match(launch, {
+    onFailure: readFailedExecution,
+    onSuccess: buildExecution
+  });
+  return await Effect_exports.runPromise(result3);
+}
+
+// sandbox/runtimes/python-tool.mts
+var SYSTEM_PYTHON = "/usr/bin/python3";
+var TOOL_TIMEOUT_MS = 2e4;
+var OUTPUT_BYTES = 8192;
+async function probeHostPython() {
+  const env6 = {
+    HOME: hostEnvironment.HOME,
+    PATH: hostEnvironment.PATH
+  };
+  const cwd2 = tmpdir();
+  const result3 = await runFile({
+    args: ["-c", "import os, sys; print(os.path.realpath(sys.executable))"],
+    file: "python3",
+    options: {
+      cwd: cwd2,
+      encoding: "utf-8",
+      env: env6,
+      killSignal: "SIGKILL",
+      maxBuffer: OUTPUT_BYTES,
+      timeout: TOOL_TIMEOUT_MS
+    }
+  });
+  if (result3.status !== 0) {
+    throw new CheckerError({ message: "python3 is unavailable" });
+  }
+  const executable = result3.stdout.trim();
+  if (executable.length === 0) {
+    throw new CheckerError({ message: "python3 returned an empty executable path" });
+  }
+  return await realpath(executable);
+}
+async function readPythonTool() {
+  const probed = await classifyResult({
+    message: "python3 probe failed",
+    run: probeHostPython
+  });
+  if (Result_exports.isSuccess(probed)) {
+    return probed.success;
+  }
+  await access(SYSTEM_PYTHON);
+  return await realpath(SYSTEM_PYTHON);
+}
+
+// sandbox/runtimes/read-go-tool.mts
+import { tmpdir as tmpdir2 } from "node:os";
+import { env as hostEnvironment2 } from "node:process";
+var TOOL_TIMEOUT_MS2 = 2e4;
+var OUTPUT_BYTES2 = 65536;
+async function readGoTool(args2) {
+  const env6 = {
+    GOPATH: hostEnvironment2.GOPATH,
+    GOROOT: hostEnvironment2.GOROOT,
+    HOME: hostEnvironment2.HOME,
+    PATH: hostEnvironment2.PATH
+  };
+  const cwd2 = tmpdir2();
+  const result3 = await runFile({
+    args: args2,
+    file: "go",
+    options: {
+      cwd: cwd2,
+      encoding: "utf-8",
+      env: env6,
+      killSignal: "SIGKILL",
+      maxBuffer: OUTPUT_BYTES2,
+      timeout: TOOL_TIMEOUT_MS2
+    }
+  });
+  if (result3.status !== 0 || result3.stdout.trim().length === 0) {
+    throw new CheckerError({ message: "the Go toolchain is unavailable" });
+  }
+  return result3.stdout.trim();
+}
+
+// sandbox/runtimes/read-go-version.mts
+async function readGoVersion() {
+  const probe = Effect_exports.tryPromise(async () => await readGoTool(["version"]));
+  const optional3 = Effect_exports.option(probe);
+  return await Effect_exports.runPromise(optional3);
+}
+
+// sandbox/runtimes/read-rust-crate.mts
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+// sandbox/run-optional.mts
+async function runOptional(run3) {
+  const attempt = Effect_exports.tryPromise(run3);
+  const optional3 = Effect_exports.option(attempt);
+  return await Effect_exports.runPromise(optional3);
+}
+
+// sandbox/runtimes/parse-cargo-manifest.mts
+var SECTION_PATTERN = new RegExp("^\\s*\\[(?<section>[^\\]]+)\\]\\s*$", "v");
+var STRING_FIELD_PATTERN = new RegExp('^\\s*(?<key>[A-Za-z0-9_\\-]+)\\s*=\\s*"(?<value>[^"]+)"', "v");
+var LIST_FIELD_PATTERN = new RegExp("^\\s*(?<key>[A-Za-z0-9_\\-]+)\\s*=\\s*\\[(?<items>[^\\]]*)\\]", "v");
+var QUOTED_ITEM_PATTERN = new RegExp('"(?<item>[^"]+)"', "gv");
+var VALID_EDITIONS = /* @__PURE__ */ new Set(["2015", "2018", "2021", "2024"]);
+function readQuotedItems(itemsText) {
+  const values2 = [];
+  for (const match7 of itemsText.matchAll(QUOTED_ITEM_PATTERN)) {
+    const item = match7.groups?.["item"];
+    if (item !== void 0 && item.length > 0) {
+      values2.push(item);
+    }
+  }
+  return values2;
+}
+function readSection(line) {
+  const match7 = SECTION_PATTERN.exec(line);
+  const name = match7?.groups?.["section"];
+  if (name === void 0) {
+    return Option_exports.none();
+  }
+  const trimmed = name.trim();
+  return Option_exports.some(trimmed);
+}
+function normalizeEdition(raw) {
+  if (VALID_EDITIONS.has(raw)) {
+    return raw;
+  }
+  return "2021";
+}
+function readStringField(line) {
+  const pair = STRING_FIELD_PATTERN.exec(line);
+  const key = pair?.groups?.["key"];
+  const value3 = pair?.groups?.["value"];
+  if (key === void 0 || value3 === void 0) {
+    return Option_exports.none();
+  }
+  return Option_exports.some({ key, value: value3 });
+}
+function updatePackageState({ line, state }) {
+  const field = readStringField(line);
+  if (Option_exports.isNone(field)) {
+    return state;
+  }
+  if (field.value.key === "name") {
+    const normalized = field.value.value.replaceAll("-", "_");
+    return { ...state, packageName: Option_exports.some(normalized) };
+  }
+  if (field.value.key === "edition") {
+    const edition = normalizeEdition(field.value.value);
+    return { ...state, edition };
+  }
+  return state;
+}
+function updateLibState({ line, state }) {
+  const field = readStringField(line);
+  if (Option_exports.isSome(field) && field.value.key === "name") {
+    const normalized = field.value.value.replaceAll("-", "_");
+    return { ...state, libName: Option_exports.some(normalized) };
+  }
+  return state;
+}
+function updateFeatureState({ line, state }) {
+  const listMatch = LIST_FIELD_PATTERN.exec(line);
+  const key = listMatch?.groups?.["key"];
+  const items = listMatch?.groups?.["items"];
+  if (key === void 0 || items === void 0) {
+    return state;
+  }
+  const parsedItems = readQuotedItems(items);
+  const nextFeatureEntries = new Map([
+    ...state.featureEntries,
+    [key, parsedItems]
+  ]);
+  return { ...state, featureEntries: nextFeatureEntries };
+}
+function updateManifestState({ line, state }) {
+  const nextSection = readSection(line);
+  if (Option_exports.isSome(nextSection)) {
+    return { ...state, section: nextSection.value };
+  }
+  if (state.section === "package") {
+    return updatePackageState({ line, state });
+  }
+  if (state.section === "lib") {
+    return updateLibState({ line, state });
+  }
+  if (state.section === "features") {
+    return updateFeatureState({ line, state });
+  }
+  return state;
+}
+function parseCargoManifest(toml) {
+  let state = {
+    edition: "2021",
+    featureEntries: /* @__PURE__ */ new Map(),
+    libName: Option_exports.none(),
+    packageName: Option_exports.none(),
+    section: ""
+  };
+  for (const rawLine of toml.split("\n")) {
+    const line = rawLine.split("#")[0] ?? "";
+    state = updateManifestState({ line, state });
+  }
+  return {
+    edition: state.edition,
+    featureEntries: state.featureEntries,
+    libName: state.libName,
+    packageName: state.packageName
+  };
+}
+
+// sandbox/runtimes/read-rust-crate.mts
+var MAX_FEATURES = 32;
+function isPlainFeatureName(value3) {
+  return value3.length > 0 && !value3.includes("/") && !value3.startsWith("dep:");
+}
+function advanceFeatureQueue({ featureEntries, state }) {
+  const current = state.queue.at(0);
+  const rest = state.queue.slice(1);
+  if (current === void 0 || state.seenFeatures.has(current) || !isPlainFeatureName(current)) {
+    return { ...state, queue: rest };
+  }
+  const nextSeenFeatures = /* @__PURE__ */ new Set([...state.seenFeatures, current]);
+  const children = featureEntries.get(current) ?? [];
+  return {
+    enabled: [...state.enabled, current],
+    queue: [...rest, ...children],
+    seenFeatures: nextSeenFeatures
+  };
+}
+function listEnabledFeatures({ featureEntries, seeds }) {
+  let state = {
+    enabled: [],
+    queue: [...seeds],
+    seenFeatures: /* @__PURE__ */ new Set()
+  };
+  while (state.queue.length > 0 && state.enabled.length < MAX_FEATURES) {
+    state = advanceFeatureQueue({ featureEntries, state });
+  }
+  return state.enabled;
+}
+async function readManifestText({
+  files,
+  projectRoot
+}) {
+  const staged = files.get("Cargo.toml");
+  if (staged !== void 0) {
+    return Option_exports.some(staged);
+  }
+  if (projectRoot === void 0 || projectRoot.length === 0) {
+    return Option_exports.none();
+  }
+  const manifestPath = join(projectRoot, "Cargo.toml");
+  return await runOptional(async () => await readFile(manifestPath, "utf-8"));
+}
+function buildRustCrate(manifestText) {
+  const parsed = parseCargoManifest(manifestText);
+  const resolvedName = Option_exports.orElse(parsed.libName, () => parsed.packageName);
+  if (Option_exports.isNone(resolvedName)) {
+    return Option_exports.none();
+  }
+  const defaultSeeds = parsed.featureEntries.get("default") ?? [];
+  const features = listEnabledFeatures({
+    featureEntries: parsed.featureEntries,
+    seeds: defaultSeeds
+  });
+  return Option_exports.some({
+    edition: parsed.edition,
+    features,
+    libPath: "src/lib.rs",
+    name: resolvedName.value
+  });
+}
+async function readRustCrate({
+  files,
+  projectRoot
+}) {
+  if (!files.has("src/lib.rs")) {
+    return Option_exports.none();
+  }
+  const manifestText = await readManifestText({ files, projectRoot });
+  if (Option_exports.isNone(manifestText)) {
+    return Option_exports.none();
+  }
+  return buildRustCrate(manifestText.value);
+}
+
+// sandbox/runtimes/rust-tool.mts
+import { tmpdir as tmpdir3 } from "node:os";
+import { env as hostEnvironment3 } from "node:process";
+var TOOL_TIMEOUT_MS3 = 2e4;
+var OUTPUT_BYTES3 = 65536;
+async function readRustTool(arg) {
+  const env6 = {
+    CARGO_HOME: hostEnvironment3.CARGO_HOME,
+    HOME: hostEnvironment3.HOME,
+    PATH: hostEnvironment3.PATH,
+    RUSTUP_HOME: hostEnvironment3.RUSTUP_HOME,
+    RUSTUP_TOOLCHAIN: hostEnvironment3.RUSTUP_TOOLCHAIN
+  };
+  const cwd2 = tmpdir3();
+  const result3 = await runFile({
+    args: [arg],
+    file: "rustc",
+    options: {
+      cwd: cwd2,
+      encoding: "utf-8",
+      env: env6,
+      killSignal: "SIGKILL",
+      maxBuffer: OUTPUT_BYTES3,
+      timeout: TOOL_TIMEOUT_MS3
+    }
+  });
+  if (result3.status !== 0) {
+    throw new CheckerError({ message: "the Rust toolchain is unavailable" });
+  }
+  return result3.stdout.trim();
+}
+
+// sandbox/os/linux-sandbox.mts
+var BWRAP = "/usr/bin/bwrap";
+var PYTHON = "/usr/bin/python3";
+var PRLIMIT = "/usr/bin/prlimit";
+var SYSTEM_PATH = "/usr/bin:/bin";
+var NODE = "/runtime/node";
+var GO_ROOT_MOUNT = "/goroot";
+var COMPILED_RUNTIMES = /* @__PURE__ */ new Set(["go", "rust"]);
+var ISOLATION = [
+  ["--unshare-all", "--new-session", "--die-with-parent", "--clearenv"],
+  ["--cap-drop", "ALL"],
+  ["--dir", "/usr"],
+  ["--ro-bind", "/usr/bin", "/usr/bin"],
+  ["--ro-bind", "/usr/lib", "/usr/lib"],
+  ["--ro-bind-try", "/usr/lib64", "/usr/lib64"],
+  ["--symlink", "usr/bin", "/bin"],
+  ["--symlink", "usr/lib", "/lib"],
+  ["--symlink", "usr/lib64", "/lib64"],
+  ["--proc", "/proc"],
+  ["--dev", "/dev"],
+  ["--size", "67108864", "--tmpfs", "/tmp"],
+  ["--dir", "/runtime"],
+  ["--dir", "/deps"]
+].flat();
+var BASE_ENV_FLAGS = [
+  ["--setenv", "PATH", SYSTEM_PATH],
+  ["--setenv", "HOME", "/tmp"],
+  ["--setenv", "TMPDIR", "/tmp"],
+  ["--setenv", "UV_THREADPOOL_SIZE", "2"],
+  ["--setenv", "OMP_NUM_THREADS", "1"],
+  ["--setenv", "OPENBLAS_NUM_THREADS", "1"],
+  ["--setenv", "RAYON_NUM_THREADS", "2"],
+  ["--setenv", "PYTHONDONTWRITEBYTECODE", "1"]
+].flat();
+function readCpuFlag(runtime) {
+  if (COMPILED_RUNTIMES.has(runtime)) {
+    return "--cpu=20";
+  }
+  return "--cpu=8";
+}
+function buildLimits(runtime) {
+  const cpu = readCpuFlag(runtime);
+  return [
+    PRLIMIT,
+    cpu,
+    "--as=4294967296",
+    "--nproc=512",
+    "--fsize=33554432",
+    "--nofile=256",
+    "--core=0",
+    "--"
+  ];
+}
+async function buildRuntimeMount(runtime) {
+  switch (runtime) {
+    case "go": {
+      const rawGoroot = await readGoTool(["env", "GOROOT"]);
+      const goroot = await realpath2(rawGoroot);
+      return ["--ro-bind", goroot, GO_ROOT_MOUNT];
+    }
+    case "node": {
+      return ["--ro-bind", await realpath2(process.execPath), NODE];
+    }
+    case "python": {
+      return [];
+    }
+    case "rust": {
+      const sysroot = await readRustTool("--print=sysroot");
+      const toolchain = await realpath2(sysroot);
+      return [
+        "--ro-bind",
+        toolchain,
+        "/toolchain",
+        "--ro-bind-try",
+        "/usr/libexec/gcc",
+        "/usr/libexec/gcc"
+      ];
+    }
+  }
+}
+function buildDepMounts(deps) {
+  const mounts = [];
+  if (deps.goVendor !== void 0) {
+    mounts.push("--ro-bind", deps.goVendor, "/project/vendor");
+  }
+  if (deps.nodeModules !== void 0) {
+    mounts.push("--ro-bind", deps.nodeModules, "/project/node_modules");
+  }
+  if (deps.pythonSitePackages !== void 0) {
+    mounts.push("--ro-bind", deps.pythonSitePackages, "/deps/python");
+  }
+  if (deps.rustDepsDir !== void 0) {
+    mounts.push("--ro-bind", deps.rustDepsDir, "/deps/rust");
+  }
+  return mounts;
+}
+function buildGoProgram({ deps, files, probeFile: probeFile2 }) {
+  const probeDir = dirname3(probeFile2);
+  return buildGoCommand({
+    binary: `${GO_ROOT_MOUNT}/bin/go`,
+    deps,
+    files,
+    output: "/tmp/observe",
+    probeDir
+  });
+}
+async function buildProgram({
+  check: check2,
+  deps,
+  files,
+  probeFile: probeFile2,
+  projectRoot
+}) {
+  switch (check2.runtime) {
+    case "go": {
+      return buildGoProgram({ check: check2, deps, files, probeFile: probeFile2, projectRoot });
+    }
+    case "node": {
+      return buildNodeCommand({ binary: NODE, check: check2, probeFile: probeFile2 });
+    }
+    case "python": {
+      return buildPythonCommand({ binary: PYTHON, check: check2, probeFile: probeFile2 });
+    }
+    case "rust": {
+      const rustCrate = await readRustCrate({ files, projectRoot });
+      return buildRustCommand({
+        deps,
+        depsMount: "/deps/rust",
+        linkerArg: "/usr/bin/gcc",
+        probeFile: probeFile2,
+        probeTmp: "/tmp",
+        rustCrate,
+        rustc: "/toolchain/bin/rustc"
+      });
+    }
+  }
+}
+function buildEnvFlags({ deps, files, runtime }) {
+  if (runtime === "go") {
+    const goEnv = buildGoEnv({ goroot: GO_ROOT_MOUNT, probeTmp: "/tmp" });
+    const goFlags = Object.entries(goEnv).flatMap(([key, value3]) => ["--setenv", key, value3]);
+    return [...BASE_ENV_FLAGS, ...goFlags];
+  }
+  if (runtime !== "python") {
+    return BASE_ENV_FLAGS;
+  }
+  const basePath = readPythonPaths({ files, root: "/project" });
+  if (deps.pythonSitePackages === void 0) {
+    return [...BASE_ENV_FLAGS, "--setenv", "PYTHONPATH", basePath];
+  }
+  return [...BASE_ENV_FLAGS, "--setenv", "PYTHONPATH", `${basePath}:/deps/python`];
+}
+async function createLinuxSandbox({
+  check: check2,
+  deps,
+  files,
+  probeFile: probeFile2,
+  projectRoot,
+  work
+}) {
+  await access2(BWRAP);
+  await access2(PRLIMIT);
+  const mounts = await buildRuntimeMount(check2.runtime);
+  const depMounts = buildDepMounts(deps);
+  const envFlags = buildEnvFlags({ deps, files, runtime: check2.runtime });
+  const program = await buildProgram({ check: check2, deps, files, probeFile: probeFile2, projectRoot });
+  const limits = buildLimits(check2.runtime);
+  return {
+    args: [
+      ...ISOLATION,
+      ...mounts,
+      "--ro-bind",
+      work,
+      "/project",
+      ...depMounts,
+      "--chdir",
+      "/project",
+      ...envFlags,
+      "--",
+      ...limits,
+      ...program
+    ],
+    env: { PATH: SYSTEM_PATH },
+    file: BWRAP
+  };
+}
+
+// sandbox/os/macos-sandbox.mts
+import { access as access3, realpath as realpath3 } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname as dirname4, join as join2 } from "node:path";
+
+// sandbox/os/macos-profile.mts
+function escapeScheme(value3) {
+  return value3.replaceAll("\\", String.raw`\\`).replaceAll('"', String.raw`\"`);
+}
+function collectReadOnlyDepPaths(deps) {
+  const paths = [];
+  for (const entry of [deps.goVendor, deps.nodeModules, deps.pythonSitePackages, deps.rustDepsDir]) {
+    if (entry !== void 0) {
+      paths.push(entry);
+    }
+  }
+  return paths;
+}
+function buildSeatbeltProfile({
+  deps,
+  probeTmp,
+  runtimeRoot,
+  work
+}) {
+  const allowedReadPaths = [runtimeRoot, work, probeTmp, ...collectReadOnlyDepPaths(deps)];
+  const readRules = allowedReadPaths.map((entry) => `(subpath "${escapeScheme(entry)}")`).join(" ");
+  const safeTmp = escapeScheme(probeTmp);
+  return [
+    "(version 1)",
+    "(deny default)",
+    "(allow process-fork process-exec)",
+    "(allow signal (target same-sandbox))",
+    "(allow process-info* (target same-sandbox))",
+    "(allow sysctl-read)",
+    "(allow mach-lookup)",
+    "(allow file-read*)",
+    "(allow file-map-executable)",
+    '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath "/private/var/folders"))',
+    `(allow file-read-data ${readRules})`,
+    `(allow file-write* (subpath "${safeTmp}") (literal "/dev/null") (literal "/dev/zero"))`,
+    "(deny network*)"
+  ].join("\n");
+}
+
+// sandbox/os/macos-sandbox.mts
+var SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+var SYSTEM_PATH2 = "/usr/bin:/bin";
+var DEFAULT_CPU_LIMIT = "8";
+var COMPILED_CPU_LIMIT = "20";
+var COMPILED_RUNTIMES2 = /* @__PURE__ */ new Set(["go", "rust"]);
+function assertBoundedRuntimeRoot(root) {
+  const userHome = homedir();
+  const forbiddenRoots = /* @__PURE__ */ new Set(["/", "/Users", "/private", "/var", userHome]);
+  if (forbiddenRoots.has(root)) {
+    throw new CheckerError({ message: "runtime installation path cannot be safely sandboxed" });
+  }
+  return root;
+}
+function readInstallRoot(binary) {
+  const binDir = dirname4(binary);
+  const installRoot = dirname4(binDir);
+  return assertBoundedRuntimeRoot(installRoot);
+}
+async function resolveNodeRuntime({ check: check2, probeFile: probeFile2 }) {
+  const binary = await realpath3(process.execPath);
+  const runtimeRoot = readInstallRoot(binary);
+  const command = buildNodeCommand({ binary, check: check2, probeFile: probeFile2 });
+  return { command, runtimeRoot };
+}
+async function resolvePythonRuntime({ check: check2, probeFile: probeFile2 }) {
+  const binary = await readPythonTool();
+  const runtimeRoot = readInstallRoot(binary);
+  const command = buildPythonCommand({ binary, check: check2, probeFile: probeFile2 });
+  return { command, runtimeRoot };
+}
+async function resolveRustRuntime({
+  deps,
+  files,
+  probeFile: probeFile2,
+  probeTmp,
+  projectRoot
+}) {
+  const sysroot = await readRustTool("--print=sysroot");
+  const resolved = await realpath3(sysroot);
+  const runtimeRoot = assertBoundedRuntimeRoot(resolved);
+  const rustc = join2(runtimeRoot, "bin", "rustc");
+  const rustCrate = await readRustCrate({ files, projectRoot });
+  const depsMount = deps.rustDepsDir ?? "";
+  const command = buildRustCommand({ deps, depsMount, probeFile: probeFile2, probeTmp, rustCrate, rustc });
+  return { command, runtimeRoot };
+}
+async function resolveGoRuntime({
+  deps,
+  files,
+  probeFile: probeFile2,
+  probeTmp
+}) {
+  const rawGoroot = await readGoTool(["env", "GOROOT"]);
+  const canonicalGoroot = await realpath3(rawGoroot);
+  const runtimeRoot = assertBoundedRuntimeRoot(canonicalGoroot);
+  const binary = join2(runtimeRoot, "bin", "go");
+  const probeDir = dirname4(probeFile2);
+  const output = join2(probeTmp, "observe");
+  const command = buildGoCommand({ binary, deps, files, output, probeDir });
+  const extraEnv = buildGoEnv({ goroot: runtimeRoot, probeTmp });
+  return { command, extraEnv, runtimeRoot };
+}
+async function resolveRuntime(input) {
+  switch (input.check.runtime) {
+    case "go": {
+      return await resolveGoRuntime(input);
+    }
+    case "node": {
+      return await resolveNodeRuntime(input);
+    }
+    case "python": {
+      return await resolvePythonRuntime(input);
+    }
+    case "rust": {
+      return await resolveRustRuntime(input);
+    }
+  }
+}
+function buildSandboxEnv({
+  deps,
+  extraEnv,
+  files,
+  probeTmp,
+  runtime,
+  work
+}) {
+  const commonEnv = {
+    HOME: probeTmp,
+    OMP_NUM_THREADS: "1",
+    OPENBLAS_NUM_THREADS: "1",
+    PATH: SYSTEM_PATH2,
+    PYTHONDONTWRITEBYTECODE: "1",
+    RAYON_NUM_THREADS: "2",
+    TMPDIR: probeTmp,
+    UV_THREADPOOL_SIZE: "2",
+    ...extraEnv
+  };
+  if (runtime !== "python") {
+    return commonEnv;
+  }
+  const basePath = readPythonPaths({ files, root: work });
+  if (deps.pythonSitePackages === void 0) {
+    return { ...commonEnv, PYTHONPATH: basePath };
+  }
+  return { ...commonEnv, PYTHONPATH: `${basePath}:${deps.pythonSitePackages}` };
+}
+function readCpuLimit(runtime) {
+  if (COMPILED_RUNTIMES2.has(runtime)) {
+    return COMPILED_CPU_LIMIT;
+  }
+  return DEFAULT_CPU_LIMIT;
+}
+async function createMacosSandbox({
+  check: check2,
+  deps,
+  files,
+  probeFile: probeFile2,
+  probeTmp,
+  projectRoot,
+  work
+}) {
+  await access3(SANDBOX_EXEC);
+  const canonicalWork = await realpath3(work);
+  const canonicalTmp = await realpath3(probeTmp);
+  const { command, extraEnv, runtimeRoot } = await resolveRuntime({
+    check: check2,
+    deps,
+    files,
+    probeFile: probeFile2,
+    probeTmp: canonicalTmp,
+    projectRoot
+  });
+  const profile = buildSeatbeltProfile({
+    deps,
+    probeTmp: canonicalTmp,
+    runtimeRoot,
+    work: canonicalWork
+  });
+  const env6 = buildSandboxEnv({
+    deps,
+    extraEnv,
+    files,
+    probeTmp: canonicalTmp,
+    runtime: check2.runtime,
+    work: canonicalWork
+  });
+  const cpuLimit = readCpuLimit(check2.runtime);
+  const limitScript = `ulimit -t ${cpuLimit} -f 65536 -c 0 && exec "$@"`;
+  return {
+    args: ["-p", profile, "/bin/sh", "-c", limitScript, "tenet-limit", ...command],
+    cwd: canonicalWork,
+    env: env6,
+    file: SANDBOX_EXEC
+  };
+}
+
+// sandbox/os/preflight.mts
+import { access as access4 } from "node:fs/promises";
+var BWRAP2 = "/usr/bin/bwrap";
+var PRLIMIT2 = "/usr/bin/prlimit";
+var SANDBOX_EXEC2 = "/usr/bin/sandbox-exec";
+var PREFLIGHT_TIMEOUT_MS = 15e3;
+var OUTPUT_BYTES4 = 16384;
+var SYSTEM_PATH3 = "/usr/bin:/bin";
+var MACOS_PREFLIGHT_PROFILE = "(version 1)(deny default)(allow process-exec)(allow file-read*)(allow file-map-executable)(allow sysctl-read)(deny network*)";
+var LINUX_PREFLIGHT_ARGS = [
+  ["--unshare-all", "--new-session", "--die-with-parent", "--clearenv"],
+  ["--cap-drop", "ALL", "--ro-bind", "/", "/"],
+  ["--proc", "/proc", "--dev", "/dev"],
+  ["--size", "67108864", "--tmpfs", "/tmp"],
+  ["--", PRLIMIT2, "--cpu=2", "--", "/usr/bin/true"]
+].flat();
+async function checkLinuxTools() {
+  await access4(BWRAP2);
+  await access4(PRLIMIT2);
+}
+async function ensureLinuxTools() {
+  const check2 = tryOperation({
+    message: "an isolated Linux runner with bubblewrap and prlimit is required",
+    run: checkLinuxTools
+  });
+  await Effect_exports.runPromise(check2);
+}
+async function verifyLinuxSandbox() {
+  await ensureLinuxTools();
+  const result3 = await runFile({
+    args: LINUX_PREFLIGHT_ARGS,
+    file: BWRAP2,
+    options: {
+      encoding: "utf-8",
+      env: { PATH: SYSTEM_PATH3 },
+      killSignal: "SIGKILL",
+      maxBuffer: OUTPUT_BYTES4,
+      timeout: PREFLIGHT_TIMEOUT_MS
+    }
+  });
+  if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
+    throw new CheckerError({
+      message: "install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit"
+    });
+  }
+  if (result3.status !== 0) {
+    throw new CheckerError({
+      message: "the Linux bubblewrap sandbox is unavailable in this environment"
+    });
+  }
+}
+async function checkMacosTool() {
+  await access4(SANDBOX_EXEC2);
+}
+async function ensureMacosTool() {
+  const check2 = tryOperation({
+    message: "macOS sandbox-exec is unavailable in this environment",
+    run: checkMacosTool
+  });
+  await Effect_exports.runPromise(check2);
+}
+function readMacosFailureMessage(stderr) {
+  if (stderr.includes("Operation not permitted")) {
+    return "macOS sandbox-exec cannot nest inside an outer sandbox (such as an agent workspace sandbox); run outside the outer macOS sandbox or in a Linux container with bubblewrap";
+  }
+  return "the macOS sandbox-exec runner is unavailable in this environment";
+}
+async function verifyMacosSandbox() {
+  await ensureMacosTool();
+  const result3 = await runFile({
+    args: ["-p", MACOS_PREFLIGHT_PROFILE, "/usr/bin/true"],
+    file: SANDBOX_EXEC2,
+    options: {
+      encoding: "utf-8",
+      env: { PATH: SYSTEM_PATH3 },
+      killSignal: "SIGKILL",
+      maxBuffer: OUTPUT_BYTES4,
+      timeout: PREFLIGHT_TIMEOUT_MS
+    }
+  });
+  if (result3.status !== 0) {
+    const message = readMacosFailureMessage(result3.stderr);
+    throw new CheckerError({ message });
+  }
+}
+async function assertSandboxAvailable() {
+  if (process.platform === "linux") {
+    await verifyLinuxSandbox();
+    return;
+  }
+  if (process.platform === "darwin") {
+    await verifyMacosSandbox();
+    return;
+  }
+  throw new CheckerError({
+    message: "an isolated Linux or macOS runner is required for behavior checks"
+  });
+}
+
+// sandbox/runner.mts
+import { mkdir as mkdir2, mkdtemp, rm, writeFile as writeFile2 } from "node:fs/promises";
+import { tmpdir as tmpdir4 } from "node:os";
+import { dirname as dirname6, join as join6, resolve as resolve3, sep as sep2 } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+
+// sandbox/runner-sandbox.mts
+import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { dirname as dirname5, join as join5 } from "node:path";
+
+// sandbox/project-deps.mts
+import { access as access5, readdir as readdir2, readFile as readFile3, realpath as realpath4, stat as stat2 } from "node:fs/promises";
+import { homedir as homedir2 } from "node:os";
+import { join as join4, sep } from "node:path";
+
+// sandbox/rust-deps.mts
+import { readdir, readFile as readFile2, stat } from "node:fs/promises";
+import { join as join3 } from "node:path";
+var MAX_RUST_EXTERNS = 64;
+var RUST_CRATE_PATTERN = new RegExp("^lib(?<name>[A-Za-z0-9_]+)-[0-9a-f]{16}\\.(?<ext>rlib|dylib|so)$", "v");
+var CARGO_NAME_PATTERN = new RegExp('^\\s*name\\s*=\\s*"(?<name>[^"]+)"', "mv");
+async function readCargoPackageName(projectRoot) {
+  const manifestPath = join3(projectRoot, "Cargo.toml");
+  const manifest = await runOptional(async () => await readFile2(manifestPath, "utf-8"));
+  if (Option_exports.isNone(manifest)) {
+    return Option_exports.none();
+  }
+  const match7 = CARGO_NAME_PATTERN.exec(manifest.value);
+  const rawName = match7?.groups?.["name"];
+  if (rawName === void 0) {
+    return Option_exports.none();
+  }
+  const normalized = rawName.replaceAll("-", "_");
+  return Option_exports.some(normalized);
+}
+async function readRustFileMtime(fullPath) {
+  const info = await runOptional(async () => await stat(fullPath));
+  if (Option_exports.isNone(info) || !info.value.isFile()) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(info.value.mtimeMs);
+}
+async function readRustArtifact({
+  depsDir,
+  entry,
+  selfCrate
+}) {
+  const match7 = RUST_CRATE_PATTERN.exec(entry);
+  const name = match7?.groups?.["name"];
+  const selfName = Option_exports.getOrUndefined(selfCrate);
+  if (name === void 0 || name === selfName) {
+    return Option_exports.none();
+  }
+  const artifactPath = join3(depsDir, entry);
+  const mtimeMs = await readRustFileMtime(artifactPath);
+  if (Option_exports.isNone(mtimeMs)) {
+    return Option_exports.none();
+  }
+  return Option_exports.some({ file: entry, mtimeMs: mtimeMs.value, name });
+}
+function listOrderedExterns(latestArtifacts) {
+  const orderedNames = [...latestArtifacts.keys()].toSorted().slice(0, MAX_RUST_EXTERNS);
+  const externs = [];
+  for (const name of orderedNames) {
+    const artifact = latestArtifacts.get(name);
+    if (artifact !== void 0) {
+      externs.push({ file: artifact.file, name: artifact.name });
+    }
+  }
+  return externs;
+}
+function indexLatestArtifacts(artifacts) {
+  const latestArtifacts = /* @__PURE__ */ new Map();
+  for (const artifact of artifacts) {
+    const prior = latestArtifacts.get(artifact.name);
+    if (prior === void 0 || artifact.mtimeMs > prior.mtimeMs) {
+      latestArtifacts.set(artifact.name, artifact);
+    }
+  }
+  return latestArtifacts;
+}
+async function readAllArtifacts({
+  depsDir,
+  entries: entries3,
+  selfCrate
+}) {
+  const found = [];
+  for (const entry of entries3) {
+    const artifact = await readRustArtifact({ depsDir, entry, selfCrate });
+    if (Option_exports.isSome(artifact)) {
+      found.push(artifact.value);
+    }
+  }
+  return found;
+}
+async function collectRustExterns({
+  depsDir,
+  projectRoot
+}) {
+  const listed = await runOptional(async () => await readdir(depsDir));
+  if (Option_exports.isNone(listed)) {
+    return [];
+  }
+  const selfCrate = await readCargoPackageName(projectRoot);
+  const entries3 = listed.value.toSorted();
+  const found = await readAllArtifacts({ depsDir, entries: entries3, selfCrate });
+  const latestArtifacts = indexLatestArtifacts(found);
+  return listOrderedExterns(latestArtifacts);
+}
+
+// sandbox/project-deps.mts
+var EMPTY_DEPS = { rustExterns: [] };
+function isBoundedDepPath(candidate) {
+  const userHome = homedir2();
+  const forbiddenPaths = ["/", "/Users", "/private", "/var", userHome];
+  const forbiddenRoots = new Set(forbiddenPaths);
+  return !forbiddenRoots.has(candidate);
+}
+async function readCanonicalDirectory(candidate) {
+  await access5(candidate);
+  const canonical = await realpath4(candidate);
+  const info = await stat2(canonical);
+  if (!info.isDirectory() || !isBoundedDepPath(canonical)) {
+    throw new CheckerError({ message: "dependency path is not a bounded directory" });
+  }
+  return canonical;
+}
+async function resolveDirectory(candidate) {
+  return await runOptional(async () => await readCanonicalDirectory(candidate));
+}
+async function resolveNodeDeps(projectRoot) {
+  const candidate = join4(projectRoot, "node_modules");
+  const nodeModules = await resolveDirectory(candidate);
+  if (Option_exports.isNone(nodeModules)) {
+    return EMPTY_DEPS;
+  }
+  return { nodeModules: nodeModules.value, rustExterns: [] };
+}
+async function findSitePackagesInLib(libDir) {
+  const listed = await runOptional(async () => await readdir2(libDir));
+  if (Option_exports.isNone(listed)) {
+    return Option_exports.none();
+  }
+  const pythonDirs = listed.value.filter((entry) => entry.startsWith("python")).toSorted();
+  for (const entry of pythonDirs) {
+    const candidate = join4(libDir, entry, "site-packages");
+    const sitePackages = await resolveDirectory(candidate);
+    if (Option_exports.isSome(sitePackages)) {
+      return sitePackages;
+    }
+  }
+  return Option_exports.none();
+}
+async function resolvePythonSitePackages(venvDir) {
+  const libCandidate = join4(venvDir, "lib");
+  const libDir = await resolveDirectory(libCandidate);
+  if (Option_exports.isSome(libDir)) {
+    return await findSitePackagesInLib(libDir.value);
+  }
+  const winCandidate = join4(venvDir, "Lib", "site-packages");
+  return await resolveDirectory(winCandidate);
+}
+async function resolvePythonDeps(projectRoot) {
+  const venvDir = join4(projectRoot, ".venv");
+  const pythonSitePackages = await resolvePythonSitePackages(venvDir);
+  if (Option_exports.isNone(pythonSitePackages)) {
+    return EMPTY_DEPS;
+  }
+  return { pythonSitePackages: pythonSitePackages.value, rustExterns: [] };
+}
+async function resolveRustDeps(projectRoot) {
+  const candidate = join4(projectRoot, "target", "debug", "deps");
+  const rustDepsDir = await resolveDirectory(candidate);
+  if (Option_exports.isNone(rustDepsDir)) {
+    return EMPTY_DEPS;
+  }
+  const rustExterns = await collectRustExterns({ depsDir: rustDepsDir.value, projectRoot });
+  return { rustDepsDir: rustDepsDir.value, rustExterns };
+}
+async function resolveGoDeps(projectRoot) {
+  const vendorCandidate = join4(projectRoot, "vendor");
+  const vendorOption = await resolveDirectory(vendorCandidate);
+  const goVendor = Option_exports.getOrUndefined(vendorOption);
+  const modCandidate = join4(projectRoot, "go.mod");
+  const modOption = await runOptional(async () => await readFile3(modCandidate, "utf-8"));
+  const goMod = Option_exports.getOrUndefined(modOption);
+  return { goMod, goVendor, rustExterns: [] };
+}
+async function selectDepsForRuntime({
+  projectRoot,
+  runtime
+}) {
+  switch (runtime) {
+    case "go": {
+      return await resolveGoDeps(projectRoot);
+    }
+    case "node": {
+      return await resolveNodeDeps(projectRoot);
+    }
+    case "python": {
+      return await resolvePythonDeps(projectRoot);
+    }
+    case "rust": {
+      return await resolveRustDeps(projectRoot);
+    }
+  }
+}
+function readSafeWithinRoot({ candidate, root }) {
+  if (candidate === void 0) {
+    return Option_exports.none();
+  }
+  const prefix = `${root}${sep}`;
+  if (!candidate.startsWith(prefix)) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(candidate);
+}
+function selectSafeRustExterns({ deps, rustDepsDir }) {
+  if (rustDepsDir === void 0) {
+    return [];
+  }
+  return deps.rustExterns;
+}
+function filterInsideRoot({ deps, projectRoot }) {
+  const safeGo = readSafeWithinRoot({ candidate: deps.goVendor, root: projectRoot });
+  const goVendor = Option_exports.getOrUndefined(safeGo);
+  const safeNode = readSafeWithinRoot({ candidate: deps.nodeModules, root: projectRoot });
+  const nodeModules = Option_exports.getOrUndefined(safeNode);
+  const safePython = readSafeWithinRoot({ candidate: deps.pythonSitePackages, root: projectRoot });
+  const pythonSitePackages = Option_exports.getOrUndefined(safePython);
+  const safeRust = readSafeWithinRoot({ candidate: deps.rustDepsDir, root: projectRoot });
+  const rustDepsDir = Option_exports.getOrUndefined(safeRust);
+  const rustExterns = selectSafeRustExterns({ deps, rustDepsDir });
+  return { goMod: deps.goMod, goVendor, nodeModules, pythonSitePackages, rustDepsDir, rustExterns };
+}
+async function resolveProjectDeps({
+  projectRoot,
+  runtime
+}) {
+  if (projectRoot === void 0 || projectRoot.length === 0) {
+    return EMPTY_DEPS;
+  }
+  const canonicalRoot = await resolveDirectory(projectRoot);
+  if (Option_exports.isNone(canonicalRoot)) {
+    return EMPTY_DEPS;
+  }
+  const deps = await selectDepsForRuntime({ projectRoot: canonicalRoot.value, runtime });
+  return filterInsideRoot({ deps, projectRoot: canonicalRoot.value });
+}
+
+// sandbox/runner-sandbox.mts
+var PROBE_TIMEOUT_MS = 15e3;
+var COMPILED_PROBE_TIMEOUT_MS = 3e4;
+var OUTPUT_BYTES5 = 65536;
+var COMPILED_RUNTIMES3 = /* @__PURE__ */ new Set(["go", "rust"]);
+var PROBE_FILES = {
+  go: ".tenet_observe/main.go",
+  node: ".tenet-observe.mjs",
+  python: ".tenet-observe.py",
+  rust: ".tenet-observe.rs"
+};
+var ASSERTION_MARKERS = /* @__PURE__ */ new Map([
+  [
+    "node",
+    {
+      failed: new RegExp("^\\s*code: 'ERR_ASSERTION'$", "mv"),
+      passed: new RegExp("^# pass [1-9]\\d*$", "mv")
+    }
+  ],
+  [
+    "python",
+    {
+      failed: new RegExp("^FAILED \\(failures=[1-9]\\d*\\)$", "mv"),
+      passed: new RegExp("^Ran [1-9]\\d* tests? in [^\\n]+\\n\\s*OK\\s*$", "mv")
+    }
+  ]
+]);
+function probeFile(runtime) {
+  return PROBE_FILES[runtime];
+}
+async function createDepLink({ source, target }) {
+  if (source === void 0) {
+    return;
+  }
+  if (process.platform === "darwin") {
+    await symlink(source, target, "dir");
+    return;
+  }
+  await mkdir(target, { recursive: true });
+}
+async function prepareDepLinks({ deps, files, work }) {
+  const nodeTarget = join5(work, "node_modules");
+  await createDepLink({ source: deps.nodeModules, target: nodeTarget });
+  const hasStagedVendor = [...files.keys()].some((path) => path.startsWith("vendor/"));
+  if (!hasStagedVendor) {
+    const vendorTarget = join5(work, "vendor");
+    await createDepLink({ source: deps.goVendor, target: vendorTarget });
+  }
+}
+async function buildCommand({
+  check: check2,
+  deps,
+  files,
+  probeTmp,
+  projectRoot,
+  work
+}) {
+  const entry = probeFile(check2.runtime);
+  if (process.platform === "darwin") {
+    return await createMacosSandbox({
+      check: check2,
+      deps,
+      files,
+      probeFile: entry,
+      probeTmp,
+      projectRoot,
+      work
+    });
+  }
+  if (process.platform === "linux") {
+    return await createLinuxSandbox({ check: check2, deps, files, probeFile: entry, projectRoot, work });
+  }
+  throw new CheckerError({
+    message: "an isolated Linux or macOS runner is required for behavior checks"
+  });
+}
+function readProbeTimeout(runtime) {
+  if (COMPILED_RUNTIMES3.has(runtime)) {
+    return COMPILED_PROBE_TIMEOUT_MS;
+  }
+  return PROBE_TIMEOUT_MS;
+}
+async function execute(probe) {
+  const { args: args2, cwd: cwd2, env: env6, file } = probe.command;
+  const timeout3 = readProbeTimeout(probe.check.runtime);
+  return await runFile({
+    args: args2,
+    file,
+    options: {
+      cwd: cwd2,
+      encoding: "utf-8",
+      env: env6,
+      killSignal: "SIGKILL",
+      maxBuffer: OUTPUT_BYTES5,
+      timeout: timeout3
+    }
+  });
+}
+function isPassing({ result: result3, runtime }) {
+  const logs = [result3.stdout, result3.stderr].join("\n");
+  if (runtime === "node" && new RegExp("^# (?:skipped|todo) [1-9]", "mv").test(logs)) {
+    throw new CheckerError({ message: "the selected native test skipped an observation" });
+  }
+  const markers = ASSERTION_MARKERS.get(runtime);
+  if (markers !== void 0 && result3.status === 0 && markers.passed.test(logs)) {
+    return true;
+  }
+  if (markers !== void 0 && result3.status === 1 && markers.failed.test(logs)) {
+    return false;
+  }
+  const message = formatProbeFailure({
+    base: "the selected native test produced no clear assertion result",
+    stderr: result3.stderr
+  });
+  throw new CheckerError({ message });
+}
+function assertCompleted({ deps, result: result3, runtime }) {
+  if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
+    throw new CheckerError({
+      message: "install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit"
+    });
+  }
+  if (result3.status !== 0) {
+    const code = String(result3.status);
+    const message = formatProbeFailure({
+      base: `the isolated test exited with status ${code}`,
+      deps,
+      runtime,
+      stderr: result3.stderr
+    });
+    throw new CheckerError({ message });
+  }
+}
+async function runProbe(probe) {
+  const result3 = await execute(probe);
+  if (probe.check.testFile !== void 0) {
+    if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
+      throw new CheckerError({
+        message: "install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit"
+      });
+    }
+    return isPassing({ result: result3, runtime: probe.check.runtime });
+  }
+  assertCompleted({ deps: probe.deps, result: result3, runtime: probe.check.runtime });
+  const observed = JSON.parse(result3.stdout);
+  return observed;
+}
+async function createGoModFallback({
+  check: check2,
+  deps,
+  files,
+  work
+}) {
+  if (check2.runtime !== "go" || files.has("go.mod")) {
+    return;
+  }
+  const goModPath = join5(work, "go.mod");
+  const goModContent = deps.goMod ?? "module tenet_check\n\ngo 1.21\n";
+  await writeFile(goModPath, goModContent, { flag: "wx" });
+}
+async function writeProbeFile({ check: check2, work }) {
+  if (check2.test === void 0) {
+    return;
+  }
+  const entry = probeFile(check2.runtime);
+  const targetPath = join5(work, entry);
+  const parentDir = dirname5(targetPath);
+  await mkdir(parentDir, { recursive: true });
+  await writeFile(targetPath, check2.test, { flag: "wx" });
+}
+async function createSandbox(input) {
+  const { check: check2, files, projectRoot, work } = input;
+  const deps = await resolveProjectDeps({ projectRoot, runtime: check2.runtime });
+  await prepareDepLinks({ deps, files, work });
+  await createGoModFallback({ check: check2, deps, files, work });
+  await writeProbeFile({ check: check2, work });
+  const command = await buildCommand({ ...input, deps });
+  return async () => await runProbe({ check: check2, command, deps });
+}
+
+// sandbox/runner.mts
+async function copySource({ path, source, work }) {
+  const file = resolve3(work, path);
+  const prefix = join6(work, sep2);
+  if (!file.startsWith(prefix)) {
+    throw new CheckerError({ message: "a staged source path falls outside the checkout" });
+  }
+  const parent = dirname6(file);
+  await mkdir2(parent, { recursive: true });
+  await writeFile2(file, source, { flag: "wx" });
+}
+async function prepareProject(project) {
+  const copies = Effect_exports.forEach(
+    project.files,
+    ([path, source]) => Effect_exports.tryPromise(async () => await copySource({ path, source, work: project.work })),
+    { concurrency: 16 }
+  );
+  await Effect_exports.runPromise(copies);
+  const run3 = await createSandbox({
+    check: project.check,
+    files: project.files,
+    probeTmp: project.probeTmp,
+    projectRoot: project.projectRoot,
+    work: project.work
+  });
+  return { ...project, run: run3 };
+}
+async function restoreSubject({ project, variant }) {
+  const { check: check2, files, work } = project;
+  const sources = { ...check2, actual: files.get(check2.subject) };
+  const source = sources[variant];
+  if (source === void 0) {
+    throw new CheckerError({ message: "the checker subject disappeared" });
+  }
+  const targetPath = join6(work, check2.subject);
+  await writeFile2(targetPath, source);
+}
+function readObservationHint(variant) {
+  if (variant === "refactor") {
+    return " (good and defect already passed; fix only the refactor control)";
+  }
+  return "";
+}
+async function readObservation({ project, variant }) {
+  await restoreSubject({ project, variant });
+  const { check: check2 } = project;
+  const suffix = readObservationHint(variant);
+  function createObservationError(cause) {
+    const name = JSON.stringify(variant);
+    if (cause instanceof Error) {
+      const detail = `could not observe ${name} variant: ${cause.message}${suffix}`;
+      return new CheckerError({ cause, message: detail });
+    }
+    const message = `could not observe ${name} variant${suffix}`;
+    return new CheckerError({ cause, message });
+  }
+  const attempt = Effect_exports.tryPromise({ catch: createObservationError, try: project.run });
+  const value3 = await Effect_exports.runPromise(attempt);
+  return { passed: isDeepStrictEqual(value3, check2.expected), value: value3 };
+}
+function readQualificationHint(variant) {
+  if (variant === "good") {
+    return "; if the unmodified subject already violates the contract, set defect to [] and put the fix in good and refactor";
+  }
+  if (variant === "refactor") {
+    return "; good and defect already passed — keep them and rewrite only refactor as a distinct behavior-preserving variant (for example, extract a helper or invert the condition)";
+  }
+  return "";
+}
+async function qualifyControl({ project, variant }) {
+  const result3 = await readObservation({ project, variant });
+  if (result3.passed !== (variant !== "defect")) {
+    const name = JSON.stringify(variant);
+    const observed = JSON.stringify(result3.value);
+    const expected = JSON.stringify(project.check.expected);
+    const suffix = readQualificationHint(variant);
+    const message = `test did not distinguish its ${name} control (expected ${expected}, observed ${observed})${suffix}`;
+    throw new CheckerError({ message });
+  }
+}
+async function verifyControls(project) {
+  await qualifyControl({ project, variant: "good" });
+  await qualifyControl({ project, variant: "defect" });
+  await qualifyControl({ project, variant: "refactor" });
+}
+async function executeObservation({
+  check: check2,
+  project,
+  qualify,
+  skipActual
+}) {
+  if (qualify) {
+    await verifyControls(project);
+  }
+  if (skipActual) {
+    return { passed: true, value: check2.expected };
+  }
+  return await readObservation({ project, variant: "actual" });
+}
+async function observe({
+  check: check2,
+  files,
+  projectRoot,
+  qualify,
+  skipActual = false
+}) {
+  const temporary = tmpdir4();
+  const workPrefix = join6(temporary, "tenet-observe-");
+  const tmpPrefix = join6(temporary, "tenet-probe-tmp-");
+  const work = await mkdtemp(workPrefix);
+  const probeTmp = await mkdtemp(tmpPrefix);
+  try {
+    const project = await prepareProject({ check: check2, files, probeTmp, projectRoot, work });
+    return await executeObservation({ check: check2, project, qualify, skipActual });
+  } finally {
+    await rm(work, { force: true, recursive: true });
+    await rm(probeTmp, { force: true, recursive: true });
+  }
+}
+
+// sandbox/runner-version.mts
+import { stat as stat3 } from "node:fs/promises";
+var BWRAP3 = "/usr/bin/bwrap";
+var PYTHON2 = "/usr/bin/python3";
+var PRLIMIT3 = "/usr/bin/prlimit";
+var SANDBOX_EXEC3 = "/usr/bin/sandbox-exec";
+var RUNNER_REVISION = 5;
+function readBinaryIdentity(path) {
+  const read = Effect_exports.tryPromise(async () => await stat3(path));
+  function buildMissingIdentity() {
+    return [path, null];
+  }
+  function buildToolIdentity(info) {
+    return [path, info.size, info.mtimeMs];
+  }
+  return Effect_exports.match(read, { onFailure: buildMissingIdentity, onSuccess: buildToolIdentity });
+}
+async function readToolPaths() {
+  if (process.platform === "darwin") {
+    const pythonProbe = Effect_exports.tryPromise(async () => await readPythonTool());
+    const pythonOption = Effect_exports.option(pythonProbe);
+    const pythonResult = await Effect_exports.runPromise(pythonOption);
+    const pythonPath = Option_exports.getOrElse(pythonResult, () => PYTHON2);
+    return [SANDBOX_EXEC3, pythonPath, process.execPath];
+  }
+  return [BWRAP3, PYTHON2, PRLIMIT3, "/usr/bin/gcc", process.execPath];
+}
+async function readRunnerVersion() {
+  const paths = await readToolPaths();
+  const identities = Effect_exports.forEach(paths, (path) => readBinaryIdentity(path), {
+    concurrency: 4
+  });
+  const binaries = await Effect_exports.runPromise(identities);
+  const tool = Effect_exports.tryPromise(async () => await readRustTool("-Vv"));
+  const version = Effect_exports.option(tool);
+  const installed = await Effect_exports.runPromise(version);
+  const rust = Option_exports.getOrNull(installed);
+  const goInstalled = await readGoVersion();
+  const go = Option_exports.getOrNull(goInstalled);
+  return JSON.stringify([RUNNER_REVISION, process.version, process.platform, binaries, rust, go]);
 }
 
 // wire.mts
@@ -22419,7 +22829,7 @@ var ReceiptFields = Schema_exports.Struct({
   tools: Schema_exports.String
 });
 var Receipt = Schema_exports.toEncoded(ReceiptFields);
-var Runtime = Schema_exports.Literals(["node", "python", "rust"]);
+var Runtime = Schema_exports.Literals(["node", "python", "rust", "go"]);
 var CheckFields = Schema_exports.Struct({
   defect: Schema_exports.String,
   expected: Schema_exports.Unknown,
@@ -22847,10 +23257,10 @@ import { constants } from "node:fs";
 import { lstat, open, realpath as realpath6 } from "node:fs/promises";
 
 // storage/resolve-inside.mts
-import { isAbsolute, join as join6, resolve as resolve4, sep as sep3 } from "node:path";
+import { isAbsolute, join as join7, resolve as resolve4, sep as sep3 } from "node:path";
 function resolveInside({ root, path }) {
   const target = resolve4(root, path);
-  const prefix = join6(root, sep3);
+  const prefix = join7(root, sep3);
   const components = path.split(sep3);
   if (isAbsolute(path) || components.includes("..") || !target.startsWith(prefix)) {
     throw new CheckerError({ message: "input falls outside the checkout." });
@@ -22860,7 +23270,7 @@ function resolveInside({ root, path }) {
 
 // storage/resolve-root.mts
 import { realpath as realpath5 } from "node:fs/promises";
-import { basename as basename3, dirname as dirname5, join as join7, resolve as resolve5 } from "node:path";
+import { basename as basename2, dirname as dirname7, join as join8, resolve as resolve5 } from "node:path";
 function readErrorCode(value3) {
   if (value3 instanceof Error && "code" in value3 && typeof value3.code === "string") {
     return value3.code;
@@ -22880,13 +23290,13 @@ async function resolveRoot(path) {
   if (Result_exports.isSuccess(resolved)) {
     return resolved.success;
   }
-  const parent = dirname5(absolute);
+  const parent = dirname7(absolute);
   if (readErrorCode(resolved.failure.cause) !== "ENOENT" || parent === absolute) {
     throw resolved.failure;
   }
   const trusted = await resolveRoot(parent);
-  const child = basename3(absolute);
-  return join7(trusted, child);
+  const child = basename2(absolute);
+  return join8(trusted, child);
 }
 
 // storage/read-regular.mts
@@ -22973,12 +23383,12 @@ async function readExisting(location) {
 
 // storage/replace-pin.mts
 import { open as open3, realpath as realpath8, rm as rm3 } from "node:fs/promises";
-import { dirname as dirname7 } from "node:path";
+import { dirname as dirname9 } from "node:path";
 
 // storage/write-atomic.mts
 import { randomUUID } from "node:crypto";
 import { link as link2, mkdir as mkdir3, open as open2, realpath as realpath7, rename, rm as rm2 } from "node:fs/promises";
-import { dirname as dirname6, join as join8, relative, sep as sep4 } from "node:path";
+import { dirname as dirname8, join as join9, relative, sep as sep4 } from "node:path";
 var PRIVATE_FILE = 384;
 var PRIVATE_DIR = 448;
 async function ensureSegment(path) {
@@ -22995,7 +23405,7 @@ async function ensureDirectory({ directory, root }) {
   }
   let current = root;
   for (const part of nested.split(sep4)) {
-    current = join8(current, part);
+    current = join9(current, part);
     await ensureSegment(current);
   }
 }
@@ -23017,7 +23427,7 @@ async function storeRecord({ handle, record: record2 }) {
 }
 async function writeTempRecord({ first, parent, target, value: value3 }) {
   const nonce = randomUUID();
-  const temp = join8(parent, `.tenet-${nonce}.tmp`);
+  const temp = join9(parent, `.tenet-${nonce}.tmp`);
   const handle = await open2(temp, "wx", PRIVATE_FILE);
   try {
     await storeRecord({ handle, record: value3 });
@@ -23029,7 +23439,7 @@ async function writeTempRecord({ first, parent, target, value: value3 }) {
 async function writeAtomic(input) {
   const root = await resolveRoot(input.root);
   const target = resolveInside({ path: input.path, root });
-  const parent = dirname6(target);
+  const parent = dirname8(target);
   await ensureDirectory({ directory: parent, root });
   await writeTempRecord({ first: input.first === true, parent, target, value: input.value });
 }
@@ -23039,7 +23449,7 @@ var PRIVATE_FILE2 = 384;
 async function resolvePinLock(input) {
   const root = await resolveRoot(input.root);
   const lock = resolveInside({ path: `${input.path}.lock`, root });
-  const parent = dirname7(lock);
+  const parent = dirname9(lock);
   if (await realpath8(parent) !== parent) {
     throw new CheckerError({ message: "output directory is a symbolic link." });
   }
@@ -23090,14 +23500,14 @@ import { pathToFileURL } from "node:url";
 // fx/fx-cache.mts
 import { access as access7, mkdir as mkdir4, mkdtemp as mkdtemp2, realpath as realpath9, rename as rename2, rm as rm4 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { isAbsolute as isAbsolute2, join as join10, relative as relative2, sep as sep5 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join11, relative as relative2, sep as sep5 } from "node:path";
 import { cwd, env as env2 } from "node:process";
 
 // fx/install-fx.mts
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { cp } from "node:fs/promises";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 import { env } from "node:process";
 
 // fx/resolve-asset.mts
@@ -23118,7 +23528,7 @@ async function resolveWorkerAsset(name) {
 var INSTALL_TIMEOUT_MS = 9e4;
 async function copyManifest(input) {
   const source = await resolveWorkerAsset(input.directory);
-  const target = join9(input.destination, input.directory);
+  const target = join10(input.destination, input.directory);
   await cp(source, target);
 }
 async function installFxRuntime(directory) {
@@ -23181,7 +23591,7 @@ async function publish({ directory, destination }) {
 }
 async function ensureInstallation({ cache: cache2, destination }) {
   await mkdir4(cache2, { mode: 448, recursive: true });
-  const prefix = join10(cache2, "install-");
+  const prefix = join11(cache2, "install-");
   const temporary = await mkdtemp2(prefix);
   try {
     await installFxRuntime(temporary);
@@ -23192,11 +23602,11 @@ async function ensureInstallation({ cache: cache2, destination }) {
 }
 async function resolveInstallation() {
   const userHome = homedir3();
-  const home = env2.XDG_CACHE_HOME ?? join10(userHome, ".cache");
-  const directory = join10(home, "tenet", "libfx");
+  const home = env2.XDG_CACHE_HOME ?? join11(userHome, ".cache");
+  const directory = join11(home, "tenet", "libfx");
   const cache2 = await resolveTrustedPath(directory);
-  const destination = join10(cache2, LIBFX_VERSION);
-  const entry = join10(destination, "node_modules", "libfx", "node.js");
+  const destination = join11(cache2, LIBFX_VERSION);
+  const entry = join11(destination, "node_modules", "libfx", "node.js");
   return { cache: cache2, destination, entry };
 }
 async function isCached(trusted) {
@@ -23404,6 +23814,7 @@ var OpenRouterTurn = class {
 // fx/fx-json.mts
 var TURN_TIMEOUT_MS = 12e4;
 var CONTEXT_WINDOW = 128e3;
+var CONTEXT_LIMIT_PATTERN = new RegExp("context|token|window|too long|exceeds", "iv");
 var CheckerObject = Schema_exports.Record(Schema_exports.String, Schema_exports.Unknown);
 var CheckerJson = Schema_exports.fromJsonString(CheckerObject);
 var decodeJson = Schema_exports.decodeUnknownOption(CheckerJson, { onExcessProperty: "error" });
@@ -23455,6 +23866,12 @@ async function createAgent({ instructions, router }) {
   };
   return createFxAgent(settings);
 }
+function formatTurnFailure(cause) {
+  if (cause instanceof Error && CONTEXT_LIMIT_PATTERN.test(cause.message)) {
+    return "governed source exceeded the checker context window; narrow the contract's paths (for example excluding testdata or *_test files) and rerun";
+  }
+  return "could not return a usable checker";
+}
 async function runTurn({
   agent,
   onRequest,
@@ -23463,7 +23880,7 @@ async function runTurn({
   timeoutMs
 }) {
   function fail7(cause) {
-    const message = Option_exports.getOrElse(router.failure, () => "could not return a usable checker");
+    const message = Option_exports.getOrElse(router.failure, () => formatTurnFailure(cause));
     return new CheckerError({ cause, message });
   }
   async function run3(signal) {
@@ -23615,7 +24032,7 @@ async function explainFindings({
 }
 
 // fx/generation.mts
-import { readFile as readFile2 } from "node:fs/promises";
+import { readFile as readFile4 } from "node:fs/promises";
 function encodeInput(request3) {
   const { contract, inventory, repair } = request3;
   const files = Object.fromEntries(inventory.files);
@@ -23638,7 +24055,7 @@ function encodeInput(request3) {
 }
 async function generate(request3) {
   const promptUrl = await resolveWorkerAsset("checker-prompt.md");
-  const instructions = await readFile2(promptUrl, "utf-8");
+  const instructions = await readFile4(promptUrl, "utf-8");
   const source = encodeInput(request3);
   return await runFxJson({ instructions, onRequest: request3.onRequest, source });
 }
@@ -23695,15 +24112,17 @@ async function readBaseInputs({
 }
 
 // discovery/discovery.mts
-import { basename as basename6, dirname as dirname8, extname as extname2 } from "node:path";
+import { basename as basename5, dirname as dirname10, extname as extname2 } from "node:path";
 
 // discovery/hash-surface.mts
-import { basename as basename4 } from "node:path";
+import { basename as basename3 } from "node:path";
 
 // discovery/manifests.mts
 var MANIFESTS = /* @__PURE__ */ new Set([
   "package.json",
   "Cargo.toml",
+  "go.mod",
+  "go.sum",
   "pyproject.toml",
   "tsconfig.json"
 ]);
@@ -23722,7 +24141,7 @@ var DECLARATION = new RegExp("(?:^|\\n)\\s*(?:export\\s+(?:(?:default|async)\\s+
 var MEMBER = new RegExp("(?:^|[\\{\\};\\n])\\s*(?:(?:public|static|async|readonly|abstract|get|set)\\s+)*(?<name>[A-Za-z_$][\\w$]*)\\s*\\([^\\(\\)\\{\\};]*\\)\\s*(?::[^=\\{\\};]+)?\\s*\\{", "gv");
 var EXPORT = new RegExp("(?:^|\\n)\\s*(?:export\\s+(?:type\\s+)?\\{[^\\}]+\\}(?:\\s+from\\s+[^;\\n]+)?|export\\s+\\*\\s+from\\s+[^;\\n]+|pub\\s+use\\s+[^;]+);?", "gv");
 function readSurface([path, source]) {
-  const name = basename4(path);
+  const name = basename3(path);
   if (MANIFESTS.has(name)) {
     return [path, hashSource(source)];
   }
@@ -23745,7 +24164,7 @@ function hashSurface({ contract, source, assets, omitted }) {
 }
 
 // discovery/rank-path.mts
-import { basename as basename5, extname } from "node:path";
+import { basename as basename4, extname } from "node:path";
 var MIN_TOKEN_LENGTH = 3;
 var EXACT_PATH_SCORE = 100;
 var STEM_TOKEN_SCORE = 10;
@@ -23858,19 +24277,19 @@ function readContractTerms(contract) {
   return { exactPaths, tokens };
 }
 function isPrivateModule(path) {
-  const name = basename5(path);
+  const name = basename4(path);
   return name.startsWith("_") && name !== "__init__.py";
 }
 function isTestPath(path) {
   const segments = path.split("/");
-  return segments.includes("test") || segments.includes("tests");
+  return segments.includes("test") || segments.includes("tests") || path.endsWith("_test.go");
 }
 function isGeneratedOrCompatPath(path) {
   const segments = path.split("/");
   return segments.some((segment) => GENERATED_SEGMENTS.has(segment));
 }
 function readPathStem(path) {
-  const name = basename5(path);
+  const name = basename4(path);
   const extension = extname(name);
   if (extension.length === 0) {
     return name;
@@ -23913,7 +24332,7 @@ function rankUnclassifiedPath({ matchScore, path }) {
   return enumRank.otherPublic;
 }
 function rankPath({ decision, matchScore, path }) {
-  const name = basename5(path);
+  const name = basename4(path);
   if (MANIFESTS.has(name)) {
     return enumRank.manifest;
   }
@@ -23955,7 +24374,7 @@ function listRankedPaths(contract) {
 // discovery/discovery.mts
 var EXECUTION = { bytes: 16777216, files: 1024, source: 524288 };
 var MAX_FILES = 160;
-var MAX_BYTES = 393216;
+var MAX_BYTES = 307200;
 var MAX_SOURCE = 131072;
 var MAX_SAMPLES = 32768;
 var MAX_SAMPLE = 8192;
@@ -23969,10 +24388,10 @@ var EXTENSIONS = /* @__PURE__ */ new Set([
   ".tsx",
   ".jsx",
   ".py",
-  ".rs"
+  ".rs",
+  ".go"
 ]);
 var UNSUPPORTED_EXTENSIONS = /* @__PURE__ */ new Set([
-  ".go",
   ".java",
   ".c",
   ".cc",
@@ -23989,7 +24408,7 @@ function classifyPath({
   packageRoots
 }) {
   const extension = extname2(path);
-  const name = basename6(path);
+  const name = basename5(path);
   if (EXTENSIONS.has(extension) || MANIFESTS.has(name)) {
     return "read";
   }
@@ -24044,7 +24463,7 @@ function listPackageRoots(input) {
     return [];
   }
   const packageModules = input.contract.paths.filter((path) => path.endsWith("/__init__.py"));
-  return packageModules.map((path) => dirname8(path));
+  return packageModules.map((path) => dirname10(path));
 }
 async function select(input) {
   const packageRoots = listPackageRoots(input);
@@ -24253,13 +24672,13 @@ function readCached(ctx) {
 }
 
 // review/receipt/receipt.mts
-import { dirname as dirname9, join as join11 } from "node:path";
+import { dirname as dirname11, join as join12 } from "node:path";
 var decodeReceipt = Schema_exports.decodeUnknownOption(Receipt, { onExcessProperty: "error" });
 function resolvePaths(contract) {
   const identity2 = hashSource(contract.path);
-  const receipt = join11("agent-checks", `${identity2}.json`);
-  const directory = dirname9(contract.path);
-  const lock = join11(directory, "agent-checks.lock.json");
+  const receipt = join12("agent-checks", `${identity2}.json`);
+  const directory = dirname11(contract.path);
+  const lock = join12(directory, "agent-checks.lock.json");
   return { lock, receipt };
 }
 async function readReceipt({
@@ -24330,7 +24749,7 @@ function reportCoverage({ omitted, contract }) {
 
 // review/select-pin.mts
 var MAX_REPAIR_PREVIEW_CHARS = 32768;
-var MISSING_DEP_PATTERN = new RegExp("ERR_MODULE_NOT_FOUND|ModuleNotFoundError|error\\[E04(?:32|63)\\]|target\\/debug\\/deps", "v");
+var MISSING_DEP_PATTERN = new RegExp("ERR_MODULE_NOT_FOUND|ModuleNotFoundError|error\\[E04(?:32|63)\\]|target\\/debug\\/deps|no required module provides package|cannot find package|go mod vendor", "v");
 function formatPreview2(value3) {
   const serialized = JSON.stringify(value3);
   if (serialized.length <= MAX_REPAIR_PREVIEW_CHARS) {

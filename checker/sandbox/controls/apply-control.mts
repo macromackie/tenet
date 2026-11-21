@@ -1,4 +1,4 @@
-import { CheckerError } from '../checker-error.mts';
+import { CheckerError } from '../../checker-error.mts';
 import { buildEditError } from './control-diagnostics.mts';
 
 const MAX_CONTROL_EDITS = 8;

@@ -9,7 +9,7 @@ import type { Context } from './receipt/index.mts';
 const MAX_REPAIR_PREVIEW_CHARS = 32_768;
 
 const MISSING_DEP_PATTERN =
-  /ERR_MODULE_NOT_FOUND|ModuleNotFoundError|error\[E04(?:32|63)\]|target\/debug\/deps/v;
+  /ERR_MODULE_NOT_FOUND|ModuleNotFoundError|error\[E04(?:32|63)\]|target\/debug\/deps|no required module provides package|cannot find package|go mod vendor/v;
 
 export type Checked = {
   cache: boolean;

@@ -1,3 +1,5 @@
+mod terms;
+
 use alloc::collections::BTreeSet;
 use std::{
     fs,
@@ -7,52 +9,13 @@ use std::{
 
 use tenet_contracts::Contract;
 
+use self::terms::{
+    COMMON_TERMS,
+    DECLARATION_KEYWORDS,
+    OBSERVATION_PATTERNS,
+    REQUIRED_FRAMEWORK_TERMS,
+};
 use super::{AdoptionError, profile::RepositoryProfile, split_words};
-
-const COMMON_TERMS: &[&str] = &[
-    "arg", "base", "build", "call", "check", "class", "client", "close", "code", "config",
-    "context", "core", "count", "create", "data", "default", "entry", "error", "field", "file",
-    "flag", "form", "format", "function", "helper", "index", "init", "input", "item", "key", "lib",
-    "line", "list", "main", "map", "member", "method", "mode", "module", "name", "note", "object",
-    "open", "option", "order", "output", "package", "param", "path", "read", "record", "result",
-    "role", "rule", "run", "scope", "set", "shape", "size", "source", "src", "state", "string",
-    "style", "test", "text", "type", "util", "value", "write",
-];
-
-const DECLARATION_KEYWORDS: &[&str] = &[
-    "async",
-    "class",
-    "const",
-    "def",
-    "default",
-    "enum",
-    "fn",
-    "function",
-    "interface",
-    "let",
-    "mod",
-    "struct",
-    "trait",
-    "type",
-    "var",
-];
-
-const REQUIRED_FRAMEWORK_TERMS: &[&str] = &[
-    "alembic",
-    "celld",
-    "clippy",
-    "effect",
-    "fastapi",
-    "oauth",
-    "openapi",
-    "oxlint",
-    "postgres",
-    "react",
-    "ruff",
-    "sql",
-    "storybook",
-    "webhook",
-];
 
 pub(super) struct Surface {
     language: &'static str,
@@ -78,7 +41,7 @@ impl Surface {
 
     pub(super) fn score(&self, contract: &Contract, profile: &RepositoryProfile) -> Option<usize> {
         let names = split_words(&contract.name);
-        if ["typescript", "python", "rust", "javascript"]
+        if ["typescript", "python", "rust", "javascript", "go"]
             .iter()
             .any(|language| {
                 names.contains(*language) && !self.language.eq_ignore_ascii_case(language)
@@ -130,6 +93,7 @@ fn detect_language(path: &Path) -> Option<&'static str> {
         "ts" | "tsx" | "mts" | "cts" => Some("TypeScript"),
         "js" | "jsx" | "mjs" | "cjs" => Some("JavaScript"),
         "rs" => Some("Rust"),
+        "go" => Some("Go"),
         "py" => Some("Python"),
         "tf" => Some("Terraform"),
         _ => None,
@@ -254,6 +218,7 @@ fn is_support_path(path: &Path) -> bool {
         "scripts",
         "target",
         "test",
+        "testdata",
         "tests",
         "tools",
         "vendor",
@@ -266,110 +231,6 @@ fn is_support_path(path: &Path) -> bool {
             .is_none_or(|name| name.starts_with('.') || SUPPORT.contains(&name))
     })
 }
-
-const OBSERVATION_PATTERNS: &[(&str, &[&str], &[&str])] = &[
-    (
-        "explicit input precedence with a default fallback",
-        &[],
-        &[
-            "??",
-            ".unwrap_or(",
-            ".unwrap_or_else(",
-            " is None",
-            " is not None",
-        ],
-    ),
-    (
-        "borrowed inputs modified in place",
-        &[],
-        &[
-            ".sort(",
-            ".splice(",
-            ".append(",
-            ".extend(",
-            ".update(",
-            ".sort_unstable(",
-        ],
-    ),
-    (
-        "equivalent representations across normalized inputs",
-        &[],
-        &["os.fspath", "PathLike", ".casefold(", "FromStr"],
-    ),
-    (
-        "idempotent source transformations",
-        &["idempotent", "transformation"],
-        &[
-            "TokenStream",
-            "tokenize.",
-            "import tokenize",
-            "ast.parse(",
-            "format_code(",
-            "sort_code(",
-            "sort_imports(",
-            "pretty_print(",
-        ],
-    ),
-    (
-        "broad Python exception propagation handler",
-        &[],
-        &["except Exception", "except:"],
-    ),
-    (
-        "FastAPI routes",
-        &["fastapi", "api", "route"],
-        &["from fastapi import", "import fastapi"],
-    ),
-    (
-        "React components",
-        &["react", "component", "jsx"],
-        &["from 'react'", r#"from "react""#],
-    ),
-    (
-        "React hook calls",
-        &["react", "hook"],
-        &[
-            "useEffect(",
-            "useState(",
-            "useMemo(",
-            "useCallback(",
-            "useRef(",
-        ],
-    ),
-    (
-        "Effect programs",
-        &["effect", "schema", "error"],
-        &["from 'effect'", r#"from "effect""#],
-    ),
-    (
-        "Rust tracing spans",
-        &["tracing", "telemetry", "span"],
-        &["tracing::", "use tracing"],
-    ),
-    (
-        "CLI output channels",
-        &["cli", "output", "channel"],
-        &[
-            "process.stdout.write(",
-            "process.stderr.write(",
-            "io::stdout(",
-            "io::stderr(",
-            "sys.stdout",
-            "sys.stderr",
-        ],
-    ),
-    (
-        "SQL database queries",
-        &["sql", "database", "store", "schema"],
-        &[
-            "conn.execute(",
-            "cursor.execute(",
-            "sqlx::",
-            "from sqlalchemy",
-            "import sqlalchemy",
-        ],
-    ),
-];
 
 fn observe(source: &str) -> (Vec<&'static str>, BTreeSet<String>) {
     let mut signals = Vec::new();

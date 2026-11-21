@@ -128,16 +128,54 @@ pub(super) fn check_node() -> DoctorItem {
     }
 }
 
-fn check_macos_sandbox() -> DoctorItem {
-    let ready = Path::new("/usr/bin/sandbox-exec").is_file();
-    DoctorItem {
-        detail: if ready {
-            "macOS Seatbelt (/usr/bin/sandbox-exec)".into()
-        } else {
-            "/usr/bin/sandbox-exec not found".into()
+const MACOS_PREFLIGHT_PROFILE: &str = "(version 1)(deny default)(allow process-exec)(allow \
+                                       file-read*)(allow file-map-executable)(allow \
+                                       sysctl-read)(deny network*)";
+
+fn probe_macos_sandbox() -> (bool, String, Option<String>) {
+    if !Path::new("/usr/bin/sandbox-exec").is_file() {
+        return (
+            false,
+            "/usr/bin/sandbox-exec not found".into(),
+            Some("Behavior-check isolation on macOS requires /usr/bin/sandbox-exec.".into()),
+        );
+    }
+    let output = Command::new("/usr/bin/sandbox-exec")
+        .args(["-p", MACOS_PREFLIGHT_PROFILE, "/usr/bin/true"])
+        .output();
+    match output {
+        Ok(result) if result.status.success() => {
+            (true, "macOS Seatbelt (/usr/bin/sandbox-exec)".into(), None)
         },
-        hint: (!ready)
-            .then(|| "Behavior-check isolation on macOS requires /usr/bin/sandbox-exec.".into()),
+        Ok(result)
+            if String::from_utf8_lossy(&result.stderr).contains("Operation not permitted") =>
+        {
+            (
+                false,
+                "macOS Seatbelt blocked by outer sandbox".into(),
+                Some(
+                    "macOS sandbox-exec cannot nest inside an outer sandbox (such as an agent \
+                     workspace sandbox); run outside the outer macOS sandbox or in Linux with \
+                     bubblewrap."
+                        .into(),
+                ),
+            )
+        },
+        _ => {
+            (
+                false,
+                "macOS Seatbelt preflight failed".into(),
+                Some("Ensure /usr/bin/sandbox-exec can run in this environment.".into()),
+            )
+        },
+    }
+}
+
+fn check_macos_sandbox() -> DoctorItem {
+    let (ready, detail, hint) = probe_macos_sandbox();
+    DoctorItem {
+        detail,
+        hint,
         label: "Sandbox",
         name: "sandbox",
         required: true,
@@ -213,11 +251,15 @@ pub(super) fn check_runtimes() -> DoctorItem {
     if let Some(rustc) = read_tool_version("rustc", &["--version"]) {
         found.push(rustc);
     }
+    if let Some(go_version) = read_tool_version("go", &["version"]) {
+        found.push(go_version);
+    }
     if found.is_empty() {
         DoctorItem {
-            detail: "neither python3 nor rustc found on PATH".into(),
+            detail: "no python3, rustc, or go found on PATH".into(),
             hint: Some(
-                "Install python3 or rustc if you want language-specific behavior probes.".into(),
+                "Install python3, rustc, or go if you want language-specific behavior probes."
+                    .into(),
             ),
             label: "Runtimes",
             name: "runtimes",

@@ -171,7 +171,7 @@ function isPrivateModule(path: string): boolean {
 function isTestPath(path: string): boolean {
   const segments = path.split('/');
 
-  return segments.includes('test') || segments.includes('tests');
+  return segments.includes('test') || segments.includes('tests') || path.endsWith('_test.go');
 }
 
 function isGeneratedOrCompatPath(path: string): boolean {

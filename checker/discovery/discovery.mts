@@ -9,7 +9,7 @@ import { listRankedPaths } from './rank-path.mts';
 
 const EXECUTION = { bytes: 16_777_216, files: 1_024, source: 524_288 } as const;
 const MAX_FILES = 160;
-const MAX_BYTES = 393_216;
+const MAX_BYTES = 307_200;
 const MAX_SOURCE = 131_072;
 const MAX_SAMPLES = 32_768;
 const MAX_SAMPLE = 8_192;
@@ -25,10 +25,10 @@ const EXTENSIONS: ReadonlySet<string> = new Set([
   '.jsx',
   '.py',
   '.rs',
+  '.go',
 ]);
 
 const UNSUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
-  '.go',
   '.java',
   '.c',
   '.cc',

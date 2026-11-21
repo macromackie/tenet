@@ -1,41 +1,27 @@
 import { access, realpath } from 'node:fs/promises';
-import { basename, dirname } from 'node:path';
-import type { Check } from '../types.d.mts';
+import { dirname } from 'node:path';
+import type { Check } from '../../types.d.mts';
+import type { ProjectDeps } from '../project-deps.mts';
+import {
+  buildGoCommand,
+  buildGoEnv,
+  buildNodeCommand,
+  buildPythonCommand,
+  buildRustCommand,
+  readGoTool,
+  readPythonPaths,
+  readRustCrate,
+  readRustTool,
+} from '../runtimes/index.mts';
 import type { SandboxCommand } from './macos-sandbox.mts';
-import type { ProjectDeps } from './project-deps.mts';
-import { readPythonPaths } from './python-paths.mts';
-import { readRustTool } from './rust-tool.mts';
 
 const BWRAP = '/usr/bin/bwrap';
 const PYTHON = '/usr/bin/python3';
 const PRLIMIT = '/usr/bin/prlimit';
 const SYSTEM_PATH = '/usr/bin:/bin';
 const NODE = '/runtime/node';
-
-const NODE_FLAGS = [
-  '--disable-wasm-trap-handler',
-  '--max-old-space-size=96',
-  '--v8-pool-size=2',
-] as const;
-
-const LIMITS = [
-  PRLIMIT,
-  '--cpu=8',
-  '--as=4294967296',
-  '--nproc=512',
-  '--fsize=33554432',
-  '--nofile=256',
-  '--core=0',
-  '--',
-] as const;
-
-/** Compilation and execution share the sandbox's private temporary directory. */
-const RUST_COMMAND = [
-  '/bin/sh',
-  '-c',
-  '/toolchain/bin/rustc --edition=2021 --crate-name tenet_probe -C linker=/usr/bin/gcc "$@" .tenet-observe.rs -o /tmp/observe && exec /tmp/observe',
-  'tenet-rust',
-] as const;
+const GO_ROOT_MOUNT = '/goroot';
+const COMPILED_RUNTIMES: ReadonlySet<string> = new Set(['go', 'rust']);
 
 const ISOLATION = [
   ['--unshare-all', '--new-session', '--die-with-parent', '--clearenv'],
@@ -70,11 +56,55 @@ type LinuxSandboxInput = Readonly<{
   deps: ProjectDeps;
   files: ReadonlyMap<string, string>;
   probeFile: string;
+  projectRoot?: string;
   work: string;
 }>;
 
+type ProgramInput = Readonly<{
+  check: Check;
+  deps: ProjectDeps;
+  files: ReadonlyMap<string, string>;
+  probeFile: string;
+  projectRoot?: string;
+}>;
+
+type EnvFlagsInput = Readonly<{
+  deps: ProjectDeps;
+  files: ReadonlyMap<string, string>;
+  runtime: Check['runtime'];
+}>;
+
+function readCpuFlag(runtime: Check['runtime']): string {
+  if (COMPILED_RUNTIMES.has(runtime)) {
+    return '--cpu=20';
+  }
+
+  return '--cpu=8';
+}
+
+function buildLimits(runtime: Check['runtime']): readonly string[] {
+  const cpu = readCpuFlag(runtime);
+
+  return [
+    PRLIMIT,
+    cpu,
+    '--as=4294967296',
+    '--nproc=512',
+    '--fsize=33554432',
+    '--nofile=256',
+    '--core=0',
+    '--',
+  ];
+}
+
 async function buildRuntimeMount(runtime: Check['runtime']): Promise<readonly string[]> {
   switch (runtime) {
+    case 'go': {
+      const rawGoroot = await readGoTool(['env', 'GOROOT']);
+      const goroot = await realpath(rawGoroot);
+
+      return ['--ro-bind', goroot, GO_ROOT_MOUNT];
+    }
     case 'node': {
       return ['--ro-bind', await realpath(process.execPath), NODE];
     }
@@ -100,6 +130,10 @@ async function buildRuntimeMount(runtime: Check['runtime']): Promise<readonly st
 function buildDepMounts(deps: ProjectDeps): readonly string[] {
   const mounts: string[] = [];
 
+  if (deps.goVendor !== undefined) {
+    mounts.push('--ro-bind', deps.goVendor, '/project/vendor');
+  }
+
   if (deps.nodeModules !== undefined) {
     mounts.push('--ro-bind', deps.nodeModules, '/project/node_modules');
   }
@@ -115,68 +149,59 @@ function buildDepMounts(deps: ProjectDeps): readonly string[] {
   return mounts;
 }
 
-type ProgramInput = Readonly<{ check: Check; deps: ProjectDeps; probeFile: string }>;
+function buildGoProgram({ deps, files, probeFile }: ProgramInput): readonly string[] {
+  const probeDir = dirname(probeFile);
 
-type EnvFlagsInput = Readonly<{
-  deps: ProjectDeps;
-  files: ReadonlyMap<string, string>;
-  runtime: Check['runtime'];
-}>;
-
-function buildPythonProgram({ check, probeFile }: ProgramInput): readonly string[] {
-  if (check.testFile === undefined) {
-    return [PYTHON, '-B', `./${probeFile}`];
-  }
-
-  return [
-    PYTHON,
-    '-B',
-    '-m',
-    'unittest',
-    'discover',
-    '-s',
-    `./${dirname(check.testFile)}`,
-    '-p',
-    basename(check.testFile),
-  ];
+  return buildGoCommand({
+    binary: `${GO_ROOT_MOUNT}/bin/go`,
+    deps,
+    files,
+    output: '/tmp/observe',
+    probeDir,
+  });
 }
 
-function buildNodeProgram({ check, probeFile }: ProgramInput): readonly string[] {
-  if (check.testFile === undefined) {
-    return [NODE, ...NODE_FLAGS, `./${probeFile}`];
-  }
-
-  return [NODE, ...NODE_FLAGS, '--test', '--test-reporter=tap', '--', `./${check.testFile}`];
-}
-
-function buildRustProgram(deps: ProjectDeps): readonly string[] {
-  if (deps.rustDepsDir === undefined) {
-    return RUST_COMMAND;
-  }
-
-  const externArgs = deps.rustExterns.flatMap(({ file, name }) => [
-    '--extern',
-    `${name}=/deps/rust/${file}`,
-  ]);
-
-  return [...RUST_COMMAND, '-L', 'dependency=/deps/rust', ...externArgs];
-}
-
-function buildProgram({ check, deps, probeFile }: ProgramInput): readonly string[] {
+async function buildProgram({
+  check,
+  deps,
+  files,
+  probeFile,
+  projectRoot,
+}: ProgramInput): Promise<readonly string[]> {
   switch (check.runtime) {
+    case 'go': {
+      return buildGoProgram({ check, deps, files, probeFile, projectRoot });
+    }
     case 'node': {
-      return buildNodeProgram({ check, deps, probeFile });
+      return buildNodeCommand({ binary: NODE, check, probeFile });
     }
     case 'python': {
-      return buildPythonProgram({ check, deps, probeFile });
+      return buildPythonCommand({ binary: PYTHON, check, probeFile });
     }
     case 'rust': {
-      return buildRustProgram(deps);
+      const rustCrate = await readRustCrate({ files, projectRoot });
+
+      return buildRustCommand({
+        deps,
+        depsMount: '/deps/rust',
+        linkerArg: '/usr/bin/gcc',
+        probeFile,
+        probeTmp: '/tmp',
+        rustCrate,
+        rustc: '/toolchain/bin/rustc',
+      });
     }
   }
 }
 
 function buildEnvFlags({ deps, files, runtime }: EnvFlagsInput): readonly string[] {
+  if (runtime === 'go') {
+    const goEnv = buildGoEnv({ goroot: GO_ROOT_MOUNT, probeTmp: '/tmp' });
+    const goFlags = Object.entries(goEnv).flatMap(([key, value]) => ['--setenv', key, value]);
+
+    return [...BASE_ENV_FLAGS, ...goFlags];
+  }
+
   if (runtime !== 'python') {
     return BASE_ENV_FLAGS;
   }
@@ -196,6 +221,7 @@ export async function createLinuxSandbox({
   deps,
   files,
   probeFile,
+  projectRoot,
   work,
 }: LinuxSandboxInput): Promise<SandboxCommand> {
   await access(BWRAP);
@@ -204,7 +230,8 @@ export async function createLinuxSandbox({
   const mounts = await buildRuntimeMount(check.runtime);
   const depMounts = buildDepMounts(deps);
   const envFlags = buildEnvFlags({ deps, files, runtime: check.runtime });
-  const program = buildProgram({ check, deps, probeFile });
+  const program = await buildProgram({ check, deps, files, probeFile, projectRoot });
+  const limits = buildLimits(check.runtime);
 
   return {
     args: [
@@ -218,7 +245,7 @@ export async function createLinuxSandbox({
       '/project',
       ...envFlags,
       '--',
-      ...LIMITS,
+      ...limits,
       ...program,
     ],
     env: { PATH: SYSTEM_PATH },

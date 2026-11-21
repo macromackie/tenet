@@ -81,7 +81,7 @@ const ReceiptFields = Schema.Struct({
 export const Receipt = Schema.toEncoded(ReceiptFields);
 export type Receipt = typeof Receipt.Type;
 
-const Runtime = Schema.Literals(['node', 'python', 'rust']);
+const Runtime = Schema.Literals(['node', 'python', 'rust', 'go']);
 
 const CheckFields = Schema.Struct({
   defect: Schema.String,

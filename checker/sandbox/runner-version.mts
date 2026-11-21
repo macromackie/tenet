@@ -1,14 +1,13 @@
 import type { Stats } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { Effect, Option } from 'effect';
-import { readPythonTool } from './python-tool.mts';
-import { readRustTool } from './rust-tool.mts';
+import { readGoVersion, readPythonTool, readRustTool } from './runtimes/index.mts';
 
 const BWRAP = '/usr/bin/bwrap';
 const PYTHON = '/usr/bin/python3';
 const PRLIMIT = '/usr/bin/prlimit';
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
-const RUNNER_REVISION = 4;
+const RUNNER_REVISION = 5;
 
 function readBinaryIdentity(path: string) {
   const read = Effect.tryPromise(async () => await stat(path));
@@ -50,8 +49,10 @@ async function readRunnerVersion(): Promise<string> {
   const version = Effect.option(tool);
   const installed = await Effect.runPromise(version);
   const rust = Option.getOrNull(installed);
+  const goInstalled = await readGoVersion();
+  const go = Option.getOrNull(goInstalled);
 
-  return JSON.stringify([RUNNER_REVISION, process.version, process.platform, binaries, rust]);
+  return JSON.stringify([RUNNER_REVISION, process.version, process.platform, binaries, rust, go]);
 }
 
 export { readRunnerVersion as runnerVersion };

@@ -1,4 +1,4 @@
-import { access, readdir, realpath, stat } from 'node:fs/promises';
+import { access, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { Option } from 'effect';
@@ -8,6 +8,8 @@ import { runOptional } from './run-optional.mts';
 import { collectRustExterns, type RustExtern } from './rust-deps.mts';
 
 export type ProjectDeps = Readonly<{
+  goMod?: string;
+  goVendor?: string;
   nodeModules?: string;
   pythonSitePackages?: string;
   rustDepsDir?: string;
@@ -137,11 +139,25 @@ async function resolveRustDeps(projectRoot: string): Promise<ProjectDeps> {
   return { rustDepsDir: rustDepsDir.value, rustExterns };
 }
 
+async function resolveGoDeps(projectRoot: string): Promise<ProjectDeps> {
+  const vendorCandidate = join(projectRoot, 'vendor');
+  const vendorOption = await resolveDirectory(vendorCandidate);
+  const goVendor = Option.getOrUndefined(vendorOption);
+  const modCandidate = join(projectRoot, 'go.mod');
+  const modOption = await runOptional(async () => await readFile(modCandidate, 'utf-8'));
+  const goMod = Option.getOrUndefined(modOption);
+
+  return { goMod, goVendor, rustExterns: [] };
+}
+
 async function selectDepsForRuntime({
   projectRoot,
   runtime,
 }: SelectRuntimeDepsInput): Promise<ProjectDeps> {
   switch (runtime) {
+    case 'go': {
+      return await resolveGoDeps(projectRoot);
+    }
     case 'node': {
       return await resolveNodeDeps(projectRoot);
     }
@@ -177,6 +193,8 @@ function selectSafeRustExterns({ deps, rustDepsDir }: SelectSafeRustInput): read
 }
 
 function filterInsideRoot({ deps, projectRoot }: FilterRootInput): ProjectDeps {
+  const safeGo = readSafeWithinRoot({ candidate: deps.goVendor, root: projectRoot });
+  const goVendor = Option.getOrUndefined(safeGo);
   const safeNode = readSafeWithinRoot({ candidate: deps.nodeModules, root: projectRoot });
   const nodeModules = Option.getOrUndefined(safeNode);
   const safePython = readSafeWithinRoot({ candidate: deps.pythonSitePackages, root: projectRoot });
@@ -185,7 +203,7 @@ function filterInsideRoot({ deps, projectRoot }: FilterRootInput): ProjectDeps {
   const rustDepsDir = Option.getOrUndefined(safeRust);
   const rustExterns = selectSafeRustExterns({ deps, rustDepsDir });
 
-  return { nodeModules, pythonSitePackages, rustDepsDir, rustExterns };
+  return { goMod: deps.goMod, goVendor, nodeModules, pythonSitePackages, rustDepsDir, rustExterns };
 }
 
 /** Discover read-only project dependency directories already present on disk without running installs or builds. */

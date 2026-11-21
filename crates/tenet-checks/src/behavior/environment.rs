@@ -19,6 +19,8 @@ const HOME_PATHS: &[&str] = &[
     "XDG_CACHE_HOME",
     "RUSTUP_HOME",
     "CARGO_HOME",
+    "GOROOT",
+    "GOPATH",
     "SSL_CERT_FILE",
     "NODE_EXTRA_CA_CERTS",
 ];
@@ -36,12 +38,32 @@ fn is_trusted_bin(root: &Path, folder: &Path) -> bool {
     if !is_outside(root, folder) {
         return false;
     }
-    ["node", "npm", "rustc", "git"].iter().all(|name| {
+    ["node", "npm", "rustc", "go", "git"].iter().all(|name| {
         folder
             .join(name)
             .canonicalize()
             .map_or(true, |resolved| !resolved.starts_with(root))
     })
+}
+
+const NODE_BINARIES: &[&str] = &["node", "node.exe"];
+
+pub(super) fn resolve_node_binary(folders: &[PathBuf]) -> PathBuf {
+    for folder in folders {
+        let candidate = folder.join("node");
+        let Ok(resolved) = candidate.canonicalize() else {
+            continue;
+        };
+        if resolved.is_file()
+            && resolved
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| NODE_BINARIES.contains(&name))
+        {
+            return resolved;
+        }
+    }
+    PathBuf::from("node")
 }
 
 /// Project sockets, shell startup hooks and unrelated credentials stay outside the worker.
@@ -52,7 +74,8 @@ pub(super) fn build_worker(checkout: &Path, generate: bool) -> io::Result<Comman
         .filter(|folder| is_trusted_bin(&root, folder))
         .collect();
     let safe_path = env::join_paths(&folders).map_err(io::Error::other)?;
-    let mut command = Command::new("node");
+    let node_bin = resolve_node_binary(&folders);
+    let mut command = Command::new(node_bin);
     let _configured = command
         .env_clear()
         .env("PATH", safe_path)

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.23.0
+
+- Added multi-file Rust crate support (`src/lib.rs`) to isolated behavior checks: Tenet reads `Cargo.toml` (falling back to the repository root for subdirectory-scoped contracts), extracts the crate name, edition, and transitive default features, compiles `src/lib.rs` with prebuilt read-only `target/debug/deps` inside macOS Seatbelt or Linux `bubblewrap`, and links the probe against the compiled crate without running `cargo` or `build.rs`.
+- Added the Go behavior-check runtime (`runtime: "go"`): discovers `.go`, `go.mod`, `go.sum`, and `*_test.go` files, runs offline `go build` + exec inside macOS Seatbelt and Linux `bubblewrap` (`CGO_ENABLED=0`, `GOPROXY=off`, `GOSUMDB=off`, read-only in-root `vendor/`), falls back to root `go.mod` when contracts are scoped under a subdirectory, fingerprints the Go toolchain in replay receipts, and reports Go availability in `tenet doctor` and `tenet contracts recommend`.
+- Fixed embedded worker launching (`crates/tenet-checks`) to resolve the real `node` binary directly instead of version-manager shims (such as `mise/shims/node`) that clobber `PATH` when `env_clear()` runs, and forwarded `GOROOT` and `GOPATH` alongside `RUSTUP_HOME` and `CARGO_HOME`.
+- Added nested macOS Seatbelt diagnostics (`sandbox-exec: Operation not permitted`) in both behavior-check preflight and `tenet doctor`, explicit context-window overflow diagnostics in `fx-json`, and a 300 KiB prompt budget cap so large test suites do not overflow the checker generation window.
+- Reorganized `checker/sandbox/` into `runtimes/`, `os/`, and `controls/` subpackages with shared Node/Python command builders, split Cargo manifest parsing into `parse-cargo-manifest.mts`, split `tenet-adoption` surface tables into `catalog/surface/terms.rs`, and added `checker/README.md`.
+
 ## v0.22.0
 
 - Removed `--local` from `tenet check` and `tenet status` so `tenet check` always requires model credentials (`OPENROUTER_API_KEY` or a configured provider) and never poses as an offline substitute for semantic review. Declared project checks (`checks/NAME.json`) continue to run inside `tenet check --final` alongside semantic review.

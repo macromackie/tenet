@@ -1,5 +1,5 @@
-import { CheckerError } from '../checker-error.mts';
-import type { Check } from '../types.d.mts';
+import { CheckerError } from '../../checker-error.mts';
+import type { Check } from '../../types.d.mts';
 import { applyControl } from './apply-control.mts';
 
 type CandidateInput = Readonly<{ check: unknown; files: ReadonlyMap<string, string> }>;
@@ -19,6 +19,7 @@ type NativeInput = Readonly<{
 
 const MAX_FIELD_BYTES = 131_072;
 const ID_PATTERN = /^[a-z][a-z0-9\-]{0,63}$/v;
+const NATIVE_TEST_RUNTIMES: ReadonlySet<string> = new Set(['node', 'python']);
 
 function readFields(candidate: unknown): ReadonlyMap<string, unknown> {
   if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) {
@@ -47,6 +48,7 @@ function readText(value: unknown): string {
 
 function readRuntime(value: unknown): Check['runtime'] {
   switch (value) {
+    case 'go':
     case 'node':
     case 'python':
     case 'rust': {
@@ -133,7 +135,7 @@ function attachEntry({ base, fields, files }: NativeInput): Check {
   }
 
   const testFile = readField({ fields, key: 'testFile' });
-  const isNative = base.runtime !== 'rust' && base.expected === true;
+  const isNative = NATIVE_TEST_RUNTIMES.has(base.runtime) && base.expected === true;
   const hasTest = files.has(testFile) && testFile !== base.subject;
 
   if (!hasTest || !isNative) {

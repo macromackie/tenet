@@ -2,7 +2,7 @@ use std::{fs, io};
 
 use serde_json::json;
 
-use super::{Outcome, process, request};
+use super::{Outcome, environment, process, request};
 
 #[test]
 fn embedded_worker_preserves_a_context_limit_without_provider_access() -> anyhow::Result<()> {
@@ -69,6 +69,32 @@ fn selected_source_keeps_its_contract_samples_and_respects_discovery() -> anyhow
                 ".contracts/001-options/resources/usage.txt"
             ])),
         "unexpected reference paths: {input:?}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn resolve_node_binary_skips_version_manager_shims_for_real_node() -> anyhow::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir()?;
+    let shim_dir = dir.path().join("shims");
+    let real_dir = dir.path().join("bin");
+    fs::create_dir_all(&shim_dir)?;
+    fs::create_dir_all(&real_dir)?;
+
+    let mise = dir.path().join("mise");
+    let real_node = real_dir.join("node");
+    fs::write(&mise, "#!/bin/sh\n")?;
+    fs::write(&real_node, "#!/bin/sh\n")?;
+    symlink(&mise, shim_dir.join("node"))?;
+
+    let resolved = environment::resolve_node_binary(&[shim_dir, real_dir]);
+    let expected = real_node.canonicalize()?;
+    anyhow::ensure!(
+        resolved == expected,
+        "expected {expected:?}, got {resolved:?}"
     );
     Ok(())
 }

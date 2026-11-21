@@ -1,8 +1,8 @@
 import { access } from 'node:fs/promises';
 import { Effect } from 'effect';
-import { CheckerError } from '../checker-error.mts';
-import { tryOperation } from '../try-operation.mts';
-import { runFile } from './host-tool.mts';
+import { CheckerError } from '../../checker-error.mts';
+import { tryOperation } from '../../try-operation.mts';
+import { runFile } from '../host-tool.mts';
 
 const BWRAP = '/usr/bin/bwrap';
 const PRLIMIT = '/usr/bin/prlimit';
@@ -77,6 +77,14 @@ async function ensureMacosTool(): Promise<void> {
   await Effect.runPromise(check);
 }
 
+function readMacosFailureMessage(stderr: string): string {
+  if (stderr.includes('Operation not permitted')) {
+    return 'macOS sandbox-exec cannot nest inside an outer sandbox (such as an agent workspace sandbox); run outside the outer macOS sandbox or in a Linux container with bubblewrap';
+  }
+
+  return 'the macOS sandbox-exec runner is unavailable in this environment';
+}
+
 async function verifyMacosSandbox(): Promise<void> {
   await ensureMacosTool();
 
@@ -93,9 +101,9 @@ async function verifyMacosSandbox(): Promise<void> {
   });
 
   if (result.status !== 0) {
-    throw new CheckerError({
-      message: 'the macOS sandbox-exec runner is unavailable in this environment',
-    });
+    const message = readMacosFailureMessage(result.stderr);
+
+    throw new CheckerError({ message });
   }
 }
 
