@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.24.0
+
+- Added `tenet audit [PATHS...] [--deep] [--save] [--fresh] [--max-requests N] [--json]`: discovers production source modules (skipping tests, fixtures, vendor, and build directories), synthesizes per-module behavioral contracts (with optional `--deep` adversarial edge-case synthesis), falsifies them immediately inside the isolated OS sandbox, persists resumable progress in `.tenet/audit.json` without touching the working tree, and optionally persists verified contracts plus pre-qualified `agent-checks.lock.json` pins into `.contracts/` with `--save`.
+- Added a bounded Node.js `module.registerHooks` ESM loader hook (`--import data:text/javascript,...`) inside macOS Seatbelt and Linux `bubblewrap` sandboxes to resolve extensionless relative ESM imports (`./constant` -> `./constant.js` and `./dir` -> `./dir/index.js`) strictly within the staged working directory, unlocking Babel-style ESM repositories.
+- Automatically enabled satisfiable local optional Cargo features (such as `full`, `visit`, `fold`, and `extra-traits`) alongside default features when compiling multi-file Rust crates inside the sandbox, while skipping test/bench/unstable/no-std features and features whose external crates are absent from `target/debug/deps`.
+- Lifted core behavior-check ceilings: raised the `fx` generation context window to 256k tokens, raised prompt discovery budgets to 512 KiB / 240 files while excluding test and fixture files from prompt packets when production code exists (retaining them in execution closure), raised the per-bundle check limit to 16, added partial-bundle repair plus up to two full repair turns without losing already-qualified checks, and suppressed redundant `? REVIEW .../coverage` warnings once concrete executable behavior checks qualify.
+- Raised default `--max-requests` in `tenet check` from 1000 to 2000 and reserved a bounded slice of each OpenRouter run's request budget (`min(3 * contracts, budget / 5)`) so large semantic file sweeps cannot starve behavior-check generation.
+
 ## v0.23.1
 
 - Raised the Linux `bubblewrap` `/tmp` tmpfs bound to 256 MiB and CPU limit to 30s for compiled behavior-check runtimes (`go` and `rust`) so cold Go stdlib compilation inside `GOCACHE=/tmp/gocache` succeeds cleanly while keeping 64 MiB for interpreted runtimes (`node` and `python`).

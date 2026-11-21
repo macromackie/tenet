@@ -188,7 +188,7 @@ async function buildProgram({
       return buildPythonCommand({ binary: PYTHON, check, probeFile });
     }
     case 'rust': {
-      const rustCrate = await readRustCrate({ files, projectRoot });
+      const rustCrate = await readRustCrate({ deps, files, projectRoot });
 
       return buildRustCommand({
         deps,

@@ -4,12 +4,13 @@ import { classifyResult } from '../classify-result.mts';
 import { hashSource, readRegular } from '../storage/index.mts';
 import type { Contract, Inventory } from '../types.d.mts';
 import { hashSurface } from './hash-surface.mts';
+import { isTestOrFixturePath } from './is-test-path.mts';
 import { MANIFESTS } from './manifests.mts';
 import { listRankedPaths } from './rank-path.mts';
 
 const EXECUTION = { bytes: 16_777_216, files: 1_024, source: 524_288 } as const;
-const MAX_FILES = 160;
-const MAX_BYTES = 307_200;
+const MAX_FILES = 240;
+const MAX_BYTES = 524_288;
 const MAX_SOURCE = 131_072;
 const MAX_SAMPLES = 32_768;
 const MAX_SAMPLE = 8_192;
@@ -46,25 +47,52 @@ type Selected = { files: Map<string, string>; omitted: readonly string[] };
 type ClassifyPathInput = {
   readonly path: string;
   readonly decision?: string;
+  readonly excludeTests: boolean;
   readonly packageRoots: readonly string[];
 };
+
+type ReadablePathInput = Readonly<{
+  decision?: string;
+  excludeTests: boolean;
+  path: string;
+}>;
+
+type PackageDataInput = Readonly<{
+  packageRoots: readonly string[];
+  path: string;
+}>;
+
+function classifyReadablePath({ decision, excludeTests, path }: ReadablePathInput): 'read' | 'skip' {
+  if (excludeTests && decision !== 'fail' && isTestOrFixturePath(path)) {
+    return 'skip';
+  }
+
+  return 'read';
+}
+
+function isPackageDataPath({ packageRoots, path }: PackageDataInput): boolean {
+  const extension = extname(path);
+
+  return (
+    PACKAGE_DATA_EXTENSIONS.has(extension) &&
+    packageRoots.some((root) => path.startsWith(`${root}/`))
+  );
+}
 
 function classifyPath({
   path,
   decision,
+  excludeTests,
   packageRoots,
 }: ClassifyPathInput): 'read' | 'omitted' | 'skip' {
   const extension = extname(path);
   const name = basename(path);
 
   if (EXTENSIONS.has(extension) || MANIFESTS.has(name)) {
-    return 'read';
+    return classifyReadablePath({ decision, excludeTests, path });
   }
 
-  if (
-    PACKAGE_DATA_EXTENSIONS.has(extension) &&
-    packageRoots.some((root) => path.startsWith(`${root}/`))
-  ) {
+  if (isPackageDataPath({ packageRoots, path })) {
     return 'read';
   }
 
@@ -162,23 +190,45 @@ function listPackageRoots(input: SelectInput): readonly string[] {
   return packageModules.map((path) => dirname(path));
 }
 
+function hasProductionCode(paths: readonly string[]): boolean {
+  return paths.some((path) => {
+    const extension = extname(path);
+
+    return EXTENSIONS.has(extension) && !isTestOrFixturePath(path);
+  });
+}
+
+type ApplyPathInput = Readonly<{
+  kind: 'read' | 'omitted' | 'skip';
+  path: string;
+  pool: ReturnType<typeof createCapture>;
+}>;
+
+async function applyPath({ kind, path, pool }: ApplyPathInput): Promise<void> {
+  if (kind === 'omitted') {
+    pool.markOmitted(path);
+
+    return;
+  }
+
+  if (kind === 'read') {
+    await pool.capture(path);
+  }
+}
+
 async function select(input: SelectInput): Promise<Selected> {
   const packageRoots = listPackageRoots(input);
+  const rankedPaths = listRankedPaths(input.contract);
+  const excludeTests = input.budget !== EXECUTION && hasProductionCode(rankedPaths);
   const pool = createCapture(input);
 
-  for (const path of listRankedPaths(input.contract)) {
+  for (const path of rankedPaths) {
     const decision = input.contract.decisions?.[path];
-    const kind = classifyPath({ decision, packageRoots, path });
+    const kind = classifyPath({ decision, excludeTests, packageRoots, path });
 
-    if (kind === 'omitted') {
-      pool.markOmitted(path);
-    }
-
-    if (kind === 'read') {
-      // The preceding read determines the remaining shared byte allowance.
-      // oxlint-disable-next-line no-await-in-loop
-      await pool.capture(path);
-    }
+    // The preceding read determines the remaining shared byte allowance.
+    // oxlint-disable-next-line no-await-in-loop
+    await applyPath({ kind, path, pool });
   }
 
   return pool;
@@ -207,6 +257,22 @@ function hashContents(files: ReadonlyMap<string, string>) {
 
 const PROMPT = { bytes: MAX_BYTES, files: MAX_FILES, source: MAX_SOURCE } as const;
 
+function buildExecutionContract(contract: Contract): Contract {
+  if (contract.runtimePaths === undefined || contract.runtimePaths.length === 0) {
+    return contract;
+  }
+
+  const combinedPaths = new Set<string>([...contract.paths, ...contract.runtimePaths]);
+
+  return { ...contract, paths: [...combinedPaths] };
+}
+
+async function selectExecution(input: { contract: Contract; root: string }): Promise<Selected> {
+  const executionContract = buildExecutionContract(input.contract);
+
+  return await select({ budget: EXECUTION, contract: executionContract, root: input.root });
+}
+
 /** Keep the provider packet and local execution closure independently bounded. */
 export async function readInventory(input: {
   root: string;
@@ -214,7 +280,7 @@ export async function readInventory(input: {
 }): Promise<Inventory> {
   const { contract, root } = input;
   const { files, omitted: unprompted } = await select({ ...input, budget: PROMPT });
-  const dependencies = await select({ ...input, budget: EXECUTION });
+  const dependencies = await selectExecution(input);
   const omittedPaths = new Set([...unprompted, ...dependencies.omitted]);
   const omitted = [...omittedPaths];
   const assets = await readSamples({ paths: contract.assets ?? [], root });

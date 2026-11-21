@@ -3,10 +3,13 @@ import { generate, type RepairFeedback } from '../fx/index.mts';
 import { reportProgress } from '../progress-log.mts';
 import { assertSandboxAvailable } from '../sandbox/index.mts';
 import type { Finding, Pin } from '../types.d.mts';
+import { mergeEvaluations } from './merge-evaluations.mts';
 import { type CandidateEvaluation, qualifyBundle, updatePin } from './pin/index.mts';
 import type { Context } from './receipt/index.mts';
 
 const MAX_REPAIR_PREVIEW_CHARS = 32_768;
+const MAX_FULL_REPAIRS = 2;
+const MAX_PARTIAL_REPAIRS = 1;
 
 const MISSING_DEP_PATTERN =
   /ERR_MODULE_NOT_FOUND|ModuleNotFoundError|error\[E04(?:32|63)\]|target\/debug\/deps|no required module provides package|cannot find package|go mod vendor/v;
@@ -97,11 +100,19 @@ function isUnrecoverableMissingDependency(errors: readonly string[]): boolean {
 }
 
 function shouldRepair(evaluated: CandidateEvaluation): boolean {
-  if (evaluated.qualified.length > 0 || evaluated.errors.length === 0) {
+  if (evaluated.errors.length === 0) {
     return false;
   }
 
   return !isUnrecoverableMissingDependency(evaluated.errors);
+}
+
+function readMaxRepairs(evaluated: CandidateEvaluation): number {
+  if (evaluated.qualified.length === 0) {
+    return MAX_FULL_REPAIRS;
+  }
+
+  return MAX_PARTIAL_REPAIRS;
 }
 
 function buildSelectedPin({ ctx, evaluated }: BuildSelectedInput): SelectedPin {
@@ -122,18 +133,27 @@ async function runRepairIfNeeded({
   first,
   input,
 }: RepairIfNeededInput): Promise<CandidateEvaluation> {
-  if (!shouldRepair(first.evaluated) || !input.ctx.job.canSpendRequest()) {
-    return first.evaluated;
+  let latest = first;
+  let combined = first.evaluated;
+  const maxRepairs = readMaxRepairs(first.evaluated);
+
+  for (let attempt = 0; attempt < maxRepairs; attempt += 1) {
+    if (!shouldRepair(combined) || !input.ctx.job.canSpendRequest()) {
+      return combined;
+    }
+
+    const repair: RepairFeedback = {
+      errors: combined.errors,
+      previous: formatPreview(latest.raw),
+    };
+
+    // Repair turns are strictly sequential because each turn feeds prior failures forward.
+    // oxlint-disable-next-line no-await-in-loop
+    latest = await generateOnce({ ...input, repair });
+    combined = mergeEvaluations({ prior: combined, repaired: latest.evaluated });
   }
 
-  const repair: RepairFeedback = {
-    errors: first.evaluated.errors,
-    previous: formatPreview(first.raw),
-  };
-
-  const repaired = await generateOnce({ ...input, repair });
-
-  return repaired.evaluated;
+  return combined;
 }
 
 async function generateAndQualify(input: Preparation): Promise<SelectedPin> {

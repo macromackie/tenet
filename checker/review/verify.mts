@@ -12,8 +12,17 @@ type PublishInput = { ctx: Context; pin: Pin };
 
 type VerifyInput = Preparation;
 
+function readPublishRoot(ctx: Context): string {
+  if (ctx.job.request.pinRoot !== undefined) {
+    return ctx.job.request.pinRoot;
+  }
+
+  return ctx.job.request.root;
+}
+
 async function publish({ ctx, pin }: PublishInput): Promise<void> {
-  const input = { path: ctx.lock, root: ctx.job.request.root, value: pin };
+  const root = readPublishRoot(ctx);
+  const input = { path: ctx.lock, root, value: pin };
 
   if (ctx.pin === undefined) {
     await writeAtomic({ ...input, first: true });

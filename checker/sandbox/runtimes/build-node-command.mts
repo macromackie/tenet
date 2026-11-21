@@ -1,4 +1,5 @@
 import type { Check } from '../../types.d.mts';
+import { buildNodeResolveHookFlags } from './node-resolve-hook.mts';
 
 type BuildNodeCommandInput = Readonly<{
   binary: string;
@@ -18,9 +19,19 @@ export function buildNodeCommand({
   check,
   probeFile,
 }: BuildNodeCommandInput): readonly string[] {
+  const hookFlags = buildNodeResolveHookFlags();
+
   if (check.testFile === undefined) {
-    return [binary, ...NODE_FLAGS, `./${probeFile}`];
+    return [binary, ...NODE_FLAGS, ...hookFlags, `./${probeFile}`];
   }
 
-  return [binary, ...NODE_FLAGS, '--test', '--test-reporter=tap', '--', `./${check.testFile}`];
+  return [
+    binary,
+    ...NODE_FLAGS,
+    ...hookFlags,
+    '--test',
+    '--test-reporter=tap',
+    '--',
+    `./${check.testFile}`,
+  ];
 }

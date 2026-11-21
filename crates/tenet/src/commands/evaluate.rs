@@ -2,7 +2,7 @@ use core::{cell::RefCell, time::Duration};
 use std::{env, path::Path, time::Instant};
 
 use anyhow::Context as _;
-use ev_grep_jev::Jev;
+use ev_grep_jev::{Jev, Provider};
 use tenet_engine::{Event, Mode, Options, Review, RunInfo, review::CheckRequest};
 use tokio::{signal, time, time::MissedTickBehavior};
 
@@ -115,10 +115,11 @@ pub(super) async fn evaluate(
     emit(Event::Begin {
         run: begin(Some(run.provider.to_string()), Some(model)),
     })?;
+    let semantic_budget = reserve_behavior_budget(check, &plan, budget);
     let options = Options {
         contract_batch_size: usize::from(run.contract_batch_size),
         jobs: run.jobs.into(),
-        max_requests: budget,
+        max_requests: semantic_budget,
         min_confidence: run.min_confidence,
     };
     let mut refresh = time::interval(Duration::from_millis(100));
@@ -211,4 +212,25 @@ fn build_evaluator(
     } else {
         Ok(Model::Jev(jev))
     }
+}
+
+/// Reserve a bounded slice of the run's request budget so large semantic sweeps cannot starve
+/// behavior-check generation.
+#[expect(
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
+    reason = "Reserving up to one-fifth of the request budget intentionally uses integer floor \
+              division."
+)]
+fn reserve_behavior_budget(check: &Check, plan: &tenet_engine::Plan, budget: usize) -> usize {
+    if budget == 0
+        || check.input.snapshot.is_some()
+        || check.evidence.is_some()
+        || check.run.endpoint.is_some()
+        || check.run.provider != Provider::OpenRouter
+    {
+        return budget;
+    }
+    let reserved = plan.contracts.len().saturating_mul(3).min(budget / 5);
+    budget.saturating_sub(reserved)
 }

@@ -38,6 +38,16 @@ pub(super) fn execute(
     generate: bool,
     on_progress: Option<&mut dyn FnMut(&str)>,
 ) -> io::Result<Vec<Finding>> {
+    let bytes = execute_bytes(input, root, generate, on_progress)?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+pub(super) fn execute_bytes(
+    input: &Value,
+    root: &Path,
+    generate: bool,
+    on_progress: Option<&mut dyn FnMut(&str)>,
+) -> io::Result<Vec<u8>> {
     let workspace = tempfile::tempdir()?;
     for (name, source) in super::FILES {
         fs::write(workspace.path().join(name), source)?;
@@ -61,7 +71,7 @@ pub(super) fn execute(
         .stderr(fs::File::create_new(&errors)?)
         .spawn()?;
     wait_bounded(&mut child, &answer, &errors, &progress, on_progress)?;
-    Ok(serde_json::from_slice(&fs::read(answer)?)?)
+    fs::read(answer)
 }
 
 fn read_progress(progress: &Path) -> Option<String> {

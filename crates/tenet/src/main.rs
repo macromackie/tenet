@@ -35,6 +35,7 @@ use tracing::{Instrument as _, Span};
 )]
 fn is_json_command(command: &Command) -> bool {
     match command {
+        Command::Audit(audit) => audit.json,
         Command::Check(check) => check.run.json || check.run.reporter == ReporterKind::Jsonl,
         Command::Doctor { json } => *json,
         Command::Fix(fix) => fix.json,

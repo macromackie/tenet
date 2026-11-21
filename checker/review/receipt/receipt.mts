@@ -50,13 +50,22 @@ async function readReceipt({
   return decodeReceipt(saved);
 }
 
+function readPinRoot(request: Request): string {
+  if (request.pinRoot !== undefined) {
+    return request.pinRoot;
+  }
+
+  return request.root;
+}
+
 /** Load bounded sources, the portable pin and the last local observation together. */
 export async function readContext(job: Job): Promise<Context> {
   const { contract, request } = job;
   const current = await readInventory({ contract, root: request.root });
   const { receipt, lock } = resolvePaths(contract);
   const saved = await readReceipt({ receipt, request });
-  const prior = await readRecord({ path: lock, root: request.root });
+  const pinRoot = readPinRoot(request);
+  const prior = await readRecord({ path: lock, root: pinRoot });
   const candidate = parsePin({ contractHash: contract.hash, current, value: prior });
 
   const evaluation = {

@@ -3,6 +3,7 @@
 ```sh
 tenet init [--starter [NAME]] [--yes] [--scope DIR] [--json]
 tenet doctor [--json]
+tenet audit [PATHS...] [--deep] [--save] [--fresh] [--max-requests N] [--json]
 tenet check
 tenet check --base origin/main
 tenet check --qualify CONTRACT/NAME [--json]
@@ -51,6 +52,21 @@ tooling (`/usr/bin/sandbox-exec` on macOS, or `bubblewrap >= 0.7` and `prlimit` 
 `rustc`), Git status, `.contracts/` validity, `.tenet.lock` validity, committed `agent-checks.lock.json` behavior pins,
 and that `.tenet/` has its `.gitignore` guard and is not tracked in Git. It exits `0` when required checks pass and `1`
 when any required check needs attention. Both commands support `--json`.
+
+## Module audit
+
+```sh
+tenet audit                      # Synthesize and falsify per-module contracts across the repo
+tenet audit src/ --deep --json   # Add adversarial edge-case synthesis and emit JSON
+tenet audit --save               # Persist verified contracts and pinned checks into .contracts/
+```
+
+`tenet audit` requires `OPENROUTER_API_KEY` and an available local sandbox. It discovers production source modules
+(excluding tests, fixtures, vendor, and build artifacts), splits large directories into bounded shards, synthesizes
+focused behavioral contracts per module, and immediately falsifies them inside the OS sandbox. Progress is saved
+incrementally in `.tenet/audit.json` so reruns resume cleanly unless `--fresh` is passed, and tracked repository files
+stay untouched unless `--save` is passed. It exits `1` when verified `× FAIL` defects are found, `4` when synthesis
+fails transiently, and `0` when no verified defects remain.
 
 ## Full check
 

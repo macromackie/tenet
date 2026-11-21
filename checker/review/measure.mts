@@ -49,8 +49,21 @@ function recordAttemptCost({ attempt, cost }: RecordCostInput): void {
   Object.assign(attempt, { cost: nextCost, requested: true, requests });
 }
 
+const CONCRETE_OUTCOMES: ReadonlySet<Finding['outcome']> = new Set(['passed', 'failed']);
+
+function selectActiveGaps({ gaps, result }: MergeResultsInput): readonly Finding[] {
+  const hasExecutableObservation = result.rows.some((row) => CONCRETE_OUTCOMES.has(row.outcome));
+
+  if (hasExecutableObservation) {
+    return [];
+  }
+
+  return gaps;
+}
+
 function mergeResults({ gaps, result }: MergeResultsInput) {
-  const rows = [...gaps, ...result.rows];
+  const activeGaps = selectActiveGaps({ gaps, result });
+  const rows = [...activeGaps, ...result.rows];
 
   if (result.cache) {
     return { pin: result.pin, rows };

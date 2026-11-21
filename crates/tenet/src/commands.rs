@@ -1,4 +1,5 @@
 mod administration;
+mod audit;
 mod doctor;
 mod documents;
 mod dry_run;
@@ -30,6 +31,7 @@ use crate::{
 )]
 pub(crate) async fn execute(cli: &Cli) -> Result<ExitStatus, CommandError> {
     match &cli.command {
+        Command::Audit(args) => audit::run(&cli.root, &cli.resolve_state(), args),
         Command::Init(init_args) => init::run(&cli.root, init_args),
         Command::Doctor { json } => doctor::run(&cli.root, &cli.resolve_state(), *json),
         Command::Validate { strict_adaptations } => validate(&cli.root, *strict_adaptations),

@@ -110,7 +110,7 @@ async function resolveRustRuntime({
   const resolved = await realpath(sysroot);
   const runtimeRoot = assertBoundedRuntimeRoot(resolved);
   const rustc = join(runtimeRoot, 'bin', 'rustc');
-  const rustCrate = await readRustCrate({ files, projectRoot });
+  const rustCrate = await readRustCrate({ deps, files, projectRoot });
   const depsMount = deps.rustDepsDir ?? '';
   const command = buildRustCommand({ deps, depsMount, probeFile, probeTmp, rustCrate, rustc });
 

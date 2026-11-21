@@ -8,7 +8,7 @@ import { readLibrary } from './fx-library.mts';
 import { OpenRouterTurn, ROUTER_BASE } from './openrouter.mts';
 
 const TURN_TIMEOUT_MS = 120_000;
-const CONTEXT_WINDOW = 128_000;
+const CONTEXT_WINDOW = 256_000;
 const CONTEXT_LIMIT_PATTERN = /context|token|window|too long|exceeds/iv;
 const CheckerObject = Schema.Record(Schema.String, Schema.Unknown);
 const CheckerJson = Schema.fromJsonString(CheckerObject);

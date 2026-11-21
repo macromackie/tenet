@@ -9,7 +9,7 @@ pub(crate) use adoption::{Contracts, Locked, Skills};
 pub(crate) use checking::{Check, Export, Input, Record, ReporterKind};
 use clap::{Parser, Subcommand};
 pub(crate) use exit_status::ExitStatus;
-pub(crate) use onboarding::{Fix, Init};
+pub(crate) use onboarding::{Audit, Fix, Init};
 use tenet_engine::review::DIRECTORY;
 
 use crate::telemetry::Environment;
@@ -88,6 +88,8 @@ pub(crate) enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Synthesize per-module contracts and falsify them with isolated behavior checks.
+    Audit(Audit),
     /// Assess a repository, or whether a change preserves its contracts, and update the review.
     #[command(
         after_help = "Run tenet show CONTRACT to inspect a finding. Use --help for all check \

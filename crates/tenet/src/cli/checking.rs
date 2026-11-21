@@ -197,7 +197,7 @@ pub(crate) struct Run {
     )]
     pub contract_batch_size: u16,
     /// Maximum model requests. Zero reuses cached answers and leaves unaffordable work pending.
-    #[arg(long, default_value_t = 1000)]
+    #[arg(long, default_value_t = 2000)]
     pub max_requests: u32,
     /// Route lower-confidence answers to unresolved while preserving their raw values.
     #[arg(hide_short_help = true, help_heading = "Model settings",

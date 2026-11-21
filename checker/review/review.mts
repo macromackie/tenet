@@ -22,7 +22,13 @@ async function normalizeRequest(input: Request): Promise<Request> {
   const root = await realpath(input.root);
   const state = await resolveRoot(input.state);
 
-  return { ...input, root, state };
+  if (input.pinRoot === undefined) {
+    return { ...input, root, state };
+  }
+
+  const pinRoot = await resolveRoot(input.pinRoot);
+
+  return { ...input, pinRoot, root, state };
 }
 
 /** Assess each contract against a shared provider request allowance. */

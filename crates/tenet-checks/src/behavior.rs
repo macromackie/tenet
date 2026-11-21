@@ -1,5 +1,6 @@
 //! Turn an unbound English contract into a frozen, independently replayable observation.
 
+mod audit;
 mod environment;
 mod process;
 mod request;
@@ -9,6 +10,14 @@ mod tests;
 use alloc::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+pub use audit::{
+    AuditContractOutput,
+    AuditModuleInput,
+    AuditModuleReport,
+    AuditRequest,
+    AuditResponse,
+    run_audit,
+};
 use serde::{Deserialize, Serialize};
 use tenet_contracts::Contract;
 use tenet_engine::{Plan, Status, review::Checked};
@@ -45,6 +54,10 @@ pub struct Finding {
 
 const FILES: &[(&str, &str)] = &[
     ("worker.mjs", include_str!("../../../checker/worker.bundle")),
+    (
+        "audit-prompt.md",
+        include_str!("../../../checker/audit-prompt.md"),
+    ),
     (
         "checker-prompt.md",
         include_str!("../../../checker/checker-prompt.md"),

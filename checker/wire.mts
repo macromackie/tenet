@@ -46,6 +46,7 @@ const ContractFields = Schema.Struct({
   name: Schema.String,
   path: Schema.String,
   paths: Paths,
+  runtimePaths: OptionalPaths,
 });
 
 export const Contract = Schema.toEncoded(ContractFields);
@@ -60,6 +61,7 @@ const RequestFields = Schema.Struct({
   fresh: OptionalFlag,
   inspect: OptionalFlag,
   maxGenerations: Schema.Int,
+  pinRoot: OptionalText,
   progressFile: OptionalText,
   root: Schema.String,
   state: Schema.String,

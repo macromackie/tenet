@@ -1,6 +1,6 @@
 import { Option, Result, Schema } from 'effect';
 
-const MAX_CHECKS = 12;
+const MAX_CHECKS = 16;
 const MAX_OPEN_LENGTH = 400;
 const ELLIPSIS_SUFFIX = '…';
 const WHITESPACE_RUN = /\s+/gv;

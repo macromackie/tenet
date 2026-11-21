@@ -1,10 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Option } from 'effect';
+import type { ProjectDeps } from '../project-deps.mts';
 import { runOptional } from '../run-optional.mts';
 import { parseCargoManifest } from './parse-cargo-manifest.mts';
-
-const MAX_FEATURES = 32;
+import { selectRustFeatures } from './select-rust-features.mts';
 
 export type RustCrate = Readonly<{
   edition: string;
@@ -13,62 +13,16 @@ export type RustCrate = Readonly<{
   name: string;
 }>;
 
-type ExpandFeaturesInput = Readonly<{
-  featureEntries: ReadonlyMap<string, readonly string[]>;
-  seeds: readonly string[];
-}>;
-
-type QueueState = Readonly<{
-  enabled: readonly string[];
-  queue: readonly string[];
-  seenFeatures: ReadonlySet<string>;
-}>;
-
-type AdvanceQueueInput = Readonly<{
-  featureEntries: ReadonlyMap<string, readonly string[]>;
-  state: QueueState;
-}>;
-
 type ReadRustCrateInput = Readonly<{
+  deps?: ProjectDeps;
   files: ReadonlyMap<string, string>;
   projectRoot?: string;
 }>;
 
-function isPlainFeatureName(value: string): boolean {
-  return value.length > 0 && !value.includes('/') && !value.startsWith('dep:');
-}
-
-function advanceFeatureQueue({ featureEntries, state }: AdvanceQueueInput): QueueState {
-  const current = state.queue.at(0);
-  const rest = state.queue.slice(1);
-
-  if (current === undefined || state.seenFeatures.has(current) || !isPlainFeatureName(current)) {
-    return { ...state, queue: rest };
-  }
-
-  const nextSeenFeatures = new Set<string>([...state.seenFeatures, current]);
-  const children = featureEntries.get(current) ?? [];
-
-  return {
-    enabled: [...state.enabled, current],
-    queue: [...rest, ...children],
-    seenFeatures: nextSeenFeatures,
-  };
-}
-
-function listEnabledFeatures({ featureEntries, seeds }: ExpandFeaturesInput): readonly string[] {
-  let state: QueueState = {
-    enabled: [],
-    queue: [...seeds],
-    seenFeatures: new Set<string>(),
-  };
-
-  while (state.queue.length > 0 && state.enabled.length < MAX_FEATURES) {
-    state = advanceFeatureQueue({ featureEntries, state });
-  }
-
-  return state.enabled;
-}
+type BuildRustCrateInput = Readonly<{
+  externNames: ReadonlySet<string>;
+  manifestText: string;
+}>;
 
 async function readManifestText({
   files,
@@ -89,7 +43,17 @@ async function readManifestText({
   return await runOptional(async () => await readFile(manifestPath, 'utf-8'));
 }
 
-function buildRustCrate(manifestText: string): Option.Option<RustCrate> {
+function readExternNames(deps?: ProjectDeps): ReadonlySet<string> {
+  if (deps === undefined) {
+    return new Set<string>();
+  }
+
+  const names = deps.rustExterns.map((entry) => entry.name);
+
+  return new Set<string>(names);
+}
+
+function buildRustCrate({ externNames, manifestText }: BuildRustCrateInput): Option.Option<RustCrate> {
   const parsed = parseCargoManifest(manifestText);
   const resolvedName = Option.orElse(parsed.libName, () => parsed.packageName);
 
@@ -97,11 +61,9 @@ function buildRustCrate(manifestText: string): Option.Option<RustCrate> {
     return Option.none();
   }
 
-  const defaultSeeds = parsed.featureEntries.get('default') ?? [];
-
-  const features = listEnabledFeatures({
+  const features = selectRustFeatures({
+    externNames,
     featureEntries: parsed.featureEntries,
-    seeds: defaultSeeds,
   });
 
   return Option.some({
@@ -112,8 +74,9 @@ function buildRustCrate(manifestText: string): Option.Option<RustCrate> {
   });
 }
 
-/** Extract crate name, edition, and default features when a staged Rust project has `src/lib.rs`. */
+/** Extract crate name, edition, and satisfiable features when a staged Rust project has `src/lib.rs`. */
 export async function readRustCrate({
+  deps,
   files,
   projectRoot,
 }: ReadRustCrateInput): Promise<Option.Option<RustCrate>> {
@@ -127,5 +90,7 @@ export async function readRustCrate({
     return Option.none();
   }
 
-  return buildRustCrate(manifestText.value);
+  const externNames = readExternNames(deps);
+
+  return buildRustCrate({ externNames, manifestText: manifestText.value });
 }
