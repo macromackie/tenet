@@ -51,6 +51,29 @@ const RUST_FEATURE_PROBE = [
   '',
 ].join('\n');
 
+function buildSelfPackageRaw(): Readonly<Record<string, unknown>> {
+  return {
+    defect: [{ find: 'addOne(value) * FACTOR', replace: 'addOne(value)' }],
+    expected: 15,
+    good: [],
+    id: 'self-package-esm-import',
+    promise: 'Package self-name and subpath ESM imports resolve to staged source files.',
+    refactor: [
+      {
+        find: 'return addOne(value) * FACTOR;',
+        replace: 'const next = addOne(value); return next * FACTOR;',
+      },
+    ],
+    runtime: 'node',
+    subject: 'src/index.js',
+    test: [
+      'import { compute } from "demo-pkg";',
+      'import { FACTOR } from "demo-pkg/constants";',
+      'console.log(JSON.stringify(compute(3) + FACTOR));',
+    ].join('\n'),
+  };
+}
+
 function buildExtensionlessRaw(): Readonly<Record<string, unknown>> {
   return {
     defect: [{ find: 'addOne(value) * FACTOR', replace: 'addOne(value)' }],
@@ -151,6 +174,19 @@ void test('node sandbox resolves relative extensionless ESM imports and index mo
   ]);
 
   const rawCheck = buildExtensionlessRaw();
+
+  await assertSandboxPasses({ context, files, rawCheck });
+});
+
+void test('node sandbox resolves package self-name and subpath ESM imports to staged source', async (context: TestContext) => {
+  const files = new Map<string, string>([
+    ['package.json', '{"name":"demo-pkg","main":"dist/demo.min.js","type":"module"}\n'],
+    ['src/constants.js', EXTENSIONLESS_CONSTANTS],
+    ['src/index.js', EXTENSIONLESS_MAIN],
+    ['src/math/index.js', EXTENSIONLESS_INDEX],
+  ]);
+
+  const rawCheck = buildSelfPackageRaw();
 
   await assertSandboxPasses({ context, files, rawCheck });
 });

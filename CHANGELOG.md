@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.24.1
+
+- Kept generated and locale source directories (`gen/`, `generated/`, `i18n/`, `l10n/`, `locale/`, `locales/`, `translations/`) in the `tenet audit` sandbox runtime closure (up to 1,024 files) while continuing to exclude them from audited module shards, so crates like `syn` that compile generated modules alongside hand-written code build cleanly in the sandbox without spending audit budget on generated or translation files.
+- Coalesced tiny sibling leaf directories (4 or more sibling directories with at most 2 source files each, such as per-plugin subdirectories) under their shared parent before sharding in `tenet audit`.
+- Extended the sandboxed Node.js `module.registerHooks` ESM loader hook to resolve package self-name imports (such as `import pkg from "pkg"` and `import sub from "pkg/subpath"`) strictly inside the staged working directory, preferring live staged source entrypoints (`src/index.*`) over unbuilt or stale `package.json` `main`/`module` dist targets.
+
 ## v0.24.0
 
 - Added `tenet audit [PATHS...] [--deep] [--save] [--fresh] [--max-requests N] [--json]`: discovers production source modules (skipping tests, fixtures, vendor, and build directories), synthesizes per-module behavioral contracts (with optional `--deep` adversarial edge-case synthesis), falsifies them immediately inside the isolated OS sandbox, persists resumable progress in `.tenet/audit.json` without touching the working tree, and optionally persists verified contracts plus pre-qualified `agent-checks.lock.json` pins into `.contracts/` with `--save`.

@@ -1,25 +1,24 @@
+mod shard;
+
 use alloc::collections::BTreeMap;
-use std::{
-    fs,
-    path::{Component, Path, PathBuf},
-};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::anyhow;
+use shard::{merge_tiny_siblings, split_into_shards};
 use tenet_checks::behavior::AuditModuleInput;
 
 use crate::error::CommandError;
 
+const AUDIT_ONLY_SKIP_SEGMENTS: &[&str] = &[
+    "gen",
+    "generated",
+    "i18n",
+    "l10n",
+    "locale",
+    "locales",
+    "translations",
+];
 const DOC_LIMIT: usize = 4;
-const MAX_RUNTIME_PATHS: usize = 512;
-const MAX_SHARD_BYTES: u64 = 100_000;
-const MAX_SHARD_FILES: usize = 10;
-
-/// Discovered module shards plus the repository runtime source closure for sandbox imports.
-pub(super) struct DiscoveredAudit {
-    pub modules: Vec<AuditModuleInput>,
-    pub runtime_paths: Vec<String>,
-}
-
 const MANIFEST_NAMES: &[&str] = &[
     "Cargo.toml",
     "go.mod",
@@ -28,10 +27,8 @@ const MANIFEST_NAMES: &[&str] = &[
     "setup.cfg",
     "setup.py",
 ];
-
-const README_NAMES: &[&str] = &["readme.md", "readme.rst", "readme.txt"];
-
-const SKIPPED_SEGMENTS: &[&str] = &[
+const MAX_RUNTIME_PATHS: usize = 1_024;
+const NON_RUNTIME_SEGMENTS: &[&str] = &[
     ".contracts",
     ".github",
     "__pycache__",
@@ -44,8 +41,6 @@ const SKIPPED_SEGMENTS: &[&str] = &[
     "docs",
     "examples",
     "fixtures",
-    "gen",
-    "generated",
     "node_modules",
     "target",
     "test",
@@ -54,27 +49,16 @@ const SKIPPED_SEGMENTS: &[&str] = &[
     "third_party",
     "vendor",
 ];
-
+const README_NAMES: &[&str] = &["readme.md", "readme.rst", "readme.txt"];
 const SOURCE_EXTENSIONS: &[&str] = &[
     "cjs", "cts", "go", "js", "jsx", "mjs", "mts", "py", "rs", "ts", "tsx",
 ];
 
-const TEST_SUFFIXES: &[&str] = &[
-    "_test.go",
-    "_test.py",
-    ".spec.cjs",
-    ".spec.cts",
-    ".spec.js",
-    ".spec.mjs",
-    ".spec.mts",
-    ".spec.ts",
-    ".test.cjs",
-    ".test.cts",
-    ".test.js",
-    ".test.mjs",
-    ".test.mts",
-    ".test.ts",
-];
+/// Discovered module shards plus the repository runtime source closure for sandbox imports.
+pub(super) struct DiscoveredAudit {
+    pub modules: Vec<AuditModuleInput>,
+    pub runtime_paths: Vec<String>,
+}
 
 /// Discover bounded production source modules under `root`, optionally filtered by `requested`.
 pub(super) fn discover_modules(
@@ -86,24 +70,25 @@ pub(super) fn discover_modules(
     let manifests = collect_manifests(&all_paths);
     let docs = collect_docs(&all_paths);
     let mut runtime_paths = manifests.clone();
-    let mut grouped_files: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut module_files: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for path in &all_paths {
-        if !is_production_source(path) {
+        if !is_runtime_source(path) {
             continue;
         }
         let slash_path = format_slash_path(path);
         if runtime_paths.len() < MAX_RUNTIME_PATHS {
             runtime_paths.push(slash_path.clone());
         }
-        if !is_matching_filter(path, &filters) {
+        if !is_auditable_source(path) || !is_matching_filter(path, &filters) {
             continue;
         }
         let dir_key = read_module_key(path);
-        let entry = grouped_files.entry(dir_key).or_default();
+        let entry = module_files.entry(dir_key).or_default();
         entry.push(slash_path);
     }
+    let merged_modules = merge_tiny_siblings(module_files);
     let mut modules = Vec::new();
-    for (base_name, mut files) in grouped_files {
+    for (base_name, mut files) in merged_modules {
         files.sort();
         let shards = split_into_shards(root, &base_name, files);
         for (name, shard_files) in shards {
@@ -174,37 +159,52 @@ fn format_slash_path(path: &Path) -> String {
         .join("/")
 }
 
-fn is_matching_filter(path: &Path, filters: &[PathBuf]) -> bool {
-    if filters.is_empty() {
-        return true;
-    }
-    filters
-        .iter()
-        .any(|filter| filter.as_os_str().is_empty() || path == filter || path.starts_with(filter))
+fn has_segment(path: &Path, blocked: &[&str]) -> bool {
+    path.components().any(|component| {
+        let Component::Normal(segment) = component else {
+            return false;
+        };
+        blocked.contains(&segment.to_string_lossy().as_ref())
+    })
 }
 
-fn is_production_source(path: &Path) -> bool {
+fn is_auditable_source(path: &Path) -> bool {
+    !has_segment(path, AUDIT_ONLY_SKIP_SEGMENTS)
+}
+
+fn is_matching_filter(path: &Path, filters: &[PathBuf]) -> bool {
+    filters.is_empty()
+        || filters.iter().any(|filter| {
+            filter.as_os_str().is_empty() || path == filter || path.starts_with(filter)
+        })
+}
+
+fn is_runtime_source(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|item| item.to_str()) else {
         return false;
     };
-    if !SOURCE_EXTENSIONS.contains(&ext) {
+    if !SOURCE_EXTENSIONS.contains(&ext) || has_segment(path, NON_RUNTIME_SEGMENTS) {
         return false;
-    }
-    for component in path.components() {
-        if let Component::Normal(segment) = component {
-            let text = segment.to_string_lossy();
-            if SKIPPED_SEGMENTS.contains(&text.as_ref()) {
-                return false;
-            }
-        }
     }
     let Some(name) = path.file_name().and_then(|item| item.to_str()) else {
         return false;
     };
-    if name.starts_with("test_") && ext == "py" {
-        return false;
-    }
-    !TEST_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+    !is_test_filename(name, ext)
+}
+
+fn is_test_filename(name: &str, ext: &str) -> bool {
+    let is_python_or_go_test = (ext == "py" && name.starts_with("test_"))
+        || name.ends_with("_test.go")
+        || name.ends_with("_test.py");
+    let stem = name
+        .strip_suffix(ext)
+        .and_then(|prefix| prefix.strip_suffix('.'));
+    is_python_or_go_test
+        || stem.is_some_and(|base| {
+            Path::new(base).extension().is_some_and(|tag| {
+                tag.eq_ignore_ascii_case("test") || tag.eq_ignore_ascii_case("spec")
+            })
+        })
 }
 
 fn normalize_filters(requested: &[PathBuf]) -> Result<Vec<PathBuf>, CommandError> {
@@ -235,44 +235,4 @@ fn read_module_key(path: &Path) -> String {
         Some(parent) if !parent.as_os_str().is_empty() => format_slash_path(parent),
         _ => String::from("root"),
     }
-}
-
-fn split_into_shards(
-    root: &Path,
-    base_name: &str,
-    files: Vec<String>,
-) -> Vec<(String, Vec<String>)> {
-    let mut buckets: Vec<Vec<String>> = Vec::new();
-    let mut current: Vec<String> = Vec::new();
-    let mut current_bytes: u64 = 0;
-    for file in files {
-        let size = fs::metadata(root.join(&file)).map_or(0, |meta| meta.len());
-        let exceeds_files = current.len() >= MAX_SHARD_FILES;
-        let exceeds_bytes =
-            !current.is_empty() && current_bytes.saturating_add(size) > MAX_SHARD_BYTES;
-        if exceeds_files || exceeds_bytes {
-            buckets.push(current);
-            current = Vec::new();
-            current_bytes = 0;
-        }
-        current.push(file);
-        current_bytes = current_bytes.saturating_add(size);
-    }
-    if !current.is_empty() {
-        buckets.push(current);
-    }
-    if buckets.len() <= 1 {
-        return buckets
-            .into_iter()
-            .map(|bucket| (base_name.to_owned(), bucket))
-            .collect();
-    }
-    buckets
-        .into_iter()
-        .enumerate()
-        .map(|(index, bucket)| {
-            let number = index.saturating_add(1);
-            (format!("{base_name}#{number}"), bucket)
-        })
-        .collect()
 }

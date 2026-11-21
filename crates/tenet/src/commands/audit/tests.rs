@@ -38,6 +38,48 @@ fn build_sample_report() -> AuditModuleReport {
 }
 
 #[test]
+fn discover_modules_keeps_generated_runtime_files_and_merges_tiny_siblings() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    fs::create_dir_all(root.join("src/gen"))?;
+    fs::create_dir_all(root.join("src/locale"))?;
+    fs::write(root.join("src/index.js"), "export default () => 1;\n")?;
+    fs::write(root.join("src/gen/visit.rs"), "pub fn visit() {}\n")?;
+    fs::write(root.join("src/locale/fr.js"), "export default 'fr';\n")?;
+    for plugin in ["alpha", "beta", "gamma", "delta", "epsilon"] {
+        fs::create_dir_all(root.join(format!("src/plugin/{plugin}")))?;
+        fs::write(
+            root.join(format!("src/plugin/{plugin}/index.js")),
+            format!("export const name = '{plugin}';\n"),
+        )?;
+    }
+
+    let discovered = discover_modules(root, &[])?;
+    let module_names: Vec<&str> = discovered
+        .modules
+        .iter()
+        .map(|module| module.name.as_str())
+        .collect();
+    anyhow::ensure!(
+        module_names == vec!["src", "src/plugin"],
+        "unexpected modules: {module_names:?}"
+    );
+    anyhow::ensure!(
+        discovered
+            .runtime_paths
+            .contains(&String::from("src/gen/visit.rs")),
+        "expected generated file in runtime_paths"
+    );
+    anyhow::ensure!(
+        discovered
+            .runtime_paths
+            .contains(&String::from("src/locale/fr.js")),
+        "expected locale file in runtime_paths"
+    );
+    Ok(())
+}
+
+#[test]
 fn discover_modules_skips_tests_and_attaches_manifests() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let root = dir.path();
