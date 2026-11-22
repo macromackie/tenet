@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.28.0
+
+- Fixed silent dropping of oversized docs, tests, cross-module seam files, and monolithic production files in `tenet audit`: `readModulePacket` now reads bounded UTF-8 prefixes on line boundaries instead of discarding files above per-file byte limits, and `discover` automatically splits monolithic source files (`> 48 KB` up to `512 KB`) into contiguous semantic definition-aligned line windows (`windows`) so every part of large core files is audited with header/import context intact.
+- Reserved Skeptic v2 request budget (`SKEPTIC_RESERVE_REQUESTS = 1`) during module verification and avoided starting under-budgeted trailing modules so surviving live witnesses always pass through test-aware Skeptic v2 triage and receive calibrated severity rankings (`[critical]`, `[high]`, `[medium]`).
+- Improved core-first module discovery in `tenet audit`: skipped vendored and codegen directories (`_vendored`, `_vendor`, `vendored`, `third-party`, `codegen`) from the audit queue while keeping them in `runtime_paths` for sandbox imports, pushed pure data/constant tables behind executable logic modules, and added inbound import fan-in centrality tie-breaking.
+- Added `--repros-dir DIR` to `tenet audit` to materialize runnable witness reproducer scripts (`.py`, `.mjs`, `.go`, `.rs`) on demand and attach `repro_path` to JSON and terminal output while keeping default runs worktree-clean.
+
 ## v0.27.0
 
 - Attached minimal executable witness reproducers (`repro`: `runtime`, `expected`, `observed`, and bounded probe `code`) directly onto every live failing behavior finding in `tenet audit` and `tenet check`, surfaced in JSON and terminal output and fed into Skeptic v2 so both witness triage and downstream fixing agents inspect the exact failing probe without reinventing it.

@@ -7,7 +7,7 @@ import { reviewFailingWitnesses } from './skeptic.mts';
 import type { PriorRoundFeedback } from './synthesize.mts';
 import type { AuditModule, AuditModuleReport, AuditRequest, AuditResponse } from './wire.mts';
 
-const SHARPEN_MIN_BUDGET = 4;
+const SHARPEN_MIN_BUDGET = 5;
 const MULTI_FILE_SHARD_MIN = 3;
 const MAX_PRIOR_GUARDS = 16;
 const MAX_PRIOR_WITNESSES = 8;

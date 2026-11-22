@@ -23,6 +23,9 @@ pub(crate) struct Audit {
     /// Save contracts with verified checks into `.contracts/`.
     #[arg(long)]
     pub save: bool,
+    /// Write runnable reproducer scripts for failing witnesses into this directory.
+    #[arg(long, value_name = "DIR")]
+    pub repros_dir: Option<PathBuf>,
     /// Re-audit selected modules instead of resuming from `.tenet/audit.json`.
     #[arg(long)]
     pub fresh: bool,

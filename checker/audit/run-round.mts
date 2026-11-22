@@ -12,6 +12,7 @@ import {
 import type { AuditContractOutput, AuditModule, AuditModuleReport } from './wire.mts';
 
 const REQUESTS_PER_CONTRACT = 3;
+const SKEPTIC_RESERVE_REQUESTS = 1;
 
 export type BudgetTracker = Readonly<{
   consume: (count: number) => void;
@@ -104,6 +105,21 @@ function mapContractOutputs(synthesis: SynthesisOutcome): readonly AuditContract
   }));
 }
 
+type VerifyBudgetInput = Readonly<{
+  candidates: number;
+  leftBudget: number;
+}>;
+
+function readVerifyBudget({ candidates, leftBudget }: VerifyBudgetInput): number {
+  const maxForCandidates = candidates * REQUESTS_PER_CONTRACT;
+
+  if (leftBudget > SKEPTIC_RESERVE_REQUESTS) {
+    return Math.min(leftBudget - SKEPTIC_RESERVE_REQUESTS, maxForCandidates);
+  }
+
+  return Math.min(leftBudget, maxForCandidates);
+}
+
 async function verifyModuleCandidates({
   budget,
   fresh,
@@ -115,7 +131,12 @@ async function verifyModuleCandidates({
   synthesis,
 }: VerifyCandidatesInput): Promise<AuditModuleReport> {
   const leftBudget = budget.readRemaining();
-  const reviewBudget = Math.min(leftBudget, synthesis.candidates.length * REQUESTS_PER_CONTRACT);
+
+  const reviewBudget = readVerifyBudget({
+    candidates: synthesis.candidates.length,
+    leftBudget,
+  });
+
   const contracts = synthesis.candidates.map((item) => ({ ...item.contract, runtimePaths }));
 
   const findings = await run({

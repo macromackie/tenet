@@ -1,6 +1,6 @@
 use alloc::collections::BTreeSet;
 use core::str;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, anyhow};
 use tenet_engine::run_checkout_git;
@@ -17,12 +17,73 @@ const CODE_EXTENSIONS: &[&str] = &[
     "cjs", "cts", "go", "js", "jsx", "mjs", "mts", "py", "rs", "ts", "tsx",
 ];
 const DIRECT_IMPORT_WEIGHT: usize = 4;
+const LOGIC_MARKERS: &[&str] = &[
+    "class ",
+    "def ",
+    "export ",
+    "fn ",
+    "func ",
+    "function ",
+    "impl ",
+    "=>",
+];
 const MAX_HEADER_BYTES: usize = 8_000;
+const MAX_INDEX_FILES: usize = 256;
+const MAX_LOGIC_BYTES: usize = 16_000;
 const MAX_SCAN_FILES: usize = 16;
 const MIN_STEM_LEN: usize = 4;
 const RELATED_FILE_LIMIT: usize = 4;
 const SAME_DIR_GO_WEIGHT: usize = 2;
 const STEM_MENTION_WEIGHT: usize = 2;
+
+/// Pre-read lowercase source headers across runtime files for O(N) fan-in centrality scoring.
+pub(super) struct HeaderIndex {
+    entries: Vec<(String, String)>,
+}
+
+impl HeaderIndex {
+    /// Read bounded lowercase headers for up to `MAX_INDEX_FILES` runtime code files.
+    pub(super) fn build(root: &Path, runtime_paths: &[String]) -> Self {
+        let entries = runtime_paths
+            .iter()
+            .filter(|path| is_code_file(path))
+            .take(MAX_INDEX_FILES)
+            .filter_map(|path| {
+                let text = read_bounded_lowercase(&root.join(path), MAX_HEADER_BYTES);
+                (!text.is_empty()).then(|| (path.clone(), text))
+            })
+            .collect();
+        Self { entries }
+    }
+
+    /// Count external runtime files that reference or import any file in `shard_files`.
+    pub(super) fn count_inbound_refs(&self, shard_files: &[String]) -> usize {
+        let included_paths: BTreeSet<&str> = shard_files.iter().map(String::as_str).collect();
+        let stems: Vec<String> = shard_files
+            .iter()
+            .filter_map(|path| read_subject_token(path))
+            .filter(|stem| stem.len() >= MIN_STEM_LEN)
+            .collect();
+        if stems.is_empty() {
+            return 0;
+        }
+        self.entries
+            .iter()
+            .filter(|(path, text)| {
+                !included_paths.contains(path.as_str())
+                    && stems.iter().any(|stem| has_direct_import(text, stem))
+            })
+            .count()
+    }
+}
+
+/// Return true when at least one file in `shard_files` defines functions, classes, or exports.
+pub(super) fn has_executable_logic(root: &Path, shard_files: &[String]) -> bool {
+    shard_files.iter().take(MAX_SCAN_FILES).any(|path| {
+        let snippet = read_bounded_lowercase(&root.join(path), MAX_LOGIC_BYTES);
+        LOGIC_MARKERS.iter().any(|marker| snippet.contains(marker))
+    })
+}
 
 /// Find up to four external production files referenced by or sharing a Go package with
 /// `shard_files`.
@@ -46,6 +107,45 @@ pub(super) fn find_related_files(
         })
         .collect();
     take_top_ranked(ranked, RELATED_FILE_LIMIT)
+}
+
+/// Filter `shard_files` to paths present in `changed_paths`.
+pub(super) fn collect_shard_changes(
+    shard_files: &[String],
+    changed_paths: Option<&BTreeSet<String>>,
+) -> Vec<String> {
+    let Some(changed_set) = changed_paths else {
+        return Vec::new();
+    };
+    shard_files
+        .iter()
+        .filter(|file| changed_set.contains(file.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// Normalize user-provided filter paths and reject paths escaping the repository root.
+pub(super) fn normalize_filters(requested: &[PathBuf]) -> Result<Vec<PathBuf>, CommandError> {
+    requested
+        .iter()
+        .map(|raw| {
+            let mut normalized = PathBuf::new();
+            for component in raw.components() {
+                if let Component::Normal(segment) = component {
+                    normalized.push(segment);
+                    continue;
+                }
+                if !matches!(component, Component::CurDir) {
+                    return Err(anyhow!(
+                        "audit paths must stay inside the repository root: {:?}",
+                        raw.display()
+                    )
+                    .into());
+                }
+            }
+            Ok(normalized)
+        })
+        .collect()
 }
 
 /// Resolve tracked diff paths against `base_ref` plus untracked non-ignored paths in `root`.

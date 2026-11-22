@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 pub use audit::{
     AuditContractOutput,
+    AuditFileWindow,
     AuditModuleInput,
     AuditModuleReport,
     AuditRequest,

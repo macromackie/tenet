@@ -19,6 +19,15 @@ pub struct AuditContractOutput {
     pub paths: Vec<String>,
 }
 
+/// One inclusive 1-based line window inside an oversized production source file.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditFileWindow {
+    pub end_line: usize,
+    pub path: String,
+    pub start_line: usize,
+}
+
 /// One repository module shard submitted to the isolated audit worker.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +44,8 @@ pub struct AuditModuleInput {
     pub related_files: Vec<String>,
     #[serde(default)]
     pub test_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<AuditFileWindow>,
 }
 
 /// Verified findings and synthesized contracts for one audited module.

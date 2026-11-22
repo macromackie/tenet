@@ -1,4 +1,5 @@
-use std::io::Write;
+use alloc::collections::BTreeMap;
+use std::{io::Write, path::PathBuf};
 
 use serde::Serialize;
 use serde_json::json;
@@ -32,6 +33,8 @@ struct WitnessRow<'row> {
     module: &'row str,
     #[serde(skip_serializing_if = "Option::is_none")]
     repro: Option<&'row WitnessRepro>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repro_path: Option<String>,
     subject: Option<&'row str>,
 }
 
@@ -41,17 +44,18 @@ pub(super) fn write_report(
     deep: bool,
     reports: &[AuditModuleReport],
     saved: &[SavedContract],
+    repro_paths: &BTreeMap<(String, String), PathBuf>,
     json_mode: bool,
 ) -> Result<(), CommandError> {
     let rendered = RenderedAudit {
         deep,
-        guards: collect_rows(reports, Outcome::Passed),
+        guards: collect_rows(reports, Outcome::Passed, repro_paths),
         reports,
         saved,
         total_cost: sum_costs(reports),
         total_requests: reports.iter().map(|report| report.requests).sum(),
-        unresolved: collect_rows(reports, Outcome::Unresolved),
-        witnesses: collect_rows(reports, Outcome::Failed),
+        unresolved: collect_rows(reports, Outcome::Unresolved, repro_paths),
+        witnesses: collect_rows(reports, Outcome::Failed, repro_paths),
     };
     if json_mode {
         return write_json(out, &rendered);
@@ -59,25 +63,37 @@ pub(super) fn write_report(
     write_terminal(out, &rendered)
 }
 
-fn collect_rows(reports: &[AuditModuleReport], target: Outcome) -> Vec<WitnessRow<'_>> {
+fn collect_rows<'report>(
+    reports: &'report [AuditModuleReport],
+    target: Outcome,
+    repro_paths: &BTreeMap<(String, String), PathBuf>,
+) -> Vec<WitnessRow<'report>> {
     let mut rows = Vec::new();
     for report in reports {
         for finding in &report.findings {
             if finding.outcome == target {
-                rows.push(format_witness_row(&report.name, finding));
+                rows.push(format_witness_row(&report.name, finding, repro_paths));
             }
         }
     }
     rows
 }
 
-fn format_witness_row<'row>(module: &'row str, finding: &'row Finding) -> WitnessRow<'row> {
+fn format_witness_row<'row>(
+    module: &'row str,
+    finding: &'row Finding,
+    repro_paths: &BTreeMap<(String, String), PathBuf>,
+) -> WitnessRow<'row> {
+    let repro_path = repro_paths
+        .get(&(finding.contract.clone(), finding.check.clone()))
+        .map(|path| path.display().to_string());
     WitnessRow {
         check: &finding.check,
         contract: &finding.contract,
         message: &finding.message,
         module,
         repro: finding.repro.as_ref(),
+        repro_path,
         subject: finding.subject.as_deref().and_then(|path| path.to_str()),
     }
 }
@@ -172,6 +188,41 @@ fn write_terminal(out: &mut impl Write, rendered: &RenderedAudit<'_>) -> Result<
     Ok(())
 }
 
+fn write_witness_row(out: &mut impl Write, witness: &WitnessRow<'_>) -> Result<(), CommandError> {
+    let location = witness.subject.unwrap_or(witness.module);
+    writeln!(
+        out,
+        "  {} {}/{}  {}",
+        format_marker("FAIL"),
+        output::format_styled(witness.contract).bold(),
+        witness.check,
+        format_dim(location),
+    )?;
+    writeln!(out, "    {}", format_display(witness.message))?;
+    if let Some(repro) = witness.repro {
+        let observed = repro.observed.as_deref().unwrap_or("null");
+        writeln!(
+            out,
+            "    {}",
+            format_dim(&format!(
+                "repro ({}) · expected {} · got {}",
+                repro.runtime,
+                format_display(&repro.expected),
+                format_display(observed),
+            )),
+        )?;
+    }
+    if let Some(repro_path) = witness.repro_path.as_deref() {
+        writeln!(
+            out,
+            "    {}",
+            format_dim(&format!("repro file: {repro_path}")),
+        )?;
+    }
+    writeln!(out)?;
+    Ok(())
+}
+
 fn write_witness_section(
     out: &mut impl Write,
     witnesses: &[WitnessRow<'_>],
@@ -186,30 +237,7 @@ fn write_witness_section(
         return Ok(());
     }
     for witness in witnesses {
-        let location = witness.subject.unwrap_or(witness.module);
-        writeln!(
-            out,
-            "  {} {}/{}  {}",
-            format_marker("FAIL"),
-            output::format_styled(witness.contract).bold(),
-            witness.check,
-            format_dim(location),
-        )?;
-        writeln!(out, "    {}", format_display(witness.message))?;
-        if let Some(repro) = witness.repro {
-            let observed = repro.observed.as_deref().unwrap_or("null");
-            writeln!(
-                out,
-                "    {}",
-                format_dim(&format!(
-                    "repro ({}) · expected {} · got {}",
-                    repro.runtime,
-                    format_display(&repro.expected),
-                    format_display(observed),
-                )),
-            )?;
-        }
-        writeln!(out)?;
+        write_witness_row(out, witness)?;
     }
     if witnesses.is_empty() {
         for item in unresolved {

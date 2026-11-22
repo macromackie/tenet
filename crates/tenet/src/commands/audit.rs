@@ -1,10 +1,12 @@
 mod discover;
 mod queue;
 mod render;
+mod repros;
 mod save;
 #[cfg(test)]
 mod tests;
 
+use alloc::collections::BTreeMap;
 use std::{env, io::IsTerminal as _, path::Path, time::Instant};
 
 use anyhow::{Context as _, anyhow};
@@ -12,6 +14,7 @@ use console::Term;
 use discover::discover_modules;
 use queue::AuditQueue;
 use render::write_report;
+use repros::write_witness_repros;
 use save::save_verified_contracts;
 use tenet_checks::behavior::{
     AuditModuleInput,
@@ -28,6 +31,8 @@ use crate::{
     progress::Progress,
 };
 
+const MIN_FOLLOWUP_MODULE_BUDGET: usize = 2;
+
 /// Discover modules, synthesize contracts, falsify them in isolated sandboxes, and report defects.
 pub(super) fn run(root: &Path, state: &Path, args: &Audit) -> Result<ExitStatus, CommandError> {
     require_credentials()?;
@@ -36,7 +41,7 @@ pub(super) fn run(root: &Path, state: &Path, args: &Audit) -> Result<ExitStatus,
     if discovered.modules.is_empty() {
         if args.base.is_some() {
             let mut out = output::open_stdout().lock();
-            write_report(&mut out, args.deep, &[], &[], args.json)?;
+            write_report(&mut out, args.deep, &[], &[], &BTreeMap::new(), args.json)?;
             return Ok(ExitStatus::Passed);
         }
         return Err(anyhow!("no supported production source files were found to audit").into());
@@ -67,14 +72,34 @@ pub(super) fn run(root: &Path, state: &Path, args: &Audit) -> Result<ExitStatus,
         Vec::new()
     };
     let selected_reports = select_reports(&discovered.modules, &queue, &transient);
+    finish_audit(root, state, args, &selected_reports)
+}
+
+fn finish_audit(
+    root: &Path,
+    state: &Path,
+    args: &Audit,
+    selected_reports: &[AuditModuleReport],
+) -> Result<ExitStatus, CommandError> {
     let saved = if args.save {
-        save_verified_contracts(root, state, &selected_reports)?
+        save_verified_contracts(root, state, selected_reports)?
     } else {
         Vec::new()
     };
+    let repro_paths = match args.repros_dir.as_deref() {
+        Some(dir) => write_witness_repros(dir, selected_reports)?,
+        None => BTreeMap::new(),
+    };
     let mut out = output::open_stdout().lock();
-    write_report(&mut out, args.deep, &selected_reports, &saved, args.json)?;
-    Ok(read_exit_status(&selected_reports))
+    write_report(
+        &mut out,
+        args.deep,
+        selected_reports,
+        &saved,
+        &repro_paths,
+        args.json,
+    )?;
+    Ok(read_exit_status(selected_reports))
 }
 
 fn is_transient_synthesis_failure(report: &AuditModuleReport) -> bool {
@@ -126,7 +151,7 @@ fn run_pending_modules(
     let mut progress = Progress::default();
     let mut transient = Vec::new();
     for (index, module) in pending.into_iter().enumerate() {
-        if remaining == 0 {
+        if remaining == 0 || (index > 0 && remaining < MIN_FOLLOWUP_MODULE_BUDGET) {
             break;
         }
         let summary = format!("Audited {index} · budget left {remaining}");

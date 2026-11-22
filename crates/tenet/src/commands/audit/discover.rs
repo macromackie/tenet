@@ -5,22 +5,33 @@ mod shard;
 use alloc::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::anyhow;
 use context::{TestIndex, collect_all_docs, format_slash_path, select_module_docs};
-use seams::{find_related_files, list_changed_files};
+use seams::{
+    HeaderIndex,
+    collect_shard_changes,
+    find_related_files,
+    has_executable_logic,
+    list_changed_files,
+    normalize_filters,
+};
 use shard::{merge_tiny_siblings, split_into_shards};
 use tenet_checks::behavior::AuditModuleInput;
 
 use crate::error::CommandError;
 
 const AUDIT_ONLY_SKIP_SEGMENTS: &[&str] = &[
+    "_vendor",
+    "_vendored",
+    "codegen",
     "gen",
     "generated",
     "i18n",
     "l10n",
     "locale",
     "locales",
+    "third-party",
     "translations",
+    "vendored",
 ];
 const MANIFEST_NAMES: &[&str] = &[
     "Cargo.toml",
@@ -58,9 +69,16 @@ const SOURCE_EXTENSIONS: &[&str] = &[
 ];
 const TEST_SEGMENTS: &[&str] = &["__tests__", "test", "tests", "testsuite"];
 
+struct RankedShard {
+    has_logic: bool,
+    inbound_refs: usize,
+    module: AuditModuleInput,
+}
+
 struct ShardInputs<'input> {
     all_docs: &'input [String],
     changed_paths: Option<&'input BTreeSet<String>>,
+    header_index: &'input HeaderIndex,
     manifests: &'input [String],
     root: &'input Path,
     runtime_paths: &'input [String],
@@ -105,9 +123,11 @@ pub(super) fn discover_modules(
         let dir_key = read_module_key(path);
         module_files.entry(dir_key).or_default().push(slash_path);
     }
+    let header_index = HeaderIndex::build(root, &runtime_paths);
     let shard_inputs = ShardInputs {
         all_docs: &all_docs,
         changed_paths: changed_paths.as_ref(),
+        header_index: &header_index,
         manifests: &manifests,
         root,
         runtime_paths: &runtime_paths,
@@ -124,41 +144,61 @@ fn build_module_shards(
     merged_modules: BTreeMap<String, Vec<String>>,
     inputs: &ShardInputs<'_>,
 ) -> Vec<AuditModuleInput> {
-    let mut modules = Vec::new();
+    let mut ranked = Vec::new();
     for (base_name, mut files) in merged_modules {
         files.sort();
-        for (name, shard_files) in split_into_shards(inputs.root, &base_name, files) {
-            let changed_files = collect_shard_changes(&shard_files, inputs.changed_paths);
+        for shard in split_into_shards(inputs.root, &base_name, files) {
+            let changed_files = collect_shard_changes(&shard.files, inputs.changed_paths);
             if inputs.changed_paths.is_some() && changed_files.is_empty() {
                 continue;
             }
-            let docs = select_module_docs(inputs.all_docs, &name, &shard_files);
-            let low_test_files = inputs.test_index.find_low_test_files(&shard_files);
-            let related_files = find_related_files(inputs.root, &shard_files, inputs.runtime_paths);
+            let docs = select_module_docs(inputs.all_docs, &shard.name, &shard.files);
+            let low_test_files = inputs.test_index.find_low_test_files(&shard.files);
+            let related_files = find_related_files(inputs.root, &shard.files, inputs.runtime_paths);
             let test_files = inputs
                 .test_index
-                .find_related_test_files(&name, &shard_files);
-            modules.push(AuditModuleInput {
-                changed_files,
-                docs,
-                files: shard_files,
-                low_test_files,
-                manifests: inputs.manifests.to_vec(),
-                name,
-                related_files,
-                test_files,
+                .find_related_test_files(&shard.name, &shard.files);
+            let has_logic = has_executable_logic(inputs.root, &shard.files);
+            let inbound_refs = inputs.header_index.count_inbound_refs(&shard.files);
+            ranked.push(RankedShard {
+                has_logic,
+                inbound_refs,
+                module: AuditModuleInput {
+                    changed_files,
+                    docs,
+                    files: shard.files,
+                    low_test_files,
+                    manifests: inputs.manifests.to_vec(),
+                    name: shard.name,
+                    related_files,
+                    test_files,
+                    windows: shard.windows,
+                },
             });
         }
     }
-    modules.sort_by(|left, right| {
+    sort_ranked_shards(&mut ranked);
+    ranked.into_iter().map(|entry| entry.module).collect()
+}
+
+fn sort_ranked_shards(ranked: &mut [RankedShard]) {
+    ranked.sort_by(|left, right| {
         right
+            .module
             .changed_files
             .len()
-            .cmp(&left.changed_files.len())
-            .then_with(|| right.low_test_files.len().cmp(&left.low_test_files.len()))
-            .then_with(|| left.name.cmp(&right.name))
+            .cmp(&left.module.changed_files.len())
+            .then_with(|| right.has_logic.cmp(&left.has_logic))
+            .then_with(|| {
+                right
+                    .module
+                    .low_test_files
+                    .len()
+                    .cmp(&left.module.low_test_files.len())
+            })
+            .then_with(|| right.inbound_refs.cmp(&left.inbound_refs))
+            .then_with(|| left.module.name.cmp(&right.module.name))
     });
-    modules
 }
 
 fn build_test_index(root: &Path, paths: &[PathBuf]) -> TestIndex {
@@ -187,20 +227,6 @@ fn collect_manifests(paths: &[PathBuf]) -> Vec<String> {
     }
     manifests.sort();
     manifests
-}
-
-fn collect_shard_changes(
-    shard_files: &[String],
-    changed_paths: Option<&BTreeSet<String>>,
-) -> Vec<String> {
-    let Some(changed_set) = changed_paths else {
-        return Vec::new();
-    };
-    shard_files
-        .iter()
-        .filter(|file| changed_set.contains(file.as_str()))
-        .cloned()
-        .collect()
 }
 
 fn has_segment(path: &Path, blocked: &[&str]) -> bool {
@@ -263,29 +289,6 @@ fn is_test_source(path: &Path) -> bool {
         return false;
     };
     has_segment(path, TEST_SEGMENTS) || is_test_filename(name, ext)
-}
-
-fn normalize_filters(requested: &[PathBuf]) -> Result<Vec<PathBuf>, CommandError> {
-    requested
-        .iter()
-        .map(|raw| {
-            let mut normalized = PathBuf::new();
-            for component in raw.components() {
-                if let Component::Normal(segment) = component {
-                    normalized.push(segment);
-                    continue;
-                }
-                if !matches!(component, Component::CurDir) {
-                    return Err(anyhow!(
-                        "audit paths must stay inside the repository root: {:?}",
-                        raw.display()
-                    )
-                    .into());
-                }
-            }
-            Ok(normalized)
-        })
-        .collect()
 }
 
 fn read_module_key(path: &Path) -> String {

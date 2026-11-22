@@ -20908,14 +20908,6 @@ function selectAuditTier({
   return { effort, model };
 }
 
-// storage/hash-source.mts
-import { createHash } from "node:crypto";
-function hashSource(data) {
-  const sha = createHash("sha256");
-  sha.update(data);
-  return sha.digest("hex");
-}
-
 // checker-error.mts
 var CheckerError = class extends Data_exports.TaggedError("CheckerError") {
 };
@@ -20933,6 +20925,14 @@ async function classifyResult(input) {
   const work = tryOperation(input);
   const classified = Effect_exports.result(work);
   return await Effect_exports.runPromise(classified);
+}
+
+// storage/hash-source.mts
+import { createHash } from "node:crypto";
+function hashSource(data) {
+  const sha = createHash("sha256");
+  sha.update(data);
+  return sha.digest("hex");
 }
 
 // storage/read-regular.mts
@@ -20984,16 +20984,68 @@ async function resolveRoot(path) {
 
 // storage/read-regular.mts
 var OPEN_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW;
-function decodeText({ buffer, used, limit, preserveBom = false }) {
+function readBufferCapacity({ limit, truncate }) {
+  if (truncate) {
+    return limit;
+  }
+  return limit + 1;
+}
+function sliceBeforeLastNewline(text2) {
+  const lastNewline = text2.lastIndexOf("\n");
+  if (lastNewline > 0) {
+    return text2.slice(0, lastNewline);
+  }
+  return text2;
+}
+function trimTruncatedPrefix({ text: text2, totalBytes }) {
+  const sliced = sliceBeforeLastNewline(text2);
+  const shownBytes = Buffer.byteLength(sliced);
+  const shown = String(shownBytes);
+  const total = String(totalBytes);
+  return `${sliced}
+[truncated: showing first ${shown} of ${total} bytes]
+`;
+}
+function isUnavailableFile({
+  file,
+  limit,
+  prior,
+  realPath,
+  truncate
+}) {
+  if (!prior.isFile() || realPath !== file) {
+    return true;
+  }
+  return !truncate && prior.size > limit;
+}
+function decodeText({
+  buffer,
+  limit,
+  preserveBom = false,
+  totalBytes,
+  truncate,
+  used
+}) {
   const data = buffer.subarray(0, used);
-  if (used > limit || data.includes(0)) {
+  if (!truncate && used > limit || data.includes(0)) {
     throw new CheckerError({ message: "incomplete text input." });
   }
-  const decoder4 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: preserveBom });
-  return decoder4.decode(data);
+  const decoder4 = new TextDecoder("utf-8", { fatal: !truncate, ignoreBOM: preserveBom });
+  const text2 = decoder4.decode(data);
+  if (truncate && totalBytes > used) {
+    return trimTruncatedPrefix({ text: text2, totalBytes });
+  }
+  return text2;
 }
-async function readText({ handle, limit, preserveBom }) {
-  const buffer = Buffer.alloc(limit + 1);
+async function readText({
+  handle,
+  limit,
+  preserveBom,
+  totalBytes,
+  truncate
+}) {
+  const capacity = readBufferCapacity({ limit, truncate });
+  const buffer = Buffer.alloc(capacity);
   let used = 0;
   while (used < buffer.length) {
     const result3 = await handle.read(buffer, used, buffer.length - used);
@@ -21002,7 +21054,7 @@ async function readText({ handle, limit, preserveBom }) {
     }
     used += result3.bytesRead;
   }
-  return decodeText({ buffer, limit, preserveBom, used });
+  return decodeText({ buffer, limit, preserveBom, totalBytes, truncate, used });
 }
 async function readOpened(input) {
   const { handle, prior, file } = input;
@@ -21012,21 +21064,39 @@ async function readOpened(input) {
   }
   return await readText(input);
 }
-async function readRegular(input) {
-  const root = await resolveRoot(input.root);
-  const file = resolveInside({ path: input.path, root });
+async function resolveCheckedFile({
+  limit,
+  path,
+  root: rawRoot,
+  truncate
+}) {
+  const root = await resolveRoot(rawRoot);
+  const file = resolveInside({ path, root });
   const prior = await lstat(file);
-  if (!prior.isFile() || prior.size > input.limit || await realpath2(file) !== file) {
+  const realPath = await realpath2(file);
+  if (isUnavailableFile({ file, limit, prior, realPath, truncate })) {
     throw new CheckerError({ message: "input unavailable." });
   }
+  return { file, prior };
+}
+async function readRegular({
+  limit,
+  path,
+  preserveBom,
+  root,
+  truncate = false
+}) {
+  const { file, prior } = await resolveCheckedFile({ limit, path, root, truncate });
   const handle = await open(file, OPEN_FLAGS);
   try {
     return await readOpened({
       file,
       handle,
-      limit: input.limit,
-      preserveBom: input.preserveBom,
-      prior
+      limit,
+      preserveBom,
+      prior,
+      totalBytes: prior.size,
+      truncate
     });
   } finally {
     await handle.close();
@@ -21151,6 +21221,154 @@ async function replacePin(input) {
     await claim.close();
     await rm2(lock, { force: true });
   }
+}
+
+// audit/packet.mts
+var MAX_PACKET_BYTES = 204800;
+var MAX_FILE_BYTES = 65536;
+var MAX_WINDOWED_FILE_BYTES = 524288;
+var WINDOW_HEADER_LINES = 40;
+var MAX_DOC_BYTES = 16384;
+var MAX_TOTAL_DOC_BYTES = 32768;
+var MAX_RELATED_BYTES = 12e3;
+var MAX_TOTAL_RELATED_BYTES = 48e3;
+var MAX_TEST_BYTES = 12e3;
+var MAX_TOTAL_TEST_BYTES = 36e3;
+function buildWindowLookup(windows) {
+  const fileWindows = /* @__PURE__ */ new Map();
+  if (windows === void 0) {
+    return fileWindows;
+  }
+  for (const item of windows) {
+    fileWindows.set(item.path, item);
+  }
+  return fileWindows;
+}
+function formatWindowText({ body, lines, marker, startIndex }) {
+  if (startIndex <= 0) {
+    return `${marker}
+${body}
+`;
+  }
+  const headerEnd = Math.min(WINDOW_HEADER_LINES, startIndex);
+  const header = lines.slice(0, headerEnd).join("\n");
+  return `${header}
+${marker}
+${body}
+`;
+}
+function sliceFileWindow({ content, window }) {
+  const lines = content.split("\n");
+  const startIndex = Math.max(0, window.startLine - 1);
+  const clampedEnd = Math.max(window.endLine, window.startLine);
+  const endIndex = Math.min(lines.length, clampedEnd);
+  const body = lines.slice(startIndex, endIndex).join("\n");
+  const marker = `[window lines ${String(window.startLine)}-${String(endIndex)} of ${String(lines.length)}]`;
+  return formatWindowText({ body, lines, marker, startIndex });
+}
+async function readEntryContent({ limit, path, root, window }) {
+  if (window === void 0) {
+    return await readRegular({ limit, path, root, truncate: true });
+  }
+  const full = await readRegular({
+    limit: MAX_WINDOWED_FILE_BYTES,
+    path,
+    root,
+    truncate: true
+  });
+  return sliceFileWindow({ content: full, window });
+}
+async function readBoundedEntry(input) {
+  async function readSource() {
+    return await readEntryContent(input);
+  }
+  const outcome = await classifyResult({
+    message: "bounded audit read unavailable",
+    run: readSource
+  });
+  const content = Result_exports.getSuccess(outcome);
+  if (Option_exports.isNone(content)) {
+    return Option_exports.none();
+  }
+  const bytes2 = Buffer.byteLength(content.value);
+  return Option_exports.some({ bytes: bytes2, content: content.value, path: input.path });
+}
+async function advanceGroup({
+  path,
+  perFileBytes,
+  root,
+  state,
+  window
+}) {
+  const limit = Math.min(state.remaining, perFileBytes);
+  const loaded = await readBoundedEntry({ limit, path, root, window });
+  if (Option_exports.isNone(loaded)) {
+    return state;
+  }
+  return {
+    entries: [...state.entries, [loaded.value.path, loaded.value.content]],
+    remaining: state.remaining - loaded.value.bytes
+  };
+}
+async function readGroup({
+  fileWindows,
+  limitBytes,
+  paths,
+  perFileBytes,
+  root
+}) {
+  let state = { entries: [], remaining: limitBytes };
+  for (const path of paths) {
+    if (state.remaining <= 0) {
+      break;
+    }
+    const window = fileWindows?.get(path);
+    state = await advanceGroup({ path, perFileBytes, root, state, window });
+  }
+  return Object.fromEntries(state.entries);
+}
+async function readOptionalTests({
+  includeTests = false,
+  module,
+  root
+}) {
+  if (!includeTests) {
+    return {};
+  }
+  return await readGroup({
+    limitBytes: MAX_TOTAL_TEST_BYTES,
+    paths: module.testFiles ?? [],
+    perFileBytes: MAX_TEST_BYTES,
+    root
+  });
+}
+async function readModulePacket({
+  includeTests = false,
+  module,
+  root
+}) {
+  const fileWindows = buildWindowLookup(module.windows);
+  const sources = await readGroup({
+    fileWindows,
+    limitBytes: MAX_PACKET_BYTES,
+    paths: [...module.manifests, ...module.files],
+    perFileBytes: MAX_FILE_BYTES,
+    root
+  });
+  const docs = await readGroup({
+    limitBytes: MAX_TOTAL_DOC_BYTES,
+    paths: module.docs,
+    perFileBytes: MAX_DOC_BYTES,
+    root
+  });
+  const relatedSources = await readGroup({
+    limitBytes: MAX_TOTAL_RELATED_BYTES,
+    paths: module.relatedFiles ?? [],
+    perFileBytes: MAX_RELATED_BYTES,
+    root
+  });
+  const tests = await readOptionalTests({ includeTests, module, root });
+  return { docs, files: Object.keys(sources), relatedSources, sources, tests };
 }
 
 // audit/parse-candidates.mts
@@ -25785,109 +26003,6 @@ async function run2(input) {
 
 // audit/synthesize.mts
 import { readFile as readFile5 } from "node:fs/promises";
-
-// audit/packet.mts
-var MAX_PACKET_BYTES = 204800;
-var MAX_FILE_BYTES = 65536;
-var MAX_DOC_BYTES = 16384;
-var MAX_TOTAL_DOC_BYTES = 32768;
-var MAX_RELATED_BYTES = 12e3;
-var MAX_TOTAL_RELATED_BYTES = 48e3;
-var MAX_TEST_BYTES = 8e3;
-var MAX_TOTAL_TEST_BYTES = 24e3;
-async function readBoundedEntry({
-  limit,
-  path,
-  root
-}) {
-  async function readSource() {
-    return await readRegular({ limit, path, root });
-  }
-  const outcome = await classifyResult({
-    message: "bounded audit read unavailable",
-    run: readSource
-  });
-  const content = Result_exports.getSuccess(outcome);
-  if (Option_exports.isNone(content)) {
-    return Option_exports.none();
-  }
-  const bytes2 = Buffer.byteLength(content.value);
-  return Option_exports.some({ bytes: bytes2, content: content.value, path });
-}
-async function advanceGroup({
-  path,
-  perFileBytes,
-  root,
-  state
-}) {
-  const limit = Math.min(state.remaining, perFileBytes);
-  const loaded = await readBoundedEntry({ limit, path, root });
-  if (Option_exports.isNone(loaded)) {
-    return state;
-  }
-  return {
-    entries: [...state.entries, [loaded.value.path, loaded.value.content]],
-    remaining: state.remaining - loaded.value.bytes
-  };
-}
-async function readGroup({
-  limitBytes,
-  paths,
-  perFileBytes,
-  root
-}) {
-  let state = { entries: [], remaining: limitBytes };
-  for (const path of paths) {
-    if (state.remaining <= 0) {
-      break;
-    }
-    state = await advanceGroup({ path, perFileBytes, root, state });
-  }
-  return Object.fromEntries(state.entries);
-}
-async function readOptionalTests({
-  includeTests = false,
-  module,
-  root
-}) {
-  if (!includeTests) {
-    return {};
-  }
-  return await readGroup({
-    limitBytes: MAX_TOTAL_TEST_BYTES,
-    paths: module.testFiles ?? [],
-    perFileBytes: MAX_TEST_BYTES,
-    root
-  });
-}
-async function readModulePacket({
-  includeTests = false,
-  module,
-  root
-}) {
-  const sources = await readGroup({
-    limitBytes: MAX_PACKET_BYTES,
-    paths: [...module.manifests, ...module.files],
-    perFileBytes: MAX_FILE_BYTES,
-    root
-  });
-  const docs = await readGroup({
-    limitBytes: MAX_TOTAL_DOC_BYTES,
-    paths: module.docs,
-    perFileBytes: MAX_DOC_BYTES,
-    root
-  });
-  const relatedSources = await readGroup({
-    limitBytes: MAX_TOTAL_RELATED_BYTES,
-    paths: module.relatedFiles ?? [],
-    perFileBytes: MAX_RELATED_BYTES,
-    root
-  });
-  const tests = await readOptionalTests({ includeTests, module, root });
-  return { docs, files: Object.keys(sources), relatedSources, sources, tests };
-}
-
-// audit/synthesize.mts
 var EMPTY_FEEDBACK = {
   guards: [],
   unresolved: [],
@@ -25954,6 +26069,7 @@ async function buildModuleContracts({
 
 // audit/run-round.mts
 var REQUESTS_PER_CONTRACT = 3;
+var SKEPTIC_RESERVE_REQUESTS = 1;
 function addCost2({ first, second }) {
   if (first === null || second === null) {
     return null;
@@ -26004,6 +26120,13 @@ function mapContractOutputs(synthesis) {
     paths: item.paths
   }));
 }
+function readVerifyBudget({ candidates, leftBudget }) {
+  const maxForCandidates = candidates * REQUESTS_PER_CONTRACT;
+  if (leftBudget > SKEPTIC_RESERVE_REQUESTS) {
+    return Math.min(leftBudget - SKEPTIC_RESERVE_REQUESTS, maxForCandidates);
+  }
+  return Math.min(leftBudget, maxForCandidates);
+}
 async function verifyModuleCandidates({
   budget,
   fresh,
@@ -26015,7 +26138,10 @@ async function verifyModuleCandidates({
   synthesis
 }) {
   const leftBudget = budget.readRemaining();
-  const reviewBudget = Math.min(leftBudget, synthesis.candidates.length * REQUESTS_PER_CONTRACT);
+  const reviewBudget = readVerifyBudget({
+    candidates: synthesis.candidates.length,
+    leftBudget
+  });
   const contracts = synthesis.candidates.map((item) => ({ ...item.contract, runtimePaths }));
   const findings = await run2({
     contracts,
@@ -26150,7 +26276,7 @@ async function reviewFailingWitnesses({
 }
 
 // audit/run-audit.mts
-var SHARPEN_MIN_BUDGET = 4;
+var SHARPEN_MIN_BUDGET = 5;
 var MULTI_FILE_SHARD_MIN = 3;
 var MAX_PRIOR_GUARDS = 16;
 var MAX_PRIOR_WITNESSES = 8;
@@ -26313,6 +26439,13 @@ var OptionalStringList = Schema_exports.OptionFromOptionalKey(StringList);
 var OptionalFlag2 = Schema_exports.OptionFromOptionalKey(Schema_exports.Boolean);
 var OptionalText2 = Schema_exports.OptionFromOptionalKey(Schema_exports.String);
 var AuditMode = Schema_exports.Literal("audit");
+var AuditFileWindow = Schema_exports.Struct({
+  endLine: Schema_exports.Int,
+  path: Schema_exports.String,
+  startLine: Schema_exports.Int
+});
+var WindowList = Schema_exports.Array(AuditFileWindow);
+var OptionalWindowList = Schema_exports.OptionFromOptionalKey(WindowList);
 var AuditModuleFields = Schema_exports.Struct({
   changedFiles: OptionalStringList,
   docs: StringList,
@@ -26321,7 +26454,8 @@ var AuditModuleFields = Schema_exports.Struct({
   manifests: StringList,
   name: Schema_exports.String,
   relatedFiles: OptionalStringList,
-  testFiles: OptionalStringList
+  testFiles: OptionalStringList,
+  windows: OptionalWindowList
 });
 var AuditModule = Schema_exports.toEncoded(AuditModuleFields);
 var AuditModules = Schema_exports.Array(AuditModule);

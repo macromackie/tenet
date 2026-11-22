@@ -1,16 +1,18 @@
 import { Option, Result } from 'effect';
 import { classifyResult } from '../classify-result.mts';
 import { readRegular } from '../storage/index.mts';
-import type { AuditModule } from './wire.mts';
+import type { AuditFileWindow, AuditModule } from './wire.mts';
 
 const MAX_PACKET_BYTES = 204_800;
 const MAX_FILE_BYTES = 65_536;
+const MAX_WINDOWED_FILE_BYTES = 524_288;
+const WINDOW_HEADER_LINES = 40;
 const MAX_DOC_BYTES = 16_384;
 const MAX_TOTAL_DOC_BYTES = 32_768;
 const MAX_RELATED_BYTES = 12_000;
 const MAX_TOTAL_RELATED_BYTES = 48_000;
-const MAX_TEST_BYTES = 8_000;
-const MAX_TOTAL_TEST_BYTES = 24_000;
+const MAX_TEST_BYTES = 12_000;
+const MAX_TOTAL_TEST_BYTES = 36_000;
 
 type ModulePacket = Readonly<{
   docs: Readonly<Record<string, string>>;
@@ -30,9 +32,11 @@ type BoundedFileInput = Readonly<{
   limit: number;
   path: string;
   root: string;
+  window?: AuditFileWindow;
 }>;
 
 type ReadGroupInput = Readonly<{
+  fileWindows?: ReadonlyMap<string, AuditFileWindow>;
   limitBytes: number;
   paths: readonly string[];
   perFileBytes: number;
@@ -55,15 +59,77 @@ type AdvanceGroupInput = Readonly<{
   perFileBytes: number;
   root: string;
   state: GroupState;
+  window?: AuditFileWindow;
 }>;
 
-async function readBoundedEntry({
-  limit,
-  path,
-  root,
-}: BoundedFileInput): Promise<Option.Option<LoadedEntry>> {
+type SliceWindowInput = Readonly<{
+  content: string;
+  window: AuditFileWindow;
+}>;
+
+function buildWindowLookup(
+  windows?: readonly AuditFileWindow[],
+): ReadonlyMap<string, AuditFileWindow> {
+  const fileWindows = new Map<string, AuditFileWindow>();
+
+  if (windows === undefined) {
+    return fileWindows;
+  }
+
+  for (const item of windows) {
+    fileWindows.set(item.path, item);
+  }
+
+  return fileWindows;
+}
+
+type FormatWindowInput = Readonly<{
+  body: string;
+  lines: readonly string[];
+  marker: string;
+  startIndex: number;
+}>;
+
+function formatWindowText({ body, lines, marker, startIndex }: FormatWindowInput): string {
+  if (startIndex <= 0) {
+    return `${marker}\n${body}\n`;
+  }
+
+  const headerEnd = Math.min(WINDOW_HEADER_LINES, startIndex);
+  const header = lines.slice(0, headerEnd).join('\n');
+
+  return `${header}\n${marker}\n${body}\n`;
+}
+
+function sliceFileWindow({ content, window }: SliceWindowInput): string {
+  const lines = content.split('\n');
+  const startIndex = Math.max(0, window.startLine - 1);
+  const clampedEnd = Math.max(window.endLine, window.startLine);
+  const endIndex = Math.min(lines.length, clampedEnd);
+  const body = lines.slice(startIndex, endIndex).join('\n');
+  const marker = `[window lines ${String(window.startLine)}-${String(endIndex)} of ${String(lines.length)}]`;
+
+  return formatWindowText({ body, lines, marker, startIndex });
+}
+
+async function readEntryContent({ limit, path, root, window }: BoundedFileInput): Promise<string> {
+  if (window === undefined) {
+    return await readRegular({ limit, path, root, truncate: true });
+  }
+
+  const full = await readRegular({
+    limit: MAX_WINDOWED_FILE_BYTES,
+    path,
+    root,
+    truncate: true,
+  });
+
+  return sliceFileWindow({ content: full, window });
+}
+
+async function readBoundedEntry(input: BoundedFileInput): Promise<Option.Option<LoadedEntry>> {
   async function readSource() {
-    return await readRegular({ limit, path, root });
+    return await readEntryContent(input);
   }
 
   const outcome = await classifyResult({
@@ -79,7 +145,7 @@ async function readBoundedEntry({
 
   const bytes = Buffer.byteLength(content.value);
 
-  return Option.some({ bytes, content: content.value, path });
+  return Option.some({ bytes, content: content.value, path: input.path });
 }
 
 async function advanceGroup({
@@ -87,9 +153,10 @@ async function advanceGroup({
   perFileBytes,
   root,
   state,
+  window,
 }: AdvanceGroupInput): Promise<GroupState> {
   const limit = Math.min(state.remaining, perFileBytes);
-  const loaded = await readBoundedEntry({ limit, path, root });
+  const loaded = await readBoundedEntry({ limit, path, root, window });
 
   if (Option.isNone(loaded)) {
     return state;
@@ -102,6 +169,7 @@ async function advanceGroup({
 }
 
 async function readGroup({
+  fileWindows,
   limitBytes,
   paths,
   perFileBytes,
@@ -114,9 +182,11 @@ async function readGroup({
       break;
     }
 
+    const window = fileWindows?.get(path);
+
     // Sequential reads keep total bytes strictly bounded.
     // oxlint-disable-next-line no-await-in-loop
-    state = await advanceGroup({ path, perFileBytes, root, state });
+    state = await advanceGroup({ path, perFileBytes, root, state, window });
   }
 
   // ast-grep-ignore: object-from-entries-typescript -- Prompt payload serializes bounded files as a path-keyed JSON object.
@@ -146,7 +216,10 @@ export async function readModulePacket({
   module,
   root,
 }: ReadPacketInput): Promise<ModulePacket> {
+  const fileWindows = buildWindowLookup(module.windows);
+
   const sources = await readGroup({
+    fileWindows,
     limitBytes: MAX_PACKET_BYTES,
     paths: [...module.manifests, ...module.files],
     perFileBytes: MAX_FILE_BYTES,

@@ -1,3 +1,4 @@
+use core::slice;
 use std::{fs, process::Command};
 
 use anyhow::Result;
@@ -9,7 +10,12 @@ use tenet_checks::behavior::{
     WitnessRepro,
 };
 
-use super::{discover::discover_modules, queue::AuditQueue, save::save_verified_contracts};
+use super::{
+    discover::discover_modules,
+    queue::AuditQueue,
+    repros::write_witness_repros,
+    save::save_verified_contracts,
+};
 
 fn build_sample_report() -> AuditModuleReport {
     AuditModuleReport {
@@ -201,7 +207,7 @@ fn queue_round_trip_and_save_verified_contracts() -> Result<()> {
         "expected witness reproducer to round-trip through audit queue"
     );
 
-    let saved = save_verified_contracts(root, &state, &[report])?;
+    let saved = save_verified_contracts(root, &state, slice::from_ref(&report))?;
     anyhow::ensure!(saved.len() == 1, "expected 1 saved contract");
     let first = saved
         .first()
@@ -211,6 +217,16 @@ fn queue_round_trip_and_save_verified_contracts() -> Result<()> {
     anyhow::ensure!(
         root.join(".contracts/001-demo-rule/agent-checks.lock.json")
             .is_file()
+    );
+    let written = write_witness_repros(&root.join("repros"), &[report])?;
+    let repro_file = written
+        .get(&(String::from("demo-rule"), String::from("demo-check")))
+        .ok_or_else(|| anyhow::anyhow!("missing written repro path"))?;
+    anyhow::ensure!(
+        repro_file.extension().and_then(|ext| ext.to_str()) == Some("py")
+            && fs::read_to_string(repro_file)? == "print(1)\n",
+        "unexpected repro file {:?}",
+        repro_file.display()
     );
     Ok(())
 }

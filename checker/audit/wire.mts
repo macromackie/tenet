@@ -8,6 +8,17 @@ const OptionalFlag = Schema.OptionFromOptionalKey(Schema.Boolean);
 const OptionalText = Schema.OptionFromOptionalKey(Schema.String);
 const AuditMode = Schema.Literal('audit');
 
+const AuditFileWindow = Schema.Struct({
+  endLine: Schema.Int,
+  path: Schema.String,
+  startLine: Schema.Int,
+});
+
+export type AuditFileWindow = typeof AuditFileWindow.Type;
+
+const WindowList = Schema.Array(AuditFileWindow);
+const OptionalWindowList = Schema.OptionFromOptionalKey(WindowList);
+
 const AuditModuleFields = Schema.Struct({
   changedFiles: OptionalStringList,
   docs: StringList,
@@ -17,6 +28,7 @@ const AuditModuleFields = Schema.Struct({
   name: Schema.String,
   relatedFiles: OptionalStringList,
   testFiles: OptionalStringList,
+  windows: OptionalWindowList,
 });
 
 export const AuditModule = Schema.toEncoded(AuditModuleFields);

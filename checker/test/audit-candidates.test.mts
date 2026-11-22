@@ -1,6 +1,14 @@
 import { strict as assert } from 'node:assert';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { applySkepticOutput, parseAuditCandidates, selectAuditTier } from '../audit/index.mts';
+import {
+  applySkepticOutput,
+  parseAuditCandidates,
+  readModulePacket,
+  selectAuditTier,
+} from '../audit/index.mts';
 import type { Finding } from '../types.d.mts';
 
 void test('parseAuditCandidates normalizes slugs, keeps valid paths, and formats CONTRACT.md', () => {
@@ -141,4 +149,74 @@ void test('selectAuditTier chooses reasoning tier for deep mode and honors overr
   assert.deepEqual(standard, { effort: 'low', model: 'openai/gpt-6-luna' });
   assert.deepEqual(deep, { effort: 'medium', model: 'openai/gpt-6.1-terra' });
   assert.deepEqual(overridden, { effort: 'medium', model: 'anthropic/claude-sonnet-4.6' });
+});
+
+type LinesFixtureInput = Readonly<{ count: number; prefix: string }>;
+
+function buildNumberedLines({ count, prefix }: LinesFixtureInput): string {
+  const rows: string[] = [];
+
+  for (let index = 1; index <= count; index += 1) {
+    const label = String(index);
+
+    rows.push(`${prefix}${label}(): return ${label}`);
+  }
+
+  return rows.join('\n');
+}
+
+async function writePacketFixture(root: string): Promise<void> {
+  const bigLines = buildNumberedLines({ count: 120, prefix: 'def fn_' });
+  const bigTest = buildNumberedLines({ count: 600, prefix: 'def test_' });
+  const srcDir = join(root, 'src');
+  const testsDir = join(root, 'tests');
+  const sourceFile = join(root, 'src/monolith.py');
+  const testFile = join(root, 'tests/test_monolith.py');
+
+  await mkdir(srcDir, { recursive: true });
+  await mkdir(testsDir, { recursive: true });
+  await writeFile(sourceFile, `import math\n${bigLines}\n`);
+  await writeFile(testFile, `${bigTest}\n`);
+}
+
+function assertPacketContents(packet: Awaited<ReturnType<typeof readModulePacket>>): void {
+  const source = packet.sources['src/monolith.py'] ?? '';
+  const testText = packet.tests['tests/test_monolith.py'] ?? '';
+  const hasHeader = source.includes('import math');
+  const hasMarker = source.includes('[window lines 80-110 of');
+  const hasWindowFn = source.includes('def fn_85():');
+  const hasFirstTest = testText.includes('def test_1():');
+  const hasTruncatedNote = testText.includes('[truncated: showing first');
+
+  assert.deepEqual(
+    [hasHeader, hasMarker, hasWindowFn, hasFirstTest, hasTruncatedNote],
+    [true, true, true, true, true],
+  );
+}
+
+void test('readModulePacket slices semantic windows and truncates oversized test files instead of dropping them', async () => {
+  const baseTemp = tmpdir();
+  const tempPrefix = join(baseTemp, 'tenet-packet-');
+  const root = await mkdtemp(tempPrefix);
+
+  try {
+    await writePacketFixture(root);
+
+    const packet = await readModulePacket({
+      includeTests: true,
+      module: {
+        docs: [],
+        files: ['src/monolith.py'],
+        manifests: [],
+        name: 'src#2',
+        testFiles: ['tests/test_monolith.py'],
+        windows: [{ endLine: 110, path: 'src/monolith.py', startLine: 80 }],
+      },
+      root,
+    });
+
+    assertPacketContents(packet);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });
