@@ -236,14 +236,22 @@ async function createGoModFallback({
   files,
   work,
 }: GoModFallbackInput): Promise<void> {
-  if (check.runtime !== 'go' || files.has('go.mod')) {
+  if (check.runtime !== 'go') {
     return;
   }
 
-  const goModPath = join(work, 'go.mod');
-  const goModContent = deps.goMod ?? 'module tenet_check\n\ngo 1.21\n';
+  if (!files.has('go.mod')) {
+    const goModPath = join(work, 'go.mod');
+    const goModContent = deps.goMod ?? 'module tenet_check\n\ngo 1.21\n';
 
-  await writeFile(goModPath, goModContent, { flag: 'wx' });
+    await writeFile(goModPath, goModContent, { flag: 'wx' });
+  }
+
+  if (!files.has('go.sum') && deps.goSum !== undefined) {
+    const goSumPath = join(work, 'go.sum');
+
+    await writeFile(goSumPath, deps.goSum, { flag: 'wx' });
+  }
 }
 
 async function writeProbeFile({ check, work }: WriteProbeInput): Promise<void> {

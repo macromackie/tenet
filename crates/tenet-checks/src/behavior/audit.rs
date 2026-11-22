@@ -29,6 +29,8 @@ pub struct AuditModuleInput {
     pub low_test_files: Vec<String>,
     pub manifests: Vec<String>,
     pub name: String,
+    #[serde(default)]
+    pub test_files: Vec<String>,
 }
 
 /// Verified findings and synthesized contracts for one audited module.

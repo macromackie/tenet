@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.26.0
+
+- Upgraded `tenet audit` witness skepticism to a severity-ranked, test-aware triage pass: module discovery attaches up to 4 relevance-matched existing test files (`testFiles`) per shard, the skeptic inspects bounded test snippets alongside module source and docs to reject witnesses that contradict pre-existing tests or documented quirks, and surviving live witnesses are tagged (`[critical]`, `[high]`, `[medium]`) and sorted highest-severity first.
+- Mounted the host Go module cache (`GOMODCACHE`) read-only inside macOS Seatbelt and Linux `bubblewrap` sandboxes alongside staged `go.sum` files (while keeping `GOPROXY=off`, `GOSUMDB=off`, and `CGO_ENABLED=0`), unlocking isolated Go behavior checks and `tenet audit` on external-dependency Go modules without requiring `go mod vendor`.
+
 ## v0.25.0
 
 - Upgraded `tenet audit --deep` to a two-tier synthesis and verification architecture: contract synthesis, closed-loop hypothesis sharpening, and witness skepticism default to a stronger reasoning model (`openai/gpt-6.1-terra` at `medium` reasoning effort, overridable via `TENET_AUDIT_MODEL`), while sandboxed probe qualification and repair remain on the fast, low-cost generation model (`TENET_AGENT_MODEL`, defaulting to `openai/gpt-6-luna`).

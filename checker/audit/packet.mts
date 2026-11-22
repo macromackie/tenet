@@ -7,14 +7,18 @@ const MAX_PACKET_BYTES = 204_800;
 const MAX_FILE_BYTES = 65_536;
 const MAX_DOC_BYTES = 16_384;
 const MAX_TOTAL_DOC_BYTES = 32_768;
+const MAX_TEST_BYTES = 8_000;
+const MAX_TOTAL_TEST_BYTES = 24_000;
 
 type ModulePacket = Readonly<{
   docs: Readonly<Record<string, string>>;
   files: readonly string[];
   sources: Readonly<Record<string, string>>;
+  tests: Readonly<Record<string, string>>;
 }>;
 
 type ReadPacketInput = Readonly<{
+  includeTests?: boolean;
   module: AuditModule;
   root: string;
 }>;
@@ -116,8 +120,29 @@ async function readGroup({
   return Object.fromEntries(state.entries);
 }
 
-/** Load bounded module source files, manifests, and matched documentation into one packet. */
-export async function readModulePacket({ module, root }: ReadPacketInput): Promise<ModulePacket> {
+async function readOptionalTests({
+  includeTests = false,
+  module,
+  root,
+}: ReadPacketInput): Promise<Readonly<Record<string, string>>> {
+  if (!includeTests) {
+    return {};
+  }
+
+  return await readGroup({
+    limitBytes: MAX_TOTAL_TEST_BYTES,
+    paths: module.testFiles ?? [],
+    perFileBytes: MAX_TEST_BYTES,
+    root,
+  });
+}
+
+/** Load bounded module source files, manifests, docs, and optional related tests into one packet. */
+export async function readModulePacket({
+  includeTests = false,
+  module,
+  root,
+}: ReadPacketInput): Promise<ModulePacket> {
   const sources = await readGroup({
     limitBytes: MAX_PACKET_BYTES,
     paths: [...module.manifests, ...module.files],
@@ -132,5 +157,7 @@ export async function readModulePacket({ module, root }: ReadPacketInput): Promi
     root,
   });
 
-  return { docs, files: Object.keys(sources), sources };
+  const tests = await readOptionalTests({ includeTests, module, root });
+
+  return { docs, files: Object.keys(sources), sources, tests };
 }

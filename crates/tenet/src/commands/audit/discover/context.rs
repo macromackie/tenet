@@ -11,11 +11,19 @@ const LOW_TEST_THRESHOLD: usize = 1;
 const MAX_TEST_FILE_BYTES: usize = 16_000;
 const MAX_TEST_FILES: usize = 192;
 const MAX_TEST_TOTAL_BYTES: usize = 1_000_000;
+const PATH_MATCH_WEIGHT: usize = 3;
 const README_NAMES: &[&str] = &["readme.md", "readme.rst", "readme.txt"];
+const TEST_LIMIT: usize = 4;
+
+struct TestEntry {
+    lower_path: String,
+    path: String,
+    text: String,
+}
 
 /// Compact lowercase snapshot of repository test files used to spot under-tested source files.
 pub(super) struct TestIndex {
-    entries: Vec<String>,
+    entries: Vec<TestEntry>,
 }
 
 impl TestIndex {
@@ -28,12 +36,18 @@ impl TestIndex {
                 break;
             }
             let limit = remaining.min(MAX_TEST_FILE_BYTES);
-            let mut text = path.to_string_lossy().to_ascii_lowercase();
+            let slash_path = format_slash_path(path);
+            let lower_path = slash_path.to_ascii_lowercase();
+            let mut text = lower_path.clone();
             let snippet = read_bounded_lowercase(&root.join(path), limit);
             remaining = remaining.saturating_sub(snippet.len());
             text.push('\n');
             text.push_str(&snippet);
-            entries.push(text);
+            entries.push(TestEntry {
+                lower_path,
+                path: slash_path,
+                text,
+            });
         }
         Self { entries }
     }
@@ -50,13 +64,46 @@ impl TestIndex {
                 let hits = self
                     .entries
                     .iter()
-                    .filter(|entry| entry.contains(token.as_str()))
+                    .filter(|entry| entry.text.contains(token.as_str()))
                     .count();
                 (hits <= LOW_TEST_THRESHOLD).then(|| (hits, file.clone()))
             })
             .collect();
         scored.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
         scored.into_iter().map(|(_, file)| file).collect()
+    }
+
+    /// Return up to four existing test file paths most relevant to `module_name` and `files`.
+    pub(super) fn find_related_test_files(
+        &self,
+        module_name: &str,
+        files: &[String],
+    ) -> Vec<String> {
+        if self.entries.is_empty() {
+            return Vec::new();
+        }
+        let keywords = collect_keywords(module_name, files);
+        if keywords.is_empty() {
+            return Vec::new();
+        }
+        let ranked: Vec<(usize, String)> = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let path_hits = keywords
+                    .iter()
+                    .filter(|token| entry.lower_path.contains(token.as_str()))
+                    .count()
+                    .saturating_mul(PATH_MATCH_WEIGHT);
+                let text_hits = keywords
+                    .iter()
+                    .filter(|token| entry.text.contains(token.as_str()))
+                    .count();
+                let score = path_hits.saturating_add(text_hits);
+                (score > 0).then(|| (score, entry.path.clone()))
+            })
+            .collect();
+        take_top_ranked(ranked, TEST_LIMIT)
     }
 }
 
@@ -102,7 +149,7 @@ pub(super) fn select_module_docs(
     files: &[String],
 ) -> Vec<String> {
     let keywords = collect_keywords(module_name, files);
-    let mut ranked: Vec<(usize, String)> = all_docs
+    let ranked: Vec<(usize, String)> = all_docs
         .iter()
         .map(|doc| {
             let lower = doc.to_ascii_lowercase();
@@ -115,12 +162,7 @@ pub(super) fn select_module_docs(
             (readme_bonus.saturating_add(overlap), doc.clone())
         })
         .collect();
-    ranked.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
-    ranked
-        .into_iter()
-        .take(DOC_LIMIT)
-        .map(|(_, doc)| doc)
-        .collect()
+    take_top_ranked(ranked, DOC_LIMIT)
 }
 
 fn collect_keywords(module_name: &str, files: &[String]) -> BTreeSet<String> {
@@ -171,4 +213,13 @@ fn read_subject_token(file: &str) -> Option<String> {
         return Some(parent);
     }
     None
+}
+
+fn take_top_ranked(mut ranked: Vec<(usize, String)>, limit: usize) -> Vec<String> {
+    ranked.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    ranked
+        .into_iter()
+        .take(limit)
+        .map(|(_, item)| item)
+        .collect()
 }

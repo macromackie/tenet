@@ -9,6 +9,7 @@ const OUTPUT_BYTES = 65_536;
 /** Query the host Go toolchain without forwarding provider credentials. */
 export async function readGoTool(args: readonly string[]): Promise<string> {
   const env = {
+    GOMODCACHE: hostEnvironment.GOMODCACHE,
     GOPATH: hostEnvironment.GOPATH,
     GOROOT: hostEnvironment.GOROOT,
     HOME: hostEnvironment.HOME,

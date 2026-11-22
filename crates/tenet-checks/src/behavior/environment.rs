@@ -19,6 +19,7 @@ const HOME_PATHS: &[&str] = &[
     "XDG_CACHE_HOME",
     "RUSTUP_HOME",
     "CARGO_HOME",
+    "GOMODCACHE",
     "GOROOT",
     "GOPATH",
     "SSL_CERT_FILE",

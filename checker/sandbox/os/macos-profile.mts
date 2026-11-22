@@ -14,7 +14,15 @@ function escapeScheme(value: string): string {
 function collectReadOnlyDepPaths(deps: ProjectDeps): readonly string[] {
   const paths: string[] = [];
 
-  for (const entry of [deps.goVendor, deps.nodeModules, deps.pythonSitePackages, deps.rustDepsDir]) {
+  const candidates = [
+    deps.goModCache,
+    deps.goVendor,
+    deps.nodeModules,
+    deps.pythonSitePackages,
+    deps.rustDepsDir,
+  ];
+
+  for (const entry of candidates) {
     if (entry !== undefined) {
       paths.push(entry);
     }

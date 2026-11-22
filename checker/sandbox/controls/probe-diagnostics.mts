@@ -80,7 +80,7 @@ function readMissingDepHint({ deps, runtime, stderr }: MissingDepHintInput): str
   }
 
   if (runtime === 'go' && deps?.goVendor === undefined && GO_MISSING_MODULE_PATTERN.test(stderr)) {
-    return ' (run go mod vendor locally so Go module dependencies exist in vendor/)';
+    return ' (run go mod download or go mod vendor locally so Go module dependencies are cached)';
   }
 
   return '';

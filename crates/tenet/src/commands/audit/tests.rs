@@ -149,6 +149,11 @@ fn discover_modules_skips_tests_and_attaches_manifests() -> Result<()> {
     anyhow::ensure!(first.files == vec!["src/pkg/core.py"]);
     anyhow::ensure!(first.manifests == vec!["pyproject.toml"]);
     anyhow::ensure!(first.docs == vec!["README.md"]);
+    anyhow::ensure!(
+        first.test_files == vec!["tests/test_core.py"],
+        "expected matched test file, got {:?}",
+        first.test_files
+    );
     Ok(())
 }
 

@@ -1,6 +1,7 @@
 import { access, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, sep } from 'node:path';
+import { delimiter, join, sep } from 'node:path';
+import { env as hostEnvironment } from 'node:process';
 import { Option } from 'effect';
 import { CheckerError } from '../checker-error.mts';
 import type { Check } from '../types.d.mts';
@@ -9,6 +10,8 @@ import { collectRustExterns, type RustExtern } from './rust-deps.mts';
 
 export type ProjectDeps = Readonly<{
   goMod?: string;
+  goModCache?: string;
+  goSum?: string;
   goVendor?: string;
   nodeModules?: string;
   pythonSitePackages?: string;
@@ -38,6 +41,11 @@ type SelectSafeRustInput = Readonly<{
 
 type FilterRootInput = Readonly<{
   deps: ProjectDeps;
+  projectRoot: string;
+}>;
+
+type ProjectFileInput = Readonly<{
+  name: string;
   projectRoot: string;
 }>;
 
@@ -139,15 +147,66 @@ async function resolveRustDeps(projectRoot: string): Promise<ProjectDeps> {
   return { rustDepsDir: rustDepsDir.value, rustExterns };
 }
 
+async function readProjectFile({
+  name,
+  projectRoot,
+}: ProjectFileInput): Promise<Option.Option<string>> {
+  const candidate = join(projectRoot, name);
+
+  return await runOptional(async () => await readFile(candidate, 'utf-8'));
+}
+
+function readGoPathModCache(): string {
+  const goPath = hostEnvironment.GOPATH?.split(delimiter)[0]?.trim() ?? '';
+
+  if (goPath.length === 0) {
+    return '';
+  }
+
+  return join(goPath, 'pkg', 'mod');
+}
+
+function readGoModCacheCandidates(): readonly string[] {
+  const userHome = homedir();
+  const configured = hostEnvironment.GOMODCACHE?.trim() ?? '';
+  const goPathCache = readGoPathModCache();
+  const defaultCache = join(userHome, 'go', 'pkg', 'mod');
+
+  return [configured, goPathCache, defaultCache].filter((entry) => entry.length > 0);
+}
+
+async function resolveGoModCache(projectRoot: string): Promise<Option.Option<string>> {
+  for (const candidate of readGoModCacheCandidates()) {
+    // Check host Go module cache candidates sequentially in precedence order.
+    // oxlint-disable-next-line no-await-in-loop
+    const canonical = await resolveDirectory(candidate);
+
+    if (Option.isSome(canonical)) {
+      const prefix = `${canonical.value}${sep}`;
+
+      if (canonical.value !== projectRoot && !projectRoot.startsWith(prefix)) {
+        return canonical;
+      }
+    }
+  }
+
+  return Option.none();
+}
+
 async function resolveGoDeps(projectRoot: string): Promise<ProjectDeps> {
   const vendorCandidate = join(projectRoot, 'vendor');
   const vendorOption = await resolveDirectory(vendorCandidate);
-  const goVendor = Option.getOrUndefined(vendorOption);
-  const modCandidate = join(projectRoot, 'go.mod');
-  const modOption = await runOptional(async () => await readFile(modCandidate, 'utf-8'));
-  const goMod = Option.getOrUndefined(modOption);
+  const modOption = await readProjectFile({ name: 'go.mod', projectRoot });
+  const sumOption = await readProjectFile({ name: 'go.sum', projectRoot });
+  const cacheOption = await resolveGoModCache(projectRoot);
 
-  return { goMod, goVendor, rustExterns: [] };
+  return {
+    goMod: Option.getOrUndefined(modOption),
+    goModCache: Option.getOrUndefined(cacheOption),
+    goSum: Option.getOrUndefined(sumOption),
+    goVendor: Option.getOrUndefined(vendorOption),
+    rustExterns: [],
+  };
 }
 
 async function selectDepsForRuntime({
@@ -203,7 +262,16 @@ function filterInsideRoot({ deps, projectRoot }: FilterRootInput): ProjectDeps {
   const rustDepsDir = Option.getOrUndefined(safeRust);
   const rustExterns = selectSafeRustExterns({ deps, rustDepsDir });
 
-  return { goMod: deps.goMod, goVendor, nodeModules, pythonSitePackages, rustDepsDir, rustExterns };
+  return {
+    goMod: deps.goMod,
+    goModCache: deps.goModCache,
+    goSum: deps.goSum,
+    goVendor,
+    nodeModules,
+    pythonSitePackages,
+    rustDepsDir,
+    rustExterns,
+  };
 }
 
 /** Discover read-only project dependency directories already present on disk without running installs or builds. */

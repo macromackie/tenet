@@ -14,6 +14,7 @@ const AuditModuleFields = Schema.Struct({
   lowTestFiles: OptionalStringList,
   manifests: StringList,
   name: Schema.String,
+  testFiles: OptionalStringList,
 });
 
 export const AuditModule = Schema.toEncoded(AuditModuleFields);

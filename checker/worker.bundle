@@ -20801,47 +20801,79 @@ function resolveAnnotationsKey(schema) {
 }
 
 // audit/apply-skeptic.mts
-var VerdictLiteral = Schema_exports.Literals(["confirm", "reject"]);
+var SkepticVerdict = Schema_exports.Literals(["critical", "high", "medium", "reject"]);
 var SkepticReview = Schema_exports.Struct({
   check: Schema_exports.String,
   reason: Schema_exports.String,
-  verdict: VerdictLiteral
+  verdict: SkepticVerdict
 });
 var ReviewList = Schema_exports.Array(SkepticReview);
 var ReviewEnvelope = Schema_exports.Struct({
   reviews: ReviewList
 });
 var decodeReviews = Schema_exports.decodeUnknownOption(ReviewEnvelope, { onExcessProperty: "error" });
-function buildRejectionLookup(reviews) {
-  const rejectedChecks = /* @__PURE__ */ new Map();
+function buildReviewLookup(reviews) {
+  const checkedReviews = /* @__PURE__ */ new Map();
   for (const review of reviews) {
-    const reason = review.reason.trim();
-    if (review.verdict === "reject" && reason.length > 0) {
-      rejectedChecks.set(review.check, reason);
-    }
+    checkedReviews.set(review.check, review);
   }
-  return rejectedChecks;
+  return checkedReviews;
+}
+function formatSeverityMessage({ message, verdict }) {
+  const prefix = `[${verdict}] `;
+  if (message.startsWith(prefix)) {
+    return message;
+  }
+  return `${prefix}${message}`;
+}
+function applyReview({ review, row }) {
+  if (row.outcome !== "failed" || review === void 0) {
+    return row;
+  }
+  const reason = review.reason.trim();
+  if (review.verdict === "reject" && reason.length > 0) {
+    return {
+      ...row,
+      message: `dismissed by skeptic: ${reason} (${row.message})`,
+      outcome: "unresolved"
+    };
+  }
+  if (review.verdict === "reject") {
+    return row;
+  }
+  return {
+    ...row,
+    message: formatSeverityMessage({ message: row.message, verdict: review.verdict })
+  };
+}
+function appendFinding({ buckets, finding, review }) {
+  if (finding.outcome !== "failed") {
+    return { ...buckets, other: [...buckets.other, finding] };
+  }
+  if (review === void 0 || review.verdict === "reject") {
+    return { ...buckets, unranked: [...buckets.unranked, finding] };
+  }
+  return { ...buckets, [review.verdict]: [...buckets[review.verdict], finding] };
 }
 function applySkepticOutput({ findings, raw }) {
   const decoded = decodeReviews(raw);
   if (Option_exports.isNone(decoded)) {
     return findings;
   }
-  const rejectedChecks = buildRejectionLookup(decoded.value.reviews);
-  return findings.map((row) => {
-    if (row.outcome !== "failed") {
-      return row;
-    }
-    const reason = rejectedChecks.get(row.check);
-    if (reason === void 0) {
-      return row;
-    }
-    return {
-      ...row,
-      message: `dismissed by skeptic: ${reason} (${row.message})`,
-      outcome: "unresolved"
-    };
-  });
+  const reviewLookup = buildReviewLookup(decoded.value.reviews);
+  let buckets = { critical: [], high: [], medium: [], other: [], unranked: [] };
+  for (const row of findings) {
+    const review = reviewLookup.get(row.check);
+    const finding = applyReview({ review, row });
+    buckets = appendFinding({ buckets, finding, review });
+  }
+  return [
+    ...buckets.critical,
+    ...buckets.high,
+    ...buckets.medium,
+    ...buckets.unranked,
+    ...buckets.other
+  ];
 }
 
 // audit/model-tier.mts
@@ -21324,7 +21356,7 @@ function readMissingDepHint({ deps, runtime, stderr }) {
     return " (run cargo build locally so compiled crate deps exist in target/debug/deps)";
   }
   if (runtime === "go" && deps?.goVendor === void 0 && GO_MISSING_MODULE_PATTERN.test(stderr)) {
-    return " (run go mod vendor locally so Go module dependencies exist in vendor/)";
+    return " (run go mod download or go mod vendor locally so Go module dependencies are cached)";
   }
   return "";
 }
@@ -21655,11 +21687,22 @@ function buildGoCommand({
 }
 
 // sandbox/runtimes/build-go-env.mts
-function buildGoEnv({ goroot, probeTmp }) {
+function resolveModCache({ goModCache, probeTmp }) {
+  if (goModCache !== void 0 && goModCache.length > 0) {
+    return goModCache;
+  }
+  return `${probeTmp}/gomodcache`;
+}
+function buildGoEnv({
+  goModCache,
+  goroot,
+  probeTmp
+}) {
+  const modCache = resolveModCache({ goModCache, probeTmp });
   return {
     CGO_ENABLED: "0",
     GOCACHE: `${probeTmp}/gocache`,
-    GOMODCACHE: `${probeTmp}/gomodcache`,
+    GOMODCACHE: modCache,
     GOPATH: `${probeTmp}/gopath`,
     GOPROXY: "off",
     GOROOT: goroot,
@@ -21952,6 +21995,7 @@ var TOOL_TIMEOUT_MS2 = 2e4;
 var OUTPUT_BYTES2 = 65536;
 async function readGoTool(args2) {
   const env7 = {
+    GOMODCACHE: hostEnvironment2.GOMODCACHE,
     GOPATH: hostEnvironment2.GOPATH,
     GOROOT: hostEnvironment2.GOROOT,
     HOME: hostEnvironment2.HOME,
@@ -22313,6 +22357,7 @@ var PYTHON = "/usr/bin/python3";
 var PRLIMIT = "/usr/bin/prlimit";
 var SYSTEM_PATH = "/usr/bin:/bin";
 var NODE = "/runtime/node";
+var GO_MOD_CACHE_MOUNT = "/deps/gomodcache";
 var GO_ROOT_MOUNT = "/goroot";
 var DEFAULT_TMPFS_BYTES = "67108864";
 var COMPILED_TMPFS_BYTES = "268435456";
@@ -22395,18 +22440,18 @@ async function buildRuntimeMount(runtime) {
   }
 }
 function buildDepMounts(deps) {
+  const pairs = [
+    [deps.goModCache, GO_MOD_CACHE_MOUNT],
+    [deps.goVendor, "/project/vendor"],
+    [deps.nodeModules, "/project/node_modules"],
+    [deps.pythonSitePackages, "/deps/python"],
+    [deps.rustDepsDir, "/deps/rust"]
+  ];
   const mounts = [];
-  if (deps.goVendor !== void 0) {
-    mounts.push("--ro-bind", deps.goVendor, "/project/vendor");
-  }
-  if (deps.nodeModules !== void 0) {
-    mounts.push("--ro-bind", deps.nodeModules, "/project/node_modules");
-  }
-  if (deps.pythonSitePackages !== void 0) {
-    mounts.push("--ro-bind", deps.pythonSitePackages, "/deps/python");
-  }
-  if (deps.rustDepsDir !== void 0) {
-    mounts.push("--ro-bind", deps.rustDepsDir, "/deps/rust");
+  for (const [source, target] of pairs) {
+    if (source !== void 0) {
+      mounts.push("--ro-bind", source, target);
+    }
   }
   return mounts;
 }
@@ -22451,9 +22496,15 @@ async function buildProgram({
     }
   }
 }
+function buildGoEnvForLinux(deps) {
+  if (deps.goModCache === void 0) {
+    return buildGoEnv({ goroot: GO_ROOT_MOUNT, probeTmp: "/tmp" });
+  }
+  return buildGoEnv({ goModCache: GO_MOD_CACHE_MOUNT, goroot: GO_ROOT_MOUNT, probeTmp: "/tmp" });
+}
 function buildEnvFlags({ deps, files, runtime }) {
   if (runtime === "go") {
-    const goEnv = buildGoEnv({ goroot: GO_ROOT_MOUNT, probeTmp: "/tmp" });
+    const goEnv = buildGoEnvForLinux(deps);
     const goFlags = Object.entries(goEnv).flatMap(([key, value3]) => ["--setenv", key, value3]);
     return [...BASE_ENV_FLAGS, ...goFlags];
   }
@@ -22514,7 +22565,14 @@ function escapeScheme(value3) {
 }
 function collectReadOnlyDepPaths(deps) {
   const paths = [];
-  for (const entry of [deps.goVendor, deps.nodeModules, deps.pythonSitePackages, deps.rustDepsDir]) {
+  const candidates = [
+    deps.goModCache,
+    deps.goVendor,
+    deps.nodeModules,
+    deps.pythonSitePackages,
+    deps.rustDepsDir
+  ];
+  for (const entry of candidates) {
     if (entry !== void 0) {
       paths.push(entry);
     }
@@ -22555,7 +22613,13 @@ var COMPILED_CPU_LIMIT = "20";
 var COMPILED_RUNTIMES2 = /* @__PURE__ */ new Set(["go", "rust"]);
 function assertBoundedRuntimeRoot(root) {
   const userHome = homedir();
-  const forbiddenRoots = /* @__PURE__ */ new Set(["/", "/Users", "/private", "/var", userHome]);
+  const forbiddenRoots = /* @__PURE__ */ new Set([
+    "/",
+    "/Users",
+    "/private",
+    "/var",
+    userHome
+  ]);
   if (forbiddenRoots.has(root)) {
     throw new CheckerError({ message: "runtime installation path cannot be safely sandboxed" });
   }
@@ -22607,7 +22671,11 @@ async function resolveGoRuntime({
   const probeDir = dirname7(probeFile2);
   const output = join5(probeTmp, "observe");
   const command = buildGoCommand({ binary, deps, files, output, probeDir });
-  const extraEnv = buildGoEnv({ goroot: runtimeRoot, probeTmp });
+  const extraEnv = buildGoEnv({
+    goModCache: deps.goModCache,
+    goroot: runtimeRoot,
+    probeTmp
+  });
   return { command, extraEnv, runtimeRoot };
 }
 async function resolveRuntime(input) {
@@ -22816,7 +22884,8 @@ import { dirname as dirname8, join as join8 } from "node:path";
 // sandbox/project-deps.mts
 import { access as access5, readdir as readdir2, readFile as readFile3, realpath as realpath8, stat as stat2 } from "node:fs/promises";
 import { homedir as homedir2 } from "node:os";
-import { join as join7, sep as sep3 } from "node:path";
+import { delimiter, join as join7, sep as sep3 } from "node:path";
+import { env as hostEnvironment4 } from "node:process";
 
 // sandbox/rust-deps.mts
 import { readdir, readFile as readFile2, stat } from "node:fs/promises";
@@ -22982,14 +23051,52 @@ async function resolveRustDeps(projectRoot) {
   const rustExterns = await collectRustExterns({ depsDir: rustDepsDir.value, projectRoot });
   return { rustDepsDir: rustDepsDir.value, rustExterns };
 }
+async function readProjectFile({
+  name,
+  projectRoot
+}) {
+  const candidate = join7(projectRoot, name);
+  return await runOptional(async () => await readFile3(candidate, "utf-8"));
+}
+function readGoPathModCache() {
+  const goPath = hostEnvironment4.GOPATH?.split(delimiter)[0]?.trim() ?? "";
+  if (goPath.length === 0) {
+    return "";
+  }
+  return join7(goPath, "pkg", "mod");
+}
+function readGoModCacheCandidates() {
+  const userHome = homedir2();
+  const configured = hostEnvironment4.GOMODCACHE?.trim() ?? "";
+  const goPathCache = readGoPathModCache();
+  const defaultCache = join7(userHome, "go", "pkg", "mod");
+  return [configured, goPathCache, defaultCache].filter((entry) => entry.length > 0);
+}
+async function resolveGoModCache(projectRoot) {
+  for (const candidate of readGoModCacheCandidates()) {
+    const canonical = await resolveDirectory(candidate);
+    if (Option_exports.isSome(canonical)) {
+      const prefix = `${canonical.value}${sep3}`;
+      if (canonical.value !== projectRoot && !projectRoot.startsWith(prefix)) {
+        return canonical;
+      }
+    }
+  }
+  return Option_exports.none();
+}
 async function resolveGoDeps(projectRoot) {
   const vendorCandidate = join7(projectRoot, "vendor");
   const vendorOption = await resolveDirectory(vendorCandidate);
-  const goVendor = Option_exports.getOrUndefined(vendorOption);
-  const modCandidate = join7(projectRoot, "go.mod");
-  const modOption = await runOptional(async () => await readFile3(modCandidate, "utf-8"));
-  const goMod = Option_exports.getOrUndefined(modOption);
-  return { goMod, goVendor, rustExterns: [] };
+  const modOption = await readProjectFile({ name: "go.mod", projectRoot });
+  const sumOption = await readProjectFile({ name: "go.sum", projectRoot });
+  const cacheOption = await resolveGoModCache(projectRoot);
+  return {
+    goMod: Option_exports.getOrUndefined(modOption),
+    goModCache: Option_exports.getOrUndefined(cacheOption),
+    goSum: Option_exports.getOrUndefined(sumOption),
+    goVendor: Option_exports.getOrUndefined(vendorOption),
+    rustExterns: []
+  };
 }
 async function selectDepsForRuntime({
   projectRoot,
@@ -23036,7 +23143,16 @@ function filterInsideRoot({ deps, projectRoot }) {
   const safeRust = readSafeWithinRoot({ candidate: deps.rustDepsDir, root: projectRoot });
   const rustDepsDir = Option_exports.getOrUndefined(safeRust);
   const rustExterns = selectSafeRustExterns({ deps, rustDepsDir });
-  return { goMod: deps.goMod, goVendor, nodeModules, pythonSitePackages, rustDepsDir, rustExterns };
+  return {
+    goMod: deps.goMod,
+    goModCache: deps.goModCache,
+    goSum: deps.goSum,
+    goVendor,
+    nodeModules,
+    pythonSitePackages,
+    rustDepsDir,
+    rustExterns
+  };
 }
 async function resolveProjectDeps({
   projectRoot,
@@ -23206,12 +23322,18 @@ async function createGoModFallback({
   files,
   work
 }) {
-  if (check2.runtime !== "go" || files.has("go.mod")) {
+  if (check2.runtime !== "go") {
     return;
   }
-  const goModPath = join8(work, "go.mod");
-  const goModContent = deps.goMod ?? "module tenet_check\n\ngo 1.21\n";
-  await writeFile2(goModPath, goModContent, { flag: "wx" });
+  if (!files.has("go.mod")) {
+    const goModPath = join8(work, "go.mod");
+    const goModContent = deps.goMod ?? "module tenet_check\n\ngo 1.21\n";
+    await writeFile2(goModPath, goModContent, { flag: "wx" });
+  }
+  if (!files.has("go.sum") && deps.goSum !== void 0) {
+    const goSumPath = join8(work, "go.sum");
+    await writeFile2(goSumPath, deps.goSum, { flag: "wx" });
+  }
 }
 async function writeProbeFile({ check: check2, work }) {
   if (check2.test === void 0) {
@@ -25621,6 +25743,8 @@ var MAX_PACKET_BYTES = 204800;
 var MAX_FILE_BYTES = 65536;
 var MAX_DOC_BYTES = 16384;
 var MAX_TOTAL_DOC_BYTES = 32768;
+var MAX_TEST_BYTES = 8e3;
+var MAX_TOTAL_TEST_BYTES = 24e3;
 async function readBoundedEntry({
   limit,
   path,
@@ -25671,7 +25795,26 @@ async function readGroup({
   }
   return Object.fromEntries(state.entries);
 }
-async function readModulePacket({ module, root }) {
+async function readOptionalTests({
+  includeTests = false,
+  module,
+  root
+}) {
+  if (!includeTests) {
+    return {};
+  }
+  return await readGroup({
+    limitBytes: MAX_TOTAL_TEST_BYTES,
+    paths: module.testFiles ?? [],
+    perFileBytes: MAX_TEST_BYTES,
+    root
+  });
+}
+async function readModulePacket({
+  includeTests = false,
+  module,
+  root
+}) {
   const sources = await readGroup({
     limitBytes: MAX_PACKET_BYTES,
     paths: [...module.manifests, ...module.files],
@@ -25684,7 +25827,8 @@ async function readModulePacket({ module, root }) {
     perFileBytes: MAX_DOC_BYTES,
     root
   });
-  return { docs, files: Object.keys(sources), sources };
+  const tests = await readOptionalTests({ includeTests, module, root });
+  return { docs, files: Object.keys(sources), sources, tests };
 }
 
 // audit/synthesize.mts
@@ -25865,14 +26009,16 @@ async function runModuleRound(input) {
 
 // audit/skeptic.mts
 var SKEPTIC_INSTRUCTIONS = [
-  "You are a strict software verification skeptic reviewing live failing behavioral witnesses against source code and docs.",
-  'Return ONLY JSON: {"reviews":[{"check":"...","verdict":"confirm"|"reject","reason":"one concise sentence"}]}.',
-  "Confirm genuine defects: contradictions with docstrings/README/standards, unexpected crashes, state corruption, mutating non-mutating APIs, or broken edge cases.",
-  "Reject ONLY clear false positives where the witness contradicts intentional documented behavior, violates an explicit documented precondition, or assumes an unexported internal quirk.",
-  "When in doubt on a genuine behavioral anomaly, confirm."
+  "You are a strict software verification skeptic triaging live failing behavioral witnesses against module source code, docs, and existing repository tests (`tests`).",
+  'Return ONLY JSON: {"reviews":[{"check":"...","verdict":"critical"|"high"|"medium"|"reject","reason":"one concise sentence"}]}.',
+  'Use "reject" when an existing test in `tests` asserts or exercises the observed behavior as intended, when the witness contradicts documented design or preconditions, relies on an unexported internal quirk, passes unsupported input, or nitpicks style rather than a concrete defect.',
+  'Use "critical" for unhandled crashes/panics/exceptions on valid input, data loss, security boundary violations, or unexpected mutation of caller-owned inputs or receivers.',
+  'Use "high" for concrete wrong results, round-trip or metamorphic contradictions, cross-API inconsistencies, or clear violations of documented guarantees.',
+  'Use "medium" for genuine but narrow edge-case defects with limited impact.',
+  'Be skeptical: prefer "reject" over inflating an intentional or test-blessed quirk into a defect.'
 ].join("\n");
 async function buildSkepticPayload({ failed, module, root }) {
-  const packet = await readModulePacket({ module, root });
+  const packet = await readModulePacket({ includeTests: true, module, root });
   const witnesses = failed.map((item) => ({
     check: item.check,
     contract: item.contract,
@@ -25883,6 +26029,7 @@ async function buildSkepticPayload({ failed, module, root }) {
     docs: packet.docs,
     module: module.name,
     sources: packet.sources,
+    tests: packet.tests,
     witnesses
   });
 }
@@ -25903,7 +26050,10 @@ async function callSkepticModel({ deep, source }) {
       source
     });
   }
-  const outcome = await classifyResult({ message: "skeptic witness review failed", run: runReview });
+  const outcome = await classifyResult({
+    message: "skeptic witness review failed",
+    run: runReview
+  });
   return { costUsd, outcome, requests };
 }
 async function reviewFailingWitnesses({
@@ -26054,7 +26204,8 @@ var AuditModuleFields = Schema_exports.Struct({
   files: StringList,
   lowTestFiles: OptionalStringList,
   manifests: StringList,
-  name: Schema_exports.String
+  name: Schema_exports.String,
+  testFiles: OptionalStringList
 });
 var AuditModule = Schema_exports.toEncoded(AuditModuleFields);
 var AuditModules = Schema_exports.Array(AuditModule);

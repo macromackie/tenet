@@ -1,12 +1,14 @@
 import { Option, Schema } from 'effect';
 import type { Finding } from '../types.d.mts';
 
-const VerdictLiteral = Schema.Literals(['confirm', 'reject']);
+const SkepticVerdict = Schema.Literals(['critical', 'high', 'medium', 'reject']);
+
+type SkepticVerdict = typeof SkepticVerdict.Type;
 
 const SkepticReview = Schema.Struct({
   check: Schema.String,
   reason: Schema.String,
-  verdict: VerdictLiteral,
+  verdict: SkepticVerdict,
 });
 
 type SkepticReview = typeof SkepticReview.Type;
@@ -24,21 +26,88 @@ type ApplySkepticInput = Readonly<{
   raw: unknown;
 }>;
 
-function buildRejectionLookup(reviews: readonly SkepticReview[]): ReadonlyMap<string, string> {
-  const rejectedChecks = new Map<string, string>();
+type FormatFindingInput = Readonly<{
+  review?: SkepticReview;
+  row: Finding;
+}>;
+
+type FormatMessageInput = Readonly<{
+  message: string;
+  verdict: SkepticVerdict;
+}>;
+
+type SeverityBuckets = Readonly<{
+  critical: readonly Finding[];
+  high: readonly Finding[];
+  medium: readonly Finding[];
+  other: readonly Finding[];
+  unranked: readonly Finding[];
+}>;
+
+type AppendFindingInput = Readonly<{
+  buckets: SeverityBuckets;
+  finding: Finding;
+  review?: SkepticReview;
+}>;
+
+function buildReviewLookup(reviews: readonly SkepticReview[]): ReadonlyMap<string, SkepticReview> {
+  const checkedReviews = new Map<string, SkepticReview>();
 
   for (const review of reviews) {
-    const reason = review.reason.trim();
-
-    if (review.verdict === 'reject' && reason.length > 0) {
-      rejectedChecks.set(review.check, reason);
-    }
+    checkedReviews.set(review.check, review);
   }
 
-  return rejectedChecks;
+  return checkedReviews;
 }
 
-/** Decode raw skeptic JSON verdicts and downgrade rejected failing witnesses to `unresolved`. */
+function formatSeverityMessage({ message, verdict }: FormatMessageInput): string {
+  const prefix = `[${verdict}] `;
+
+  if (message.startsWith(prefix)) {
+    return message;
+  }
+
+  return `${prefix}${message}`;
+}
+
+function applyReview({ review, row }: FormatFindingInput): Finding {
+  if (row.outcome !== 'failed' || review === undefined) {
+    return row;
+  }
+
+  const reason = review.reason.trim();
+
+  if (review.verdict === 'reject' && reason.length > 0) {
+    return {
+      ...row,
+      message: `dismissed by skeptic: ${reason} (${row.message})`,
+      outcome: 'unresolved',
+    };
+  }
+
+  if (review.verdict === 'reject') {
+    return row;
+  }
+
+  return {
+    ...row,
+    message: formatSeverityMessage({ message: row.message, verdict: review.verdict }),
+  };
+}
+
+function appendFinding({ buckets, finding, review }: AppendFindingInput): SeverityBuckets {
+  if (finding.outcome !== 'failed') {
+    return { ...buckets, other: [...buckets.other, finding] };
+  }
+
+  if (review === undefined || review.verdict === 'reject') {
+    return { ...buckets, unranked: [...buckets.unranked, finding] };
+  }
+
+  return { ...buckets, [review.verdict]: [...buckets[review.verdict], finding] };
+}
+
+/** Decode skeptic verdicts, dismiss false positives, tag severities, and sort highest severity first. */
 export function applySkepticOutput({ findings, raw }: ApplySkepticInput): readonly Finding[] {
   const decoded = decodeReviews(raw);
 
@@ -46,23 +115,22 @@ export function applySkepticOutput({ findings, raw }: ApplySkepticInput): readon
     return findings;
   }
 
-  const rejectedChecks = buildRejectionLookup(decoded.value.reviews);
+  const reviewLookup = buildReviewLookup(decoded.value.reviews);
 
-  return findings.map((row) => {
-    if (row.outcome !== 'failed') {
-      return row;
-    }
+  let buckets: SeverityBuckets = { critical: [], high: [], medium: [], other: [], unranked: [] };
 
-    const reason = rejectedChecks.get(row.check);
+  for (const row of findings) {
+    const review = reviewLookup.get(row.check);
+    const finding = applyReview({ review, row });
 
-    if (reason === undefined) {
-      return row;
-    }
+    buckets = appendFinding({ buckets, finding, review });
+  }
 
-    return {
-      ...row,
-      message: `dismissed by skeptic: ${reason} (${row.message})`,
-      outcome: 'unresolved',
-    };
-  });
+  return [
+    ...buckets.critical,
+    ...buckets.high,
+    ...buckets.medium,
+    ...buckets.unranked,
+    ...buckets.other,
+  ];
 }

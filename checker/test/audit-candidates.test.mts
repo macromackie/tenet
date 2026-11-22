@@ -57,58 +57,68 @@ void test('parseAuditCandidates returns empty list for malformed payloads', () =
   assert.deepEqual(candidates, []);
 });
 
-void test('applySkepticOutput keeps confirmed witnesses and downgrades false positives', () => {
+type SampleFindingInput = Readonly<{
+  check: string;
+  message: string;
+  outcome: Finding['outcome'];
+}>;
+
+function makeFinding({ check, message, outcome }: SampleFindingInput): Finding {
+  return {
+    check,
+    contract: 'demo',
+    cost_usd: 0.01,
+    message,
+    outcome,
+    requested: true,
+    reused: false,
+    subject: 'src/app.js',
+  };
+}
+
+function buildSkepticFixture(): Readonly<{ findings: readonly Finding[]; raw: unknown }> {
   const raw = {
     reviews: [
-      { check: 'real-bug', reason: 'Contradicts docstring.', verdict: 'confirm' },
-      { check: 'false-alarm', reason: 'Intentional documented default.', verdict: 'reject' },
+      { check: 'medium-bug', reason: 'Minor edge case.', verdict: 'medium' },
+      { check: 'false-alarm', reason: 'Existing test asserts this quirk.', verdict: 'reject' },
+      { check: 'critical-bug', reason: 'Mutates caller array in place.', verdict: 'critical' },
+      { check: 'high-bug', reason: 'Breaks round-trip contract.', verdict: 'high' },
     ],
   };
 
   const findings: readonly Finding[] = [
-    {
-      check: 'real-bug',
-      contract: 'demo',
-      cost_usd: 0.01,
-      message: 'Observed mismatch.',
-      outcome: 'failed',
-      requested: true,
-      reused: false,
-      subject: 'src/app.js',
-    },
-    {
-      check: 'false-alarm',
-      contract: 'demo',
-      cost_usd: 0.01,
-      message: 'Expected error.',
-      outcome: 'failed',
-      requested: true,
-      reused: false,
-      subject: 'src/app.js',
-    },
-    {
-      check: 'passing-guard',
-      contract: 'demo',
-      cost_usd: 0.01,
-      message: 'Behavior holds.',
-      outcome: 'passed',
-      requested: true,
-      reused: false,
-      subject: 'src/app.js',
-    },
+    makeFinding({ check: 'medium-bug', message: 'Edge mismatch.', outcome: 'failed' }),
+    makeFinding({ check: 'false-alarm', message: 'Expected error.', outcome: 'failed' }),
+    makeFinding({ check: 'critical-bug', message: 'Caller input mutated.', outcome: 'failed' }),
+    makeFinding({ check: 'high-bug', message: 'Round-trip failed.', outcome: 'failed' }),
+    makeFinding({ check: 'passing-guard', message: 'Behavior holds.', outcome: 'passed' }),
   ];
 
+  return { findings, raw };
+}
+
+void test('applySkepticOutput ranks confirmed witnesses by severity and downgrades false positives', () => {
+  const { findings, raw } = buildSkepticFixture();
   const updated = applySkepticOutput({ findings, raw });
-  const rejectedNote = updated[1]?.message ?? '';
+  const rejected = updated.find((row) => row.check === 'false-alarm');
+  const rejectedNote = rejected?.message ?? '';
+  const ordered = updated.slice(0, 3).map((row) => `${row.check}:${row.message}`);
 
   const isDismissed = rejectedNote.startsWith(
-    'dismissed by skeptic: Intentional documented default.',
+    'dismissed by skeptic: Existing test asserts this quirk.',
   );
 
-  assert.equal(updated[0]?.outcome, 'failed');
-  assert.equal(updated[1]?.outcome, 'unresolved');
-  assert.ok(isDismissed);
-  assert.equal(updated[2]?.outcome, 'passed');
+  const passing = updated.find((row) => row.check === 'passing-guard');
+
+  assert.deepEqual(ordered, [
+    'critical-bug:[critical] Caller input mutated.',
+    'high-bug:[high] Round-trip failed.',
+    'medium-bug:[medium] Edge mismatch.',
+  ]);
+  assert.deepEqual(
+    [rejected?.outcome, isDismissed, passing?.outcome],
+    ['unresolved', true, 'passed'],
+  );
 });
 
 void test('selectAuditTier chooses reasoning tier for deep mode and honors overrides', () => {

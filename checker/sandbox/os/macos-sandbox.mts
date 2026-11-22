@@ -67,7 +67,14 @@ type SandboxEnvInput = Readonly<{
 
 function assertBoundedRuntimeRoot(root: string): string {
   const userHome = homedir();
-  const forbiddenRoots: ReadonlySet<string> = new Set(['/', '/Users', '/private', '/var', userHome]);
+
+  const forbiddenRoots: ReadonlySet<string> = new Set([
+    '/',
+    '/Users',
+    '/private',
+    '/var',
+    userHome,
+  ]);
 
   if (forbiddenRoots.has(root)) {
     throw new CheckerError({ message: 'runtime installation path cannot be safely sandboxed' });
@@ -130,7 +137,12 @@ async function resolveGoRuntime({
   const probeDir = dirname(probeFile);
   const output = join(probeTmp, 'observe');
   const command = buildGoCommand({ binary, deps, files, output, probeDir });
-  const extraEnv = buildGoEnv({ goroot: runtimeRoot, probeTmp });
+
+  const extraEnv = buildGoEnv({
+    goModCache: deps.goModCache,
+    goroot: runtimeRoot,
+    probeTmp,
+  });
 
   return { command, extraEnv, runtimeRoot };
 }

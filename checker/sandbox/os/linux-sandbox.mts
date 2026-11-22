@@ -20,6 +20,7 @@ const PYTHON = '/usr/bin/python3';
 const PRLIMIT = '/usr/bin/prlimit';
 const SYSTEM_PATH = '/usr/bin:/bin';
 const NODE = '/runtime/node';
+const GO_MOD_CACHE_MOUNT = '/deps/gomodcache';
 const GO_ROOT_MOUNT = '/goroot';
 const DEFAULT_TMPFS_BYTES = '67108864';
 const COMPILED_TMPFS_BYTES = '268435456';
@@ -137,22 +138,20 @@ async function buildRuntimeMount(runtime: Check['runtime']): Promise<readonly st
 }
 
 function buildDepMounts(deps: ProjectDeps): readonly string[] {
+  const pairs: readonly (readonly [string | undefined, string])[] = [
+    [deps.goModCache, GO_MOD_CACHE_MOUNT],
+    [deps.goVendor, '/project/vendor'],
+    [deps.nodeModules, '/project/node_modules'],
+    [deps.pythonSitePackages, '/deps/python'],
+    [deps.rustDepsDir, '/deps/rust'],
+  ];
+
   const mounts: string[] = [];
 
-  if (deps.goVendor !== undefined) {
-    mounts.push('--ro-bind', deps.goVendor, '/project/vendor');
-  }
-
-  if (deps.nodeModules !== undefined) {
-    mounts.push('--ro-bind', deps.nodeModules, '/project/node_modules');
-  }
-
-  if (deps.pythonSitePackages !== undefined) {
-    mounts.push('--ro-bind', deps.pythonSitePackages, '/deps/python');
-  }
-
-  if (deps.rustDepsDir !== undefined) {
-    mounts.push('--ro-bind', deps.rustDepsDir, '/deps/rust');
+  for (const [source, target] of pairs) {
+    if (source !== undefined) {
+      mounts.push('--ro-bind', source, target);
+    }
   }
 
   return mounts;
@@ -203,9 +202,17 @@ async function buildProgram({
   }
 }
 
+function buildGoEnvForLinux(deps: ProjectDeps): Readonly<Record<string, string>> {
+  if (deps.goModCache === undefined) {
+    return buildGoEnv({ goroot: GO_ROOT_MOUNT, probeTmp: '/tmp' });
+  }
+
+  return buildGoEnv({ goModCache: GO_MOD_CACHE_MOUNT, goroot: GO_ROOT_MOUNT, probeTmp: '/tmp' });
+}
+
 function buildEnvFlags({ deps, files, runtime }: EnvFlagsInput): readonly string[] {
   if (runtime === 'go') {
-    const goEnv = buildGoEnv({ goroot: GO_ROOT_MOUNT, probeTmp: '/tmp' });
+    const goEnv = buildGoEnvForLinux(deps);
     const goFlags = Object.entries(goEnv).flatMap(([key, value]) => ['--setenv', key, value]);
 
     return [...BASE_ENV_FLAGS, ...goFlags];

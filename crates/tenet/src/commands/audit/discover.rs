@@ -114,12 +114,14 @@ fn build_module_shards(
         for (name, shard_files) in split_into_shards(root, &base_name, files) {
             let docs = select_module_docs(all_docs, &name, &shard_files);
             let low_test_files = test_index.find_low_test_files(&shard_files);
+            let test_files = test_index.find_related_test_files(&name, &shard_files);
             modules.push(AuditModuleInput {
                 docs,
                 files: shard_files,
                 low_test_files,
                 manifests: manifests.to_vec(),
                 name,
+                test_files,
             });
         }
     }
