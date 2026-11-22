@@ -23595,6 +23595,15 @@ var NullableCost = Schema_exports.OptionFromNullOr(Schema_exports.Number);
 var OptionalNullableCost = Schema_exports.OptionFromOptionalKey(NullableCost);
 var OptionalCount = Schema_exports.OptionFromOptionalKey(Schema_exports.Int);
 var OptionalFlag = Schema_exports.OptionFromOptionalKey(Schema_exports.Boolean);
+var Runtime = Schema_exports.Literals(["node", "python", "rust", "go"]);
+var WitnessReproFields = Schema_exports.Struct({
+  code: Schema_exports.String,
+  expected: Schema_exports.String,
+  observed: OptionalText,
+  runtime: Runtime
+});
+var WitnessRepro = Schema_exports.toEncoded(WitnessReproFields);
+var OptionalRepro = Schema_exports.OptionFromOptionalKey(WitnessRepro);
 var FindingFields = Schema_exports.Struct({
   check: Schema_exports.String,
   contract: Schema_exports.String,
@@ -23605,6 +23614,7 @@ var FindingFields = Schema_exports.Struct({
   message: Schema_exports.String,
   outcome: Outcome,
   pin_reused: OptionalFlag,
+  repro: OptionalRepro,
   requested: Schema_exports.Boolean,
   reused: Schema_exports.Boolean,
   subject: NullableText
@@ -23650,7 +23660,6 @@ var ReceiptFields = Schema_exports.Struct({
   tools: Schema_exports.String
 });
 var Receipt = Schema_exports.toEncoded(ReceiptFields);
-var Runtime = Schema_exports.Literals(["node", "python", "rust", "go"]);
 var CheckFields = Schema_exports.Struct({
   defect: Schema_exports.String,
   expected: Schema_exports.Unknown,
@@ -23739,6 +23748,7 @@ function parsePin({ value: value3, current, contractHash }) {
 var SUMMARY_LIMIT = 512;
 function buildFinding({
   pin_reused,
+  repro,
   subject = null,
   ...note
 }) {
@@ -23751,8 +23761,14 @@ function buildFinding({
     reused: note.reused === true,
     subject
   };
+  if (pin_reused === true && repro !== void 0) {
+    return { ...finding, pin_reused: true, repro };
+  }
   if (pin_reused === true) {
     return { ...finding, pin_reused: true };
+  }
+  if (repro !== void 0) {
+    return { ...finding, repro };
   }
   return finding;
 }
@@ -25185,6 +25201,8 @@ async function readInventory(input) {
 }
 
 // review/receipt/evidence.mts
+var MAX_REPRO_CODE_CHARS = 4e3;
+var MAX_REPRO_VALUE_CHARS = 512;
 async function isFailingAtBase({ evaluation, check: check2 }) {
   if (evaluation.base === null) {
     return false;
@@ -25199,6 +25217,37 @@ async function isFailingAtBase({ evaluation, check: check2 }) {
   }
   const old = await observe({ check: check2, files: base, projectRoot: evaluation.root, qualify: false });
   return !old.passed;
+}
+function encodeBoundedJson(value3) {
+  const encoded = JSON.stringify(value3);
+  return encoded.slice(0, MAX_REPRO_VALUE_CHARS);
+}
+function buildWitnessRepro({ check: check2, observedValue }) {
+  const code = check2.test?.trim() ?? "";
+  if (code.length === 0) {
+    return Option_exports.none();
+  }
+  const boundedCode = code.slice(0, MAX_REPRO_CODE_CHARS);
+  const expected = encodeBoundedJson(check2.expected);
+  const observed = encodeBoundedJson(observedValue);
+  return Option_exports.some({
+    code: boundedCode,
+    expected,
+    observed,
+    runtime: check2.runtime
+  });
+}
+function buildFailedObservation({
+  check: check2,
+  context: context3,
+  observedValue
+}) {
+  const expectedText = JSON.stringify(check2.expected);
+  const observedText = JSON.stringify(observedValue);
+  const message = `${check2.promise} (expected ${expectedText}, got ${observedText})`;
+  const reproOption = buildWitnessRepro({ check: check2, observedValue });
+  const repro = Option_exports.getOrUndefined(reproOption);
+  return buildFinding({ ...context3, message, outcome: "failed", repro });
 }
 async function observeOne(input) {
   const { evaluation, check: check2, pinReused, qualified, reused } = input;
@@ -25225,8 +25274,7 @@ async function observeOne(input) {
       outcome: "unresolved"
     });
   }
-  const message = `${check2.promise} (expected ${JSON.stringify(check2.expected)}, got ${JSON.stringify(result3.value)})`;
-  return buildFinding({ ...context3, message, outcome: "failed" });
+  return buildFailedObservation({ check: check2, context: context3, observedValue: result3.value });
 }
 function readErrorMessage(error) {
   if (error instanceof Error) {
@@ -25743,6 +25791,8 @@ var MAX_PACKET_BYTES = 204800;
 var MAX_FILE_BYTES = 65536;
 var MAX_DOC_BYTES = 16384;
 var MAX_TOTAL_DOC_BYTES = 32768;
+var MAX_RELATED_BYTES = 12e3;
+var MAX_TOTAL_RELATED_BYTES = 48e3;
 var MAX_TEST_BYTES = 8e3;
 var MAX_TOTAL_TEST_BYTES = 24e3;
 async function readBoundedEntry({
@@ -25827,11 +25877,22 @@ async function readModulePacket({
     perFileBytes: MAX_DOC_BYTES,
     root
   });
+  const relatedSources = await readGroup({
+    limitBytes: MAX_TOTAL_RELATED_BYTES,
+    paths: module.relatedFiles ?? [],
+    perFileBytes: MAX_RELATED_BYTES,
+    root
+  });
   const tests = await readOptionalTests({ includeTests, module, root });
-  return { docs, files: Object.keys(sources), sources, tests };
+  return { docs, files: Object.keys(sources), relatedSources, sources, tests };
 }
 
 // audit/synthesize.mts
+var EMPTY_FEEDBACK = {
+  guards: [],
+  unresolved: [],
+  witnesses: []
+};
 async function readAuditPrompt() {
   const promptPath = await resolveWorkerAsset("audit-prompt.md");
   return await readFile5(promptPath, "utf-8");
@@ -25839,29 +25900,34 @@ async function readAuditPrompt() {
 async function buildModulePayload({
   deep,
   module,
-  priorGuards = [],
+  priorFeedback = EMPTY_FEEDBACK,
   root
 }) {
   const packet = await readModulePacket({ module, root });
+  const changedFiles = module.changedFiles ?? [];
   const lowTestFiles = module.lowTestFiles ?? [];
   return JSON.stringify({
+    changedFiles,
     deep,
     docs: packet.docs,
     files: packet.files,
     lowTestFiles,
     module: module.name,
-    priorGuards,
+    priorGuards: priorFeedback.guards,
+    priorUnresolved: priorFeedback.unresolved,
+    priorWitnesses: priorFeedback.witnesses,
+    relatedSources: packet.relatedSources,
     sources: packet.sources
   });
 }
 async function buildModuleContracts({
   deep,
   module,
-  priorGuards = [],
+  priorFeedback = EMPTY_FEEDBACK,
   root
 }) {
   const instructions = await readAuditPrompt();
-  const source = await buildModulePayload({ deep, module, priorGuards, root });
+  const source = await buildModulePayload({ deep, module, priorFeedback, root });
   const tier = selectAuditTier({ deep });
   let costUsd = 0;
   let requests = 0;
@@ -25970,18 +26036,24 @@ async function verifyModuleCandidates({
     requests: synthesis.requests + totals.requests
   };
 }
-function readSynthesisPhase(priorGuards) {
-  if (priorGuards.length > 0) {
+function hasPriorFeedback(feedback) {
+  if (feedback === void 0) {
+    return false;
+  }
+  return feedback.guards.length > 0 || feedback.unresolved.length > 0 || feedback.witnesses.length > 0;
+}
+function readSynthesisPhase(priorFeedback) {
+  if (hasPriorFeedback(priorFeedback)) {
     return "sharpening hypotheses";
   }
   return "synthesizing contracts";
 }
 async function buildSafely(input) {
-  const { deep, module, priorGuards = [], progressFile, root } = input;
-  const phase = readSynthesisPhase(priorGuards);
+  const { deep, module, priorFeedback, progressFile, root } = input;
+  const phase = readSynthesisPhase(priorFeedback);
   await reportProgress({ contract: module.name, phase, progressFile });
   async function runSynthesis() {
-    return await buildModuleContracts({ deep, module, priorGuards, root });
+    return await buildModuleContracts({ deep, module, priorFeedback, root });
   }
   return await classifyResult({ message: "module synthesis failed", run: runSynthesis });
 }
@@ -26009,13 +26081,13 @@ async function runModuleRound(input) {
 
 // audit/skeptic.mts
 var SKEPTIC_INSTRUCTIONS = [
-  "You are a strict software verification skeptic triaging live failing behavioral witnesses against module source code, docs, and existing repository tests (`tests`).",
+  "You are a strict software verification skeptic triaging live failing behavioral witnesses (and their executable `repro` probe code) against module `sources`, cross-module `relatedSources`, `docs`, and existing repository `tests`.",
   'Return ONLY JSON: {"reviews":[{"check":"...","verdict":"critical"|"high"|"medium"|"reject","reason":"one concise sentence"}]}.',
-  'Use "reject" when an existing test in `tests` asserts or exercises the observed behavior as intended, when the witness contradicts documented design or preconditions, relies on an unexported internal quirk, passes unsupported input, or nitpicks style rather than a concrete defect.',
+  'Use "reject" when an existing test in `tests` asserts or exercises the observed behavior as intended, when the `repro` probe contradicts documented design or preconditions, invokes an unsupported private internal incorrectly, passes malformed input outside the API contract, or nitpicks style rather than a concrete defect.',
   'Use "critical" for unhandled crashes/panics/exceptions on valid input, data loss, security boundary violations, or unexpected mutation of caller-owned inputs or receivers.',
   'Use "high" for concrete wrong results, round-trip or metamorphic contradictions, cross-API inconsistencies, or clear violations of documented guarantees.',
   'Use "medium" for genuine but narrow edge-case defects with limited impact.',
-  'Be skeptical: prefer "reject" over inflating an intentional or test-blessed quirk into a defect.'
+  'Be skeptical: inspect `repro.code` carefully and prefer "reject" over inflating a flawed probe or intentional test-blessed quirk into a defect.'
 ].join("\n");
 async function buildSkepticPayload({ failed, module, root }) {
   const packet = await readModulePacket({ includeTests: true, module, root });
@@ -26023,11 +26095,13 @@ async function buildSkepticPayload({ failed, module, root }) {
     check: item.check,
     contract: item.contract,
     message: item.message,
+    repro: item.repro,
     subject: item.subject
   }));
   return JSON.stringify({
     docs: packet.docs,
     module: module.name,
+    relatedSources: packet.relatedSources,
     sources: packet.sources,
     tests: packet.tests,
     witnesses
@@ -26077,7 +26151,10 @@ async function reviewFailingWitnesses({
 
 // audit/run-audit.mts
 var SHARPEN_MIN_BUDGET = 4;
+var MULTI_FILE_SHARD_MIN = 3;
 var MAX_PRIOR_GUARDS = 16;
+var MAX_PRIOR_WITNESSES = 8;
+var MAX_PRIOR_UNRESOLVED = 8;
 function addCost3({ first, second }) {
   if (first === null || second === null) {
     return null;
@@ -26094,17 +26171,48 @@ function createBudget2(limit) {
   }
   return { consume, readRemaining };
 }
-function readPassingGuards(findings) {
-  return findings.filter((row) => row.outcome === "passed").slice(0, MAX_PRIOR_GUARDS).map((row) => `${row.contract}/${row.check}: ${row.message}`);
+function summarizeByOutcome({
+  findings,
+  limit,
+  outcome
+}) {
+  return findings.filter((row) => row.outcome === outcome).slice(0, limit).map((row) => `${row.subject ?? row.contract}/${row.check}: ${row.message}`);
+}
+function readPriorFeedback(findings) {
+  return {
+    guards: summarizeByOutcome({ findings, limit: MAX_PRIOR_GUARDS, outcome: "passed" }),
+    unresolved: summarizeByOutcome({
+      findings,
+      limit: MAX_PRIOR_UNRESOLVED,
+      outcome: "unresolved"
+    }),
+    witnesses: summarizeByOutcome({ findings, limit: MAX_PRIOR_WITNESSES, outcome: "failed" })
+  };
 }
 function hasFailingWitness(findings) {
   return findings.some((row) => row.outcome === "failed");
 }
-function shouldSharpen({ budget, deep, guards, report }) {
-  if (!deep || guards.length === 0) {
+function countWitnessSubjects(findings) {
+  const witnessSubjects = /* @__PURE__ */ new Set();
+  for (const row of findings) {
+    if (row.outcome === "failed" && row.subject !== null) {
+      witnessSubjects.add(row.subject);
+    }
+  }
+  return witnessSubjects.size;
+}
+function hasActionableSignal(feedback) {
+  return feedback.guards.length > 0 || feedback.unresolved.length > 0;
+}
+function shouldSharpen({ budget, deep, feedback, module, report }) {
+  if (!deep || !hasActionableSignal(feedback) || budget.readRemaining() < SHARPEN_MIN_BUDGET) {
     return false;
   }
-  return !hasFailingWitness(report.findings) && budget.readRemaining() >= SHARPEN_MIN_BUDGET;
+  const coveredSubjects = countWitnessSubjects(report.findings);
+  if (coveredSubjects === 0) {
+    return true;
+  }
+  return module.files.length >= MULTI_FILE_SHARD_MIN && coveredSubjects <= 1;
 }
 async function applySkepticFilter({
   budget,
@@ -26134,11 +26242,17 @@ async function applySkepticFilter({
 }
 async function runWithOptionalSharpening(input) {
   const first = await runModuleRound(input);
-  const guards = readPassingGuards(first.findings);
-  if (!shouldSharpen({ budget: input.budget, deep: input.deep, guards, report: first })) {
+  const feedback = readPriorFeedback(first.findings);
+  if (!shouldSharpen({
+    budget: input.budget,
+    deep: input.deep,
+    feedback,
+    module: input.module,
+    report: first
+  })) {
     return first;
   }
-  const extra = await runModuleRound({ ...input, priorGuards: guards });
+  const extra = await runModuleRound({ ...input, priorFeedback: feedback });
   return mergeModuleReports({ base: first, extra });
 }
 async function auditSingleModule(input) {
@@ -26200,11 +26314,13 @@ var OptionalFlag2 = Schema_exports.OptionFromOptionalKey(Schema_exports.Boolean)
 var OptionalText2 = Schema_exports.OptionFromOptionalKey(Schema_exports.String);
 var AuditMode = Schema_exports.Literal("audit");
 var AuditModuleFields = Schema_exports.Struct({
+  changedFiles: OptionalStringList,
   docs: StringList,
   files: StringList,
   lowTestFiles: OptionalStringList,
   manifests: StringList,
   name: Schema_exports.String,
+  relatedFiles: OptionalStringList,
   testFiles: OptionalStringList
 });
 var AuditModule = Schema_exports.toEncoded(AuditModuleFields);

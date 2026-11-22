@@ -4,10 +4,14 @@ import type { Finding } from '../types.d.mts';
 import { mergeModuleReports } from './merge-report.mts';
 import { type BudgetTracker, type RoundInput, runModuleRound } from './run-round.mts';
 import { reviewFailingWitnesses } from './skeptic.mts';
+import type { PriorRoundFeedback } from './synthesize.mts';
 import type { AuditModule, AuditModuleReport, AuditRequest, AuditResponse } from './wire.mts';
 
 const SHARPEN_MIN_BUDGET = 4;
+const MULTI_FILE_SHARD_MIN = 3;
 const MAX_PRIOR_GUARDS = 16;
+const MAX_PRIOR_WITNESSES = 8;
+const MAX_PRIOR_UNRESOLVED = 8;
 
 type RunAuditInput = AuditRequest;
 
@@ -19,7 +23,8 @@ type SumCostInput = Readonly<{
 type ShouldSharpenInput = Readonly<{
   budget: BudgetTracker;
   deep: boolean;
-  guards: readonly string[];
+  feedback: PriorRoundFeedback;
+  module: AuditModule;
   report: AuditModuleReport;
 }>;
 
@@ -30,6 +35,12 @@ type ApplySkepticInput = Readonly<{
   progressFile?: string;
   report: AuditModuleReport;
   root: string;
+}>;
+
+type SummarizeOutcomeInput = Readonly<{
+  findings: readonly Finding[];
+  limit: number;
+  outcome: Finding['outcome'];
 }>;
 
 function addCost({ first, second }: SumCostInput): Finding['cost_usd'] {
@@ -54,23 +65,61 @@ function createBudget(limit: number): BudgetTracker {
   return { consume, readRemaining };
 }
 
-function readPassingGuards(findings: readonly Finding[]): readonly string[] {
+function summarizeByOutcome({
+  findings,
+  limit,
+  outcome,
+}: SummarizeOutcomeInput): readonly string[] {
   return findings
-    .filter((row) => row.outcome === 'passed')
-    .slice(0, MAX_PRIOR_GUARDS)
-    .map((row) => `${row.contract}/${row.check}: ${row.message}`);
+    .filter((row) => row.outcome === outcome)
+    .slice(0, limit)
+    .map((row) => `${row.subject ?? row.contract}/${row.check}: ${row.message}`);
+}
+
+function readPriorFeedback(findings: readonly Finding[]): PriorRoundFeedback {
+  return {
+    guards: summarizeByOutcome({ findings, limit: MAX_PRIOR_GUARDS, outcome: 'passed' }),
+    unresolved: summarizeByOutcome({
+      findings,
+      limit: MAX_PRIOR_UNRESOLVED,
+      outcome: 'unresolved',
+    }),
+    witnesses: summarizeByOutcome({ findings, limit: MAX_PRIOR_WITNESSES, outcome: 'failed' }),
+  };
 }
 
 function hasFailingWitness(findings: readonly Finding[]): boolean {
   return findings.some((row) => row.outcome === 'failed');
 }
 
-function shouldSharpen({ budget, deep, guards, report }: ShouldSharpenInput): boolean {
-  if (!deep || guards.length === 0) {
+function countWitnessSubjects(findings: readonly Finding[]): number {
+  const witnessSubjects = new Set<string>();
+
+  for (const row of findings) {
+    if (row.outcome === 'failed' && row.subject !== null) {
+      witnessSubjects.add(row.subject);
+    }
+  }
+
+  return witnessSubjects.size;
+}
+
+function hasActionableSignal(feedback: PriorRoundFeedback): boolean {
+  return feedback.guards.length > 0 || feedback.unresolved.length > 0;
+}
+
+function shouldSharpen({ budget, deep, feedback, module, report }: ShouldSharpenInput): boolean {
+  if (!deep || !hasActionableSignal(feedback) || budget.readRemaining() < SHARPEN_MIN_BUDGET) {
     return false;
   }
 
-  return !hasFailingWitness(report.findings) && budget.readRemaining() >= SHARPEN_MIN_BUDGET;
+  const coveredSubjects = countWitnessSubjects(report.findings);
+
+  if (coveredSubjects === 0) {
+    return true;
+  }
+
+  return module.files.length >= MULTI_FILE_SHARD_MIN && coveredSubjects <= 1;
 }
 
 async function applySkepticFilter({
@@ -106,13 +155,21 @@ async function applySkepticFilter({
 
 async function runWithOptionalSharpening(input: RoundInput): Promise<AuditModuleReport> {
   const first = await runModuleRound(input);
-  const guards = readPassingGuards(first.findings);
+  const feedback = readPriorFeedback(first.findings);
 
-  if (!shouldSharpen({ budget: input.budget, deep: input.deep, guards, report: first })) {
+  if (
+    !shouldSharpen({
+      budget: input.budget,
+      deep: input.deep,
+      feedback,
+      module: input.module,
+      report: first,
+    })
+  ) {
     return first;
   }
 
-  const extra = await runModuleRound({ ...input, priorGuards: guards });
+  const extra = await runModuleRound({ ...input, priorFeedback: feedback });
 
   return mergeModuleReports({ base: first, extra });
 }

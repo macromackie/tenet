@@ -8,13 +8,13 @@ import { readModulePacket } from './packet.mts';
 import type { AuditModule } from './wire.mts';
 
 const SKEPTIC_INSTRUCTIONS = [
-  'You are a strict software verification skeptic triaging live failing behavioral witnesses against module source code, docs, and existing repository tests (`tests`).',
+  'You are a strict software verification skeptic triaging live failing behavioral witnesses (and their executable `repro` probe code) against module `sources`, cross-module `relatedSources`, `docs`, and existing repository `tests`.',
   'Return ONLY JSON: {"reviews":[{"check":"...","verdict":"critical"|"high"|"medium"|"reject","reason":"one concise sentence"}]}.',
-  'Use "reject" when an existing test in `tests` asserts or exercises the observed behavior as intended, when the witness contradicts documented design or preconditions, relies on an unexported internal quirk, passes unsupported input, or nitpicks style rather than a concrete defect.',
+  'Use "reject" when an existing test in `tests` asserts or exercises the observed behavior as intended, when the `repro` probe contradicts documented design or preconditions, invokes an unsupported private internal incorrectly, passes malformed input outside the API contract, or nitpicks style rather than a concrete defect.',
   'Use "critical" for unhandled crashes/panics/exceptions on valid input, data loss, security boundary violations, or unexpected mutation of caller-owned inputs or receivers.',
   'Use "high" for concrete wrong results, round-trip or metamorphic contradictions, cross-API inconsistencies, or clear violations of documented guarantees.',
   'Use "medium" for genuine but narrow edge-case defects with limited impact.',
-  'Be skeptical: prefer "reject" over inflating an intentional or test-blessed quirk into a defect.',
+  'Be skeptical: inspect `repro.code` carefully and prefer "reject" over inflating a flawed probe or intentional test-blessed quirk into a defect.',
 ].join('\n');
 
 type SkepticOutcome = Readonly<{
@@ -48,12 +48,14 @@ async function buildSkepticPayload({ failed, module, root }: BuildPayloadInput):
     check: item.check,
     contract: item.contract,
     message: item.message,
+    repro: item.repro,
     subject: item.subject,
   }));
 
   return JSON.stringify({
     docs: packet.docs,
     module: module.name,
+    relatedSources: packet.relatedSources,
     sources: packet.sources,
     tests: packet.tests,
     witnesses,

@@ -14,6 +14,9 @@ use clap::Args;
 pub(crate) struct Audit {
     /// Files or directories to audit; discovers production modules when omitted.
     pub paths: Vec<PathBuf>,
+    /// Limit audit to modules containing files changed since this Git commit.
+    #[arg(long)]
+    pub base: Option<String>,
     /// Synthesize adversarial edge-case contracts in addition to API and doc guarantees.
     #[arg(long)]
     pub deep: bool,

@@ -32,11 +32,21 @@ use crate::{
 pub(super) fn run(root: &Path, state: &Path, args: &Audit) -> Result<ExitStatus, CommandError> {
     require_credentials()?;
     let budget = usize::try_from(args.max_requests).context("convert audit request budget")?;
-    let discovered = discover_modules(root, &args.paths)?;
+    let discovered = discover_modules(root, &args.paths, args.base.as_deref())?;
     if discovered.modules.is_empty() {
+        if args.base.is_some() {
+            let mut out = output::open_stdout().lock();
+            write_report(&mut out, args.deep, &[], &[], args.json)?;
+            return Ok(ExitStatus::Passed);
+        }
         return Err(anyhow!("no supported production source files were found to audit").into());
     }
-    let mut queue = AuditQueue::read(state, args.deep, args.fresh)?;
+    let persist_queue = args.base.is_none();
+    let mut queue = if persist_queue {
+        AuditQueue::read(state, args.deep, args.fresh)?
+    } else {
+        AuditQueue::new(args.deep)
+    };
     let pending: Vec<_> = discovered
         .modules
         .iter()
@@ -108,6 +118,7 @@ fn run_pending_modules(
     runtime_paths: &[String],
     queue: &mut AuditQueue,
 ) -> Result<Vec<AuditModuleReport>, CommandError> {
+    let persist_queue = args.base.is_none();
     let mut remaining = budget;
     let started = Instant::now();
     let term = Term::stderr();
@@ -141,7 +152,9 @@ fn run_pending_modules(
                 queue.upsert(report);
             }
         }
-        queue.save(state)?;
+        if persist_queue {
+            queue.save(state)?;
+        }
     }
     if show_progress {
         drop(progress.clear(&term));

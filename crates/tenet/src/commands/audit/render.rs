@@ -2,7 +2,7 @@ use std::io::Write;
 
 use serde::Serialize;
 use serde_json::json;
-use tenet_checks::behavior::{AuditModuleReport, Finding, Outcome};
+use tenet_checks::behavior::{AuditModuleReport, Finding, Outcome, WitnessRepro};
 
 use super::save::SavedContract;
 use crate::{
@@ -30,6 +30,8 @@ struct WitnessRow<'row> {
     contract: &'row str,
     message: &'row str,
     module: &'row str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repro: Option<&'row WitnessRepro>,
     subject: Option<&'row str>,
 }
 
@@ -75,6 +77,7 @@ fn format_witness_row<'row>(module: &'row str, finding: &'row Finding) -> Witnes
         contract: &finding.contract,
         message: &finding.message,
         module,
+        repro: finding.repro.as_ref(),
         subject: finding.subject.as_deref().and_then(|path| path.to_str()),
     }
 }
@@ -192,7 +195,21 @@ fn write_witness_section(
             witness.check,
             format_dim(location),
         )?;
-        writeln!(out, "    {}\n", format_display(witness.message))?;
+        writeln!(out, "    {}", format_display(witness.message))?;
+        if let Some(repro) = witness.repro {
+            let observed = repro.observed.as_deref().unwrap_or("null");
+            writeln!(
+                out,
+                "    {}",
+                format_dim(&format!(
+                    "repro ({}) · expected {} · got {}",
+                    repro.runtime,
+                    format_display(&repro.expected),
+                    format_display(observed),
+                )),
+            )?;
+        }
+        writeln!(out)?;
     }
     if witnesses.is_empty() {
         for item in unresolved {

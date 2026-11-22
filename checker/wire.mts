@@ -12,6 +12,19 @@ const NullableCost = Schema.OptionFromNullOr(Schema.Number);
 const OptionalNullableCost = Schema.OptionFromOptionalKey(NullableCost);
 const OptionalCount = Schema.OptionFromOptionalKey(Schema.Int);
 const OptionalFlag = Schema.OptionFromOptionalKey(Schema.Boolean);
+const Runtime = Schema.Literals(['node', 'python', 'rust', 'go']);
+
+const WitnessReproFields = Schema.Struct({
+  code: Schema.String,
+  expected: Schema.String,
+  observed: OptionalText,
+  runtime: Runtime,
+});
+
+const WitnessRepro = Schema.toEncoded(WitnessReproFields);
+export type WitnessRepro = typeof WitnessRepro.Type;
+
+const OptionalRepro = Schema.OptionFromOptionalKey(WitnessRepro);
 
 const FindingFields = Schema.Struct({
   check: Schema.String,
@@ -23,6 +36,7 @@ const FindingFields = Schema.Struct({
   message: Schema.String,
   outcome: Outcome,
   pin_reused: OptionalFlag,
+  repro: OptionalRepro,
   requested: Schema.Boolean,
   reused: Schema.Boolean,
   subject: NullableText,
@@ -82,8 +96,6 @@ const ReceiptFields = Schema.Struct({
 
 export const Receipt = Schema.toEncoded(ReceiptFields);
 export type Receipt = typeof Receipt.Type;
-
-const Runtime = Schema.Literals(['node', 'python', 'rust', 'go']);
 
 const CheckFields = Schema.Struct({
   defect: Schema.String,

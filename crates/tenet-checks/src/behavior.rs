@@ -47,9 +47,21 @@ pub struct Finding {
     pub outcome: Outcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin_reused: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repro: Option<WitnessRepro>,
     pub requested: bool,
     pub reused: bool,
     pub subject: Option<PathBuf>,
+}
+
+/// Minimal executable reproducer metadata captured from a live failing behavior probe.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WitnessRepro {
+    pub code: String,
+    pub expected: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed: Option<String>,
+    pub runtime: String,
 }
 
 const FILES: &[(&str, &str)] = &[
@@ -185,6 +197,7 @@ fn run(
                         message: format!("Could not start the checker worker: {error}"),
                         outcome: Outcome::Unresolved,
                         pin_reused: None,
+                        repro: None,
                         requested: false,
                         reused: false,
                         subject: None,

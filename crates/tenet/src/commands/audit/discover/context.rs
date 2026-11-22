@@ -142,6 +142,42 @@ pub(super) fn format_slash_path(path: &Path) -> String {
         .join("/")
 }
 
+/// Read up to `limit` bytes from `path` and return them lowercased, or empty on I/O errors.
+pub(super) fn read_bounded_lowercase(path: &Path, limit: usize) -> String {
+    let Ok(file) = File::open(path) else {
+        return String::new();
+    };
+    let mut bytes = Vec::new();
+    let Ok(limit_u64) = u64::try_from(limit) else {
+        return String::new();
+    };
+    if file.take(limit_u64).read_to_end(&mut bytes).is_err() {
+        return String::new();
+    }
+    String::from_utf8_lossy(&bytes).to_ascii_lowercase()
+}
+
+/// Extract a non-generic lowercase subject stem from `file` (falling back to its parent folder).
+pub(super) fn read_subject_token(file: &str) -> Option<String> {
+    let path = Path::new(file);
+    let stem = path
+        .file_stem()
+        .and_then(|item| item.to_str())
+        .map(str::to_ascii_lowercase)?;
+    if stem.len() >= 3 && !GENERIC_STEMS.contains(&stem.as_str()) {
+        return Some(stem);
+    }
+    let parent = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|item| item.to_str())
+        .map(str::to_ascii_lowercase)?;
+    if parent.len() >= 3 && !GENERIC_STEMS.contains(&parent.as_str()) {
+        return Some(parent);
+    }
+    None
+}
+
 /// Rank repository docs for one module, keeping root READMEs and highest keyword overlap first.
 pub(super) fn select_module_docs(
     all_docs: &[String],
@@ -165,6 +201,16 @@ pub(super) fn select_module_docs(
     take_top_ranked(ranked, DOC_LIMIT)
 }
 
+/// Sort scored strings descending by score (then lexicographically) and keep at most `limit`.
+pub(super) fn take_top_ranked(mut ranked: Vec<(usize, String)>, limit: usize) -> Vec<String> {
+    ranked.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    ranked
+        .into_iter()
+        .take(limit)
+        .map(|(_, item)| item)
+        .collect()
+}
+
 fn collect_keywords(module_name: &str, files: &[String]) -> BTreeSet<String> {
     let mut tokens = BTreeSet::new();
     for part in module_name.split(['/', '#', '_', '-']) {
@@ -179,47 +225,4 @@ fn collect_keywords(module_name: &str, files: &[String]) -> BTreeSet<String> {
         }
     }
     tokens
-}
-
-fn read_bounded_lowercase(path: &Path, limit: usize) -> String {
-    let Ok(file) = File::open(path) else {
-        return String::new();
-    };
-    let mut bytes = Vec::new();
-    let Ok(limit_u64) = u64::try_from(limit) else {
-        return String::new();
-    };
-    if file.take(limit_u64).read_to_end(&mut bytes).is_err() {
-        return String::new();
-    }
-    String::from_utf8_lossy(&bytes).to_ascii_lowercase()
-}
-
-fn read_subject_token(file: &str) -> Option<String> {
-    let path = Path::new(file);
-    let stem = path
-        .file_stem()
-        .and_then(|item| item.to_str())
-        .map(str::to_ascii_lowercase)?;
-    if stem.len() >= 3 && !GENERIC_STEMS.contains(&stem.as_str()) {
-        return Some(stem);
-    }
-    let parent = path
-        .parent()
-        .and_then(Path::file_name)
-        .and_then(|item| item.to_str())
-        .map(str::to_ascii_lowercase)?;
-    if parent.len() >= 3 && !GENERIC_STEMS.contains(&parent.as_str()) {
-        return Some(parent);
-    }
-    None
-}
-
-fn take_top_ranked(mut ranked: Vec<(usize, String)>, limit: usize) -> Vec<String> {
-    ranked.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
-    ranked
-        .into_iter()
-        .take(limit)
-        .map(|(_, item)| item)
-        .collect()
 }

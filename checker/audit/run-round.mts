@@ -4,7 +4,11 @@ import { classifyResult } from '../classify-result.mts';
 import { reportProgress } from '../progress-log.mts';
 import { run } from '../review/index.mts';
 import type { Finding } from '../types.d.mts';
-import { buildModuleContracts, type SynthesisOutcome } from './synthesize.mts';
+import {
+  buildModuleContracts,
+  type PriorRoundFeedback,
+  type SynthesisOutcome,
+} from './synthesize.mts';
 import type { AuditContractOutput, AuditModule, AuditModuleReport } from './wire.mts';
 
 const REQUESTS_PER_CONTRACT = 3;
@@ -19,7 +23,7 @@ export type RoundInput = Readonly<{
   deep: boolean;
   fresh: boolean;
   module: AuditModule;
-  priorGuards?: readonly string[];
+  priorFeedback?: PriorRoundFeedback;
   progressFile?: string;
   root: string;
   runtimePaths: readonly string[];
@@ -137,8 +141,18 @@ async function verifyModuleCandidates({
   };
 }
 
-function readSynthesisPhase(priorGuards: readonly string[]): string {
-  if (priorGuards.length > 0) {
+function hasPriorFeedback(feedback?: PriorRoundFeedback): boolean {
+  if (feedback === undefined) {
+    return false;
+  }
+
+  return (
+    feedback.guards.length > 0 || feedback.unresolved.length > 0 || feedback.witnesses.length > 0
+  );
+}
+
+function readSynthesisPhase(priorFeedback?: PriorRoundFeedback): string {
+  if (hasPriorFeedback(priorFeedback)) {
     return 'sharpening hypotheses';
   }
 
@@ -148,13 +162,13 @@ function readSynthesisPhase(priorGuards: readonly string[]): string {
 async function buildSafely(
   input: RoundInput,
 ): Promise<Result.Result<SynthesisOutcome, CheckerError>> {
-  const { deep, module, priorGuards = [], progressFile, root } = input;
-  const phase = readSynthesisPhase(priorGuards);
+  const { deep, module, priorFeedback, progressFile, root } = input;
+  const phase = readSynthesisPhase(priorFeedback);
 
   await reportProgress({ contract: module.name, phase, progressFile });
 
   async function runSynthesis(): Promise<SynthesisOutcome> {
-    return await buildModuleContracts({ deep, module, priorGuards, root });
+    return await buildModuleContracts({ deep, module, priorFeedback, root });
   }
 
   return await classifyResult({ message: 'module synthesis failed', run: runSynthesis });

@@ -1,11 +1,14 @@
-import { Result } from 'effect';
+import { Option, Result } from 'effect';
 import { classifyResult } from '../../classify-result.mts';
 import { readBaseInputs } from '../../discovery/index.mts';
 import { observe } from '../../sandbox/index.mts';
 import { hashSource } from '../../storage/index.mts';
-import type { Check, Finding, Inventory, Pin, Receipt } from '../../types.d.mts';
+import type { Check, Finding, Inventory, Pin, Receipt, WitnessRepro } from '../../types.d.mts';
 import { buildFinding } from '../build-finding.mts';
 import { buildOpenFinding } from '../build-open-finding.mts';
+
+const MAX_REPRO_CODE_CHARS = 4_000;
+const MAX_REPRO_VALUE_CHARS = 512;
 
 export type Evaluation = {
   base: Receipt['base'];
@@ -49,6 +52,62 @@ type Invocation = {
   reused: boolean;
 };
 
+type BuildReproInput = Readonly<{
+  check: Check;
+  observedValue: unknown;
+}>;
+
+function encodeBoundedJson(value: unknown): string {
+  const encoded = JSON.stringify(value);
+
+  return encoded.slice(0, MAX_REPRO_VALUE_CHARS);
+}
+
+function buildWitnessRepro({ check, observedValue }: BuildReproInput): Option.Option<WitnessRepro> {
+  const code = check.test?.trim() ?? '';
+
+  if (code.length === 0) {
+    return Option.none();
+  }
+
+  const boundedCode = code.slice(0, MAX_REPRO_CODE_CHARS);
+  const expected = encodeBoundedJson(check.expected);
+  const observed = encodeBoundedJson(observedValue);
+
+  return Option.some({
+    code: boundedCode,
+    expected,
+    observed,
+    runtime: check.runtime,
+  });
+}
+
+type FailedObservationInput = Readonly<{
+  check: Check;
+  context: Readonly<{
+    check: string;
+    contract: string;
+    pin_reused: boolean;
+    reused: boolean;
+    subject: string;
+  }>;
+  observedValue: unknown;
+}>;
+
+function buildFailedObservation({
+  check,
+  context,
+  observedValue,
+}: FailedObservationInput): Finding {
+  const expectedText = JSON.stringify(check.expected);
+  const observedText = JSON.stringify(observedValue);
+  const message = `${check.promise} (expected ${expectedText}, got ${observedText})`;
+  const reproOption = buildWitnessRepro({ check, observedValue });
+  const repro = Option.getOrUndefined(reproOption);
+
+  return buildFinding({ ...context, message, outcome: 'failed', repro });
+}
+
 async function observeOne(input: Invocation): Promise<Finding> {
   const { evaluation, check, pinReused, qualified, reused } = input;
 
@@ -80,9 +139,7 @@ async function observeOne(input: Invocation): Promise<Finding> {
     });
   }
 
-  const message = `${check.promise} (expected ${JSON.stringify(check.expected)}, got ${JSON.stringify(result.value)})`;
-
-  return buildFinding({ ...context, message, outcome: 'failed' });
+  return buildFailedObservation({ check, context, observedValue: result.value });
 }
 
 function readErrorMessage(error: unknown): string {

@@ -43,6 +43,7 @@ fn build_finding(row: Evidence) -> Finding {
         message,
         outcome,
         pin_reused: None,
+        repro: None,
         requested: false,
         reused: true,
         subject: None,

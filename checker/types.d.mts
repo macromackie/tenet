@@ -1,4 +1,13 @@
-export type { Bundle, Check, Contract, Finding, Pin, Receipt, Request } from './wire.mts';
+export type {
+  Bundle,
+  Check,
+  Contract,
+  Finding,
+  Pin,
+  Receipt,
+  Request,
+  WitnessRepro,
+} from './wire.mts';
 
 export type Inventory = {
   readonly assets: Readonly<Record<string, string>>;

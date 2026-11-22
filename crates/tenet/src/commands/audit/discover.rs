@@ -1,11 +1,13 @@
 mod context;
+mod seams;
 mod shard;
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::anyhow;
 use context::{TestIndex, collect_all_docs, format_slash_path, select_module_docs};
+use seams::{find_related_files, list_changed_files};
 use shard::{merge_tiny_siblings, split_into_shards};
 use tenet_checks::behavior::AuditModuleInput;
 
@@ -56,18 +58,33 @@ const SOURCE_EXTENSIONS: &[&str] = &[
 ];
 const TEST_SEGMENTS: &[&str] = &["__tests__", "test", "tests", "testsuite"];
 
+struct ShardInputs<'input> {
+    all_docs: &'input [String],
+    changed_paths: Option<&'input BTreeSet<String>>,
+    manifests: &'input [String],
+    root: &'input Path,
+    runtime_paths: &'input [String],
+    test_index: &'input TestIndex,
+}
+
 /// Discovered module shards plus the repository runtime source closure for sandbox imports.
 pub(super) struct DiscoveredAudit {
     pub modules: Vec<AuditModuleInput>,
     pub runtime_paths: Vec<String>,
 }
 
-/// Discover bounded production source modules under `root`, optionally filtered by `requested`.
+/// Discover bounded production source modules under `root`, optionally filtered by `requested` or
+/// `base_ref`.
 pub(super) fn discover_modules(
     root: &Path,
     requested: &[PathBuf],
+    base_ref: Option<&str>,
 ) -> Result<DiscoveredAudit, CommandError> {
     let filters = normalize_filters(requested)?;
+    let changed_paths = match base_ref {
+        Some(reference) => Some(list_changed_files(root, reference)?),
+        None => None,
+    };
     let all_paths = tenet_engine::list_paths(root)?;
     let manifests = collect_manifests(&all_paths);
     let all_docs = collect_all_docs(&all_paths);
@@ -88,13 +105,15 @@ pub(super) fn discover_modules(
         let dir_key = read_module_key(path);
         module_files.entry(dir_key).or_default().push(slash_path);
     }
-    let modules = build_module_shards(
+    let shard_inputs = ShardInputs {
+        all_docs: &all_docs,
+        changed_paths: changed_paths.as_ref(),
+        manifests: &manifests,
         root,
-        merge_tiny_siblings(module_files),
-        &manifests,
-        &all_docs,
-        &test_index,
-    );
+        runtime_paths: &runtime_paths,
+        test_index: &test_index,
+    };
+    let modules = build_module_shards(merge_tiny_siblings(module_files), &shard_inputs);
     Ok(DiscoveredAudit {
         modules,
         runtime_paths,
@@ -102,34 +121,41 @@ pub(super) fn discover_modules(
 }
 
 fn build_module_shards(
-    root: &Path,
     merged_modules: BTreeMap<String, Vec<String>>,
-    manifests: &[String],
-    all_docs: &[String],
-    test_index: &TestIndex,
+    inputs: &ShardInputs<'_>,
 ) -> Vec<AuditModuleInput> {
     let mut modules = Vec::new();
     for (base_name, mut files) in merged_modules {
         files.sort();
-        for (name, shard_files) in split_into_shards(root, &base_name, files) {
-            let docs = select_module_docs(all_docs, &name, &shard_files);
-            let low_test_files = test_index.find_low_test_files(&shard_files);
-            let test_files = test_index.find_related_test_files(&name, &shard_files);
+        for (name, shard_files) in split_into_shards(inputs.root, &base_name, files) {
+            let changed_files = collect_shard_changes(&shard_files, inputs.changed_paths);
+            if inputs.changed_paths.is_some() && changed_files.is_empty() {
+                continue;
+            }
+            let docs = select_module_docs(inputs.all_docs, &name, &shard_files);
+            let low_test_files = inputs.test_index.find_low_test_files(&shard_files);
+            let related_files = find_related_files(inputs.root, &shard_files, inputs.runtime_paths);
+            let test_files = inputs
+                .test_index
+                .find_related_test_files(&name, &shard_files);
             modules.push(AuditModuleInput {
+                changed_files,
                 docs,
                 files: shard_files,
                 low_test_files,
-                manifests: manifests.to_vec(),
+                manifests: inputs.manifests.to_vec(),
                 name,
+                related_files,
                 test_files,
             });
         }
     }
     modules.sort_by(|left, right| {
         right
-            .low_test_files
+            .changed_files
             .len()
-            .cmp(&left.low_test_files.len())
+            .cmp(&left.changed_files.len())
+            .then_with(|| right.low_test_files.len().cmp(&left.low_test_files.len()))
             .then_with(|| left.name.cmp(&right.name))
     });
     modules
@@ -161,6 +187,20 @@ fn collect_manifests(paths: &[PathBuf]) -> Vec<String> {
     }
     manifests.sort();
     manifests
+}
+
+fn collect_shard_changes(
+    shard_files: &[String],
+    changed_paths: Option<&BTreeSet<String>>,
+) -> Vec<String> {
+    let Some(changed_set) = changed_paths else {
+        return Vec::new();
+    };
+    shard_files
+        .iter()
+        .filter(|file| changed_set.contains(file.as_str()))
+        .cloned()
+        .collect()
 }
 
 fn has_segment(path: &Path, blocked: &[&str]) -> bool {

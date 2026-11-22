@@ -9,11 +9,13 @@ const OptionalText = Schema.OptionFromOptionalKey(Schema.String);
 const AuditMode = Schema.Literal('audit');
 
 const AuditModuleFields = Schema.Struct({
+  changedFiles: OptionalStringList,
   docs: StringList,
   files: StringList,
   lowTestFiles: OptionalStringList,
   manifests: StringList,
   name: Schema.String,
+  relatedFiles: OptionalStringList,
   testFiles: OptionalStringList,
 });
 

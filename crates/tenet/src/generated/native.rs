@@ -133,6 +133,7 @@ fn build_finding(contract: String, tool: &str, outcome: Outcome, message: String
         message,
         outcome,
         pin_reused: None,
+        repro: None,
         requested: false,
         reused: false,
         subject: None,

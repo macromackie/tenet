@@ -7,12 +7,15 @@ const MAX_PACKET_BYTES = 204_800;
 const MAX_FILE_BYTES = 65_536;
 const MAX_DOC_BYTES = 16_384;
 const MAX_TOTAL_DOC_BYTES = 32_768;
+const MAX_RELATED_BYTES = 12_000;
+const MAX_TOTAL_RELATED_BYTES = 48_000;
 const MAX_TEST_BYTES = 8_000;
 const MAX_TOTAL_TEST_BYTES = 24_000;
 
 type ModulePacket = Readonly<{
   docs: Readonly<Record<string, string>>;
   files: readonly string[];
+  relatedSources: Readonly<Record<string, string>>;
   sources: Readonly<Record<string, string>>;
   tests: Readonly<Record<string, string>>;
 }>;
@@ -157,7 +160,14 @@ export async function readModulePacket({
     root,
   });
 
+  const relatedSources = await readGroup({
+    limitBytes: MAX_TOTAL_RELATED_BYTES,
+    paths: module.relatedFiles ?? [],
+    perFileBytes: MAX_RELATED_BYTES,
+    root,
+  });
+
   const tests = await readOptionalTests({ includeTests, module, root });
 
-  return { docs, files: Object.keys(sources), sources, tests };
+  return { docs, files: Object.keys(sources), relatedSources, sources, tests };
 }

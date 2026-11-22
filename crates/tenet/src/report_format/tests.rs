@@ -15,6 +15,7 @@ fn sample_finding(check: &str, message: &str, requested: bool, reused: bool) -> 
         message: message.into(),
         outcome: Outcome::Passed,
         pin_reused: reused.then_some(true),
+        repro: None,
         requested,
         reused,
         subject: None,

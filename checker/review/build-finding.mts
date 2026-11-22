@@ -3,11 +3,12 @@ import type { Finding } from '../types.d.mts';
 const SUMMARY_LIMIT = 512;
 
 type BuildFindingInput = Pick<Finding, 'check' | 'contract' | 'message' | 'outcome'> &
-  Partial<Pick<Finding, 'pin_reused' | 'reused' | 'subject'>>;
+  Partial<Pick<Finding, 'pin_reused' | 'repro' | 'reused' | 'subject'>>;
 
 /** Build a single line of terminal-safe evidence. */
 export function buildFinding({
   pin_reused,
+  repro,
   subject = null,
   ...note
 }: BuildFindingInput): Finding {
@@ -26,8 +27,16 @@ export function buildFinding({
     subject,
   };
 
+  if (pin_reused === true && repro !== undefined) {
+    return { ...finding, pin_reused: true, repro };
+  }
+
   if (pin_reused === true) {
     return { ...finding, pin_reused: true };
+  }
+
+  if (repro !== undefined) {
+    return { ...finding, repro };
   }
 
   return finding;

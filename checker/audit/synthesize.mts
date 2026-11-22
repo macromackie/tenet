@@ -6,6 +6,12 @@ import { readModulePacket } from './packet.mts';
 import { parseAuditCandidates, type ParsedCandidate } from './parse-candidates.mts';
 import type { AuditModule } from './wire.mts';
 
+export type PriorRoundFeedback = Readonly<{
+  guards: readonly string[];
+  unresolved: readonly string[];
+  witnesses: readonly string[];
+}>;
+
 export type SynthesisOutcome = Readonly<{
   candidates: readonly ParsedCandidate[];
   costUsd: Finding['cost_usd'];
@@ -15,9 +21,15 @@ export type SynthesisOutcome = Readonly<{
 type SynthesizeModuleInput = Readonly<{
   deep: boolean;
   module: AuditModule;
-  priorGuards?: readonly string[];
+  priorFeedback?: PriorRoundFeedback;
   root: string;
 }>;
+
+const EMPTY_FEEDBACK = {
+  guards: [],
+  unresolved: [],
+  witnesses: [],
+} as const satisfies PriorRoundFeedback;
 
 async function readAuditPrompt(): Promise<string> {
   const promptPath = await resolveWorkerAsset('audit-prompt.md');
@@ -28,19 +40,24 @@ async function readAuditPrompt(): Promise<string> {
 async function buildModulePayload({
   deep,
   module,
-  priorGuards = [],
+  priorFeedback = EMPTY_FEEDBACK,
   root,
 }: SynthesizeModuleInput): Promise<string> {
   const packet = await readModulePacket({ module, root });
+  const changedFiles = module.changedFiles ?? [];
   const lowTestFiles = module.lowTestFiles ?? [];
 
   return JSON.stringify({
+    changedFiles,
     deep,
     docs: packet.docs,
     files: packet.files,
     lowTestFiles,
     module: module.name,
-    priorGuards,
+    priorGuards: priorFeedback.guards,
+    priorUnresolved: priorFeedback.unresolved,
+    priorWitnesses: priorFeedback.witnesses,
+    relatedSources: packet.relatedSources,
     sources: packet.sources,
   });
 }
@@ -49,11 +66,11 @@ async function buildModulePayload({
 export async function buildModuleContracts({
   deep,
   module,
-  priorGuards = [],
+  priorFeedback = EMPTY_FEEDBACK,
   root,
 }: SynthesizeModuleInput): Promise<SynthesisOutcome> {
   const instructions = await readAuditPrompt();
-  const source = await buildModulePayload({ deep, module, priorGuards, root });
+  const source = await buildModulePayload({ deep, module, priorFeedback, root });
   const tier = selectAuditTier({ deep });
   let costUsd: Finding['cost_usd'] = 0;
   let requests = 0;

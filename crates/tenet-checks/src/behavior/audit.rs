@@ -23,12 +23,16 @@ pub struct AuditContractOutput {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuditModuleInput {
+    #[serde(default)]
+    pub changed_files: Vec<String>,
     pub docs: Vec<String>,
     pub files: Vec<String>,
     #[serde(default)]
     pub low_test_files: Vec<String>,
     pub manifests: Vec<String>,
     pub name: String,
+    #[serde(default)]
+    pub related_files: Vec<String>,
     #[serde(default)]
     pub test_files: Vec<String>,
 }

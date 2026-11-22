@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.27.0
+
+- Attached minimal executable witness reproducers (`repro`: `runtime`, `expected`, `observed`, and bounded probe `code`) directly onto every live failing behavior finding in `tenet audit` and `tenet check`, surfaced in JSON and terminal output and fed into Skeptic v2 so both witness triage and downstream fixing agents inspect the exact failing probe without reinventing it.
+- Added static cross-module seam discovery (`relatedFiles` / `relatedSources`) in `tenet audit`: each shard scans bounded imports and same-package Go siblings across the repository's runtime closure and attaches up to 4 external caller/callee files as read-only seam context for contract synthesis and skepticism.
+- Upgraded closed-loop Round 2 sharpening in `tenet audit --deep`: Round 2 now fires for multi-file shards with at most one covered witness subject or unresolved Round 1 checks, feeding `priorGuards`, `priorWitnesses`, and `priorUnresolved` diagnostics back so Round 2 targets uncovered files and adapts around harness friction.
+- Added just-in-time diff hardening (`tenet audit --base REF`): scopes module discovery to modules containing tracked or untracked changes since `REF` (while preserving the full runtime closure for sandbox imports), passes `changedFiles` to prioritize changed surfaces, and leaves `.tenet/audit.json` untouched.
+
 ## v0.26.0
 
 - Upgraded `tenet audit` witness skepticism to a severity-ranked, test-aware triage pass: module discovery attaches up to 4 relevance-matched existing test files (`testFiles`) per shard, the skeptic inspects bounded test snippets alongside module source and docs to reject witnesses that contradict pre-existing tests or documented quirks, and surviving live witnesses are tagged (`[critical]`, `[high]`, `[medium]`) and sorted highest-severity first.

@@ -89,7 +89,14 @@ function buildSkepticFixture(): Readonly<{ findings: readonly Finding[]; raw: un
   const findings: readonly Finding[] = [
     makeFinding({ check: 'medium-bug', message: 'Edge mismatch.', outcome: 'failed' }),
     makeFinding({ check: 'false-alarm', message: 'Expected error.', outcome: 'failed' }),
-    makeFinding({ check: 'critical-bug', message: 'Caller input mutated.', outcome: 'failed' }),
+    {
+      ...makeFinding({
+        check: 'critical-bug',
+        message: 'Caller input mutated.',
+        outcome: 'failed',
+      }),
+      repro: { code: 'console.log(1)', expected: 'true', observed: 'false', runtime: 'node' },
+    },
     makeFinding({ check: 'high-bug', message: 'Round-trip failed.', outcome: 'failed' }),
     makeFinding({ check: 'passing-guard', message: 'Behavior holds.', outcome: 'passed' }),
   ];
@@ -116,8 +123,8 @@ void test('applySkepticOutput ranks confirmed witnesses by severity and downgrad
     'medium-bug:[medium] Edge mismatch.',
   ]);
   assert.deepEqual(
-    [rejected?.outcome, isDismissed, passing?.outcome],
-    ['unresolved', true, 'passed'],
+    [rejected?.outcome, isDismissed, passing?.outcome, updated[0]?.repro?.runtime],
+    ['unresolved', true, 'passed', 'node'],
   );
 });
 

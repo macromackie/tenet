@@ -1,7 +1,13 @@
-use std::fs;
+use std::{fs, process::Command};
 
 use anyhow::Result;
-use tenet_checks::behavior::{AuditContractOutput, AuditModuleReport, Finding, Outcome};
+use tenet_checks::behavior::{
+    AuditContractOutput,
+    AuditModuleReport,
+    Finding,
+    Outcome,
+    WitnessRepro,
+};
 
 use super::{discover::discover_modules, queue::AuditQueue, save::save_verified_contracts};
 
@@ -28,6 +34,12 @@ fn build_sample_report() -> AuditModuleReport {
             message: String::from("Observed mismatch."),
             outcome: Outcome::Failed,
             pin_reused: Some(false),
+            repro: Some(WitnessRepro {
+                code: String::from("print(1)\n"),
+                expected: String::from("2"),
+                observed: Some(String::from("1")),
+                runtime: String::from("python"),
+            }),
             requested: true,
             reused: false,
             subject: Some("src/app.py".into()),
@@ -54,7 +66,7 @@ fn discover_modules_keeps_generated_runtime_files_and_merges_tiny_siblings() -> 
         )?;
     }
 
-    let discovered = discover_modules(root, &[])?;
+    let discovered = discover_modules(root, &[], None)?;
     let module_names: Vec<&str> = discovered
         .modules
         .iter()
@@ -93,7 +105,7 @@ fn discover_modules_ranks_docs_and_flags_low_test_files() -> Result<()> {
     }
     fs::write(
         root.join("src/parser/lexer.py"),
-        "def lex():\n    return 1\n",
+        "from ..format import render\ndef lex():\n    return render()\n",
     )?;
     fs::write(
         root.join("src/format/render.py"),
@@ -102,7 +114,7 @@ fn discover_modules_ranks_docs_and_flags_low_test_files() -> Result<()> {
     fs::write(root.join("tests/test_render_one.py"), "import render\n")?;
     fs::write(root.join("tests/test_render_two.py"), "import render\n")?;
 
-    let discovered = discover_modules(root, &[])?;
+    let discovered = discover_modules(root, &[], None)?;
     let first = discovered
         .modules
         .first()
@@ -113,6 +125,11 @@ fn discover_modules_ranks_docs_and_flags_low_test_files() -> Result<()> {
         "expected low-test module first, got {name:?}"
     );
     anyhow::ensure!(first.low_test_files == vec!["src/parser/lexer.py"]);
+    anyhow::ensure!(
+        first.related_files == vec!["src/format/render.py"],
+        "expected imported seam file in {:?}",
+        first.related_files
+    );
     anyhow::ensure!(
         first.docs.contains(&String::from("docs/parser.rst")),
         "expected relevance-matched doc in {:?}",
@@ -137,7 +154,7 @@ fn discover_modules_skips_tests_and_attaches_manifests() -> Result<()> {
     )?;
     fs::write(root.join("testdata/fixture.py"), "X = 1\n")?;
 
-    let discovered = discover_modules(root, &[])?;
+    let discovered = discover_modules(root, &[], None)?;
     let count = discovered.modules.len();
     anyhow::ensure!(count == 1, "expected 1 module, got {count:?}");
     let first = discovered
@@ -174,6 +191,15 @@ fn queue_round_trip_and_save_verified_contracts() -> Result<()> {
 
     let loaded = AuditQueue::read(&state, true, false)?;
     anyhow::ensure!(loaded.has_module("src"), "expected saved module in queue");
+    let loaded_repro = loaded
+        .modules
+        .get("src")
+        .and_then(|item| item.findings.first())
+        .and_then(|finding| finding.repro.as_ref());
+    anyhow::ensure!(
+        loaded_repro.is_some_and(|repro| repro.runtime == "python" && repro.expected == "2"),
+        "expected witness reproducer to round-trip through audit queue"
+    );
 
     let saved = save_verified_contracts(root, &state, &[report])?;
     anyhow::ensure!(saved.len() == 1, "expected 1 saved contract");
@@ -185,6 +211,51 @@ fn queue_round_trip_and_save_verified_contracts() -> Result<()> {
     anyhow::ensure!(
         root.join(".contracts/001-demo-rule/agent-checks.lock.json")
             .is_file()
+    );
+    Ok(())
+}
+
+#[test]
+fn discover_modules_filters_to_changed_modules_for_base_ref() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    fs::create_dir_all(root.join("src/alpha"))?;
+    fs::create_dir_all(root.join("src/beta"))?;
+    fs::write(root.join("src/alpha/a.py"), "def a():\n    return 1\n")?;
+    fs::write(root.join("src/beta/b.py"), "def b():\n    return 2\n")?;
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "t@example.com"][..],
+        &["config", "user.name", "Tenet"][..],
+        &["add", "-A"][..],
+        &["commit", "-q", "-m", "base"][..],
+    ] {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .status()?;
+        anyhow::ensure!(status.success(), "git {args:?} failed");
+    }
+    fs::write(root.join("src/beta/b.py"), "def b():\n    return 3\n")?;
+
+    let discovered = discover_modules(root, &[], Some("HEAD"))?;
+    let module_count = discovered.modules.len();
+    anyhow::ensure!(
+        module_count == 1,
+        "expected only changed module, got {module_count:?}",
+    );
+    let only = discovered
+        .modules
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("missing changed module"))?;
+    anyhow::ensure!(only.name == "src/beta");
+    anyhow::ensure!(only.changed_files == vec!["src/beta/b.py"]);
+    anyhow::ensure!(
+        discovered
+            .runtime_paths
+            .contains(&String::from("src/alpha/a.py")),
+        "expected full runtime closure to retain unchanged sibling"
     );
     Ok(())
 }
