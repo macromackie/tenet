@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.34.1
+
+- Restored `cargo-dist-version = "0.33.0"` in `Cargo.toml` so release packaging builds and publishes all four native `v0.34.x` binaries cleanly.
+
 ## v0.34.0
 
 - Unified Tenet around `.contracts/<NNN>-<name>/{CONTRACT.md, scripts/ + scripts/.lock.json}` as the single portable source of truth: qualified runtime checks now materialize as standalone runnable `.mjs`/`.py`/`.go`/`.rs` scripts inside `scripts/` beside a compact `scripts/.lock.json` with SHA-256 hand-edit protection, while preserving backwards-compatible reads of catalog `assets/` and legacy `agent-checks.lock.json`.
