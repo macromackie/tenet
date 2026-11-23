@@ -8,6 +8,7 @@ import {
   buildNodeCommand,
   buildPythonCommand,
   buildRustCommand,
+  isRustInCrateProbe,
   readGoTool,
   readPythonPaths,
   readRustCrate,
@@ -192,10 +193,12 @@ async function buildProgram({
     }
     case 'rust': {
       const rustCrate = await readRustCrate({ deps, files, projectRoot });
+      const inCrateTest = isRustInCrateProbe({ check, files });
 
       return buildRustCommand({
         deps,
         depsMount: '/deps/rust',
+        inCrateTest,
         linkerArg: '/usr/bin/gcc',
         probeFile,
         probeTmp: '/tmp',

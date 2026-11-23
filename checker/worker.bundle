@@ -4583,7 +4583,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   let expiresAt = 0;
   let exit3;
   let current;
-  const join14 = (fiber3, run3) => {
+  const join15 = (fiber3, run3) => {
     run3.awaiters++;
     onExitUnsafe(fiber3, () => {
       if (--run3.awaiters > 0 || current !== run3) return;
@@ -4594,7 +4594,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   };
   return [withFiber((fiber3) => {
     if (current !== void 0) {
-      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join14(fiber3, current);
+      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join15(fiber3, current);
     }
     if (exit3 !== void 0 && (expiresAt === Infinity || fiber3.getRef(ClockRef).currentTimeMillisUnsafe() < expiresAt)) {
       return exit3;
@@ -4606,7 +4606,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
       awaiters: 0
     };
     current = run3;
-    const joined = join14(fiber3, run3);
+    const joined = join15(fiber3, run3);
     run3.fiber.evaluate(onExitPrimitive(self, (exit_) => {
       if (current !== run3) return;
       current = void 0;
@@ -22347,6 +22347,7 @@ function buildPythonCommand({
 // sandbox/runtimes/build-rust-command.mts
 var SINGLE_FILE_SCRIPT = 'rustc="$1"; probe="$2"; out="$3"; shift 3; "$rustc" --edition=2021 --crate-name tenet_probe "$@" ./"$probe" -o "$out" && exec "$out"';
 var LIB_CRATE_SCRIPT = 'rustc="$1"; probe="$2"; out="$3"; libout="$4"; crate="$5"; edition="$6"; shift 6; "$rustc" --crate-type=lib --crate-name="$crate" --edition="$edition" "$@" ./src/lib.rs -o "$libout" && "$rustc" --edition="$edition" --crate-name=tenet_probe --extern "$crate=$libout" "$@" ./"$probe" -o "$out" && exec "$out"';
+var LIB_TEST_SCRIPT = 'rustc="$1"; out="$2"; crate="$3"; edition="$4"; shift 4; "$rustc" --test --crate-name="$crate" --edition="$edition" "$@" ./src/__tenet_lib.rs -o "$out" && exec "$out" __tenet_observe_probe::tenet_observe --exact --nocapture';
 function buildDepFlags({ deps, depsMount, linkerArg }) {
   const flags = [];
   if (linkerArg !== void 0) {
@@ -22367,9 +22368,41 @@ function buildFeatureCfgFlags(features) {
 function buildRustCfgFlags(cfgs) {
   return cfgs.flatMap((cfg) => ["--cfg", cfg]);
 }
+function buildCrateCommand({
+  buildCfgs,
+  crateInfo,
+  depFlags,
+  inCrateTest,
+  output,
+  probeFile,
+  probeTmp,
+  rustc
+}) {
+  const { edition, features, name } = crateInfo;
+  const cfgFlags = buildFeatureCfgFlags(features);
+  if (inCrateTest) {
+    const testHead = ["/bin/sh", "-c", LIB_TEST_SCRIPT, "tenet-rust", rustc, output, name, edition];
+    return [...testHead, ...cfgFlags, ...buildCfgs, ...depFlags];
+  }
+  const libOutput = `${probeTmp}/lib${name}.rlib`;
+  const head3 = [
+    "/bin/sh",
+    "-c",
+    LIB_CRATE_SCRIPT,
+    "tenet-rust",
+    rustc,
+    probeFile,
+    output,
+    libOutput,
+    name,
+    edition
+  ];
+  return [...head3, ...cfgFlags, ...buildCfgs, ...depFlags];
+}
 function buildRustCommand({
   deps,
   depsMount,
+  inCrateTest = false,
   linkerArg,
   probeFile,
   probeTmp,
@@ -22392,22 +22425,27 @@ function buildRustCommand({
       ...depFlags
     ];
   }
-  const { edition, features, name } = rustCrate.value;
-  const libOutput = `${probeTmp}/lib${name}.rlib`;
-  const cfgFlags = buildFeatureCfgFlags(features);
-  const head3 = [
-    "/bin/sh",
-    "-c",
-    LIB_CRATE_SCRIPT,
-    "tenet-rust",
-    rustc,
-    probeFile,
+  return buildCrateCommand({
+    buildCfgs,
+    crateInfo: rustCrate.value,
+    depFlags,
+    inCrateTest,
     output,
-    libOutput,
-    name,
-    edition
-  ];
-  return [...head3, ...cfgFlags, ...buildCfgs, ...depFlags];
+    probeFile,
+    probeTmp,
+    rustc
+  });
+}
+
+// sandbox/runtimes/is-rust-in-crate-probe.mts
+var TEST_ATTR_PATTERN = new RegExp("#\\[test\\]", "v");
+var OBSERVE_FN_PATTERN = new RegExp("fn\\s+tenet_observe\\s*\\(", "v");
+function isRustInCrateProbe({ check: check2, files }) {
+  if (check2.runtime !== "rust" || !files.has("src/lib.rs")) {
+    return false;
+  }
+  const code = check2.test ?? "";
+  return TEST_ATTR_PATTERN.test(code) && OBSERVE_FN_PATTERN.test(code);
 }
 
 // sandbox/runtimes/python-paths.mts
@@ -22911,6 +22949,20 @@ async function readRustTool(arg) {
   return result3.stdout.trim();
 }
 
+// sandbox/runtimes/write-rust-lib.mts
+import { readFile as readFile2, writeFile } from "node:fs/promises";
+import { join as join2 } from "node:path";
+var RUST_IN_CRATE_HARNESS = '\n#[cfg(test)]\n#[path = "../.tenet-observe.rs"]\nmod __tenet_observe_probe;\n';
+async function writeRustInCrateLib({ inCrateRust, work }) {
+  if (!inCrateRust) {
+    return;
+  }
+  const libPath = join2(work, "src", "lib.rs");
+  const harnessPath = join2(work, "src", "__tenet_lib.rs");
+  const currentLib = await readFile2(libPath, "utf-8");
+  await writeFile(harnessPath, `${currentLib}${RUST_IN_CRATE_HARNESS}`);
+}
+
 // sandbox/os/linux-sandbox.mts
 var BWRAP = "/usr/bin/bwrap";
 var PYTHON = "/usr/bin/python3";
@@ -23048,9 +23100,11 @@ async function buildProgram({
     }
     case "rust": {
       const rustCrate = await readRustCrate({ deps, files, projectRoot });
+      const inCrateTest = isRustInCrateProbe({ check: check2, files });
       return buildRustCommand({
         deps,
         depsMount: "/deps/rust",
+        inCrateTest,
         linkerArg: "/usr/bin/gcc",
         probeFile,
         probeTmp: "/tmp",
@@ -23127,7 +23181,7 @@ async function createLinuxSandbox({
 // sandbox/os/macos-sandbox.mts
 import { access as access3, realpath as realpath3 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname as dirname4, join as join2 } from "node:path";
+import { dirname as dirname4, join as join3 } from "node:path";
 
 // sandbox/os/macos-profile.mts
 function escapeScheme(value3) {
@@ -23220,6 +23274,7 @@ function buildRustExtraEnv(outDir) {
   return { OUT_DIR: outDir };
 }
 async function resolveRustRuntime({
+  check: check2,
   deps,
   files,
   probeFile,
@@ -23229,10 +23284,19 @@ async function resolveRustRuntime({
   const sysroot = await readRustTool("--print=sysroot");
   const resolved = await realpath3(sysroot);
   const runtimeRoot = assertBoundedRuntimeRoot(resolved);
-  const rustc = join2(runtimeRoot, "bin", "rustc");
+  const rustc = join3(runtimeRoot, "bin", "rustc");
   const rustCrate = await readRustCrate({ deps, files, projectRoot });
   const depsMount = deps.rustDepsDir ?? "";
-  const command = buildRustCommand({ deps, depsMount, probeFile, probeTmp, rustCrate, rustc });
+  const inCrateTest = isRustInCrateProbe({ check: check2, files });
+  const command = buildRustCommand({
+    deps,
+    depsMount,
+    inCrateTest,
+    probeFile,
+    probeTmp,
+    rustCrate,
+    rustc
+  });
   const extraEnv = buildRustExtraEnv(deps.rustBuildOutDir);
   return { command, extraEnv, runtimeRoot };
 }
@@ -23245,9 +23309,9 @@ async function resolveGoRuntime({
   const rawGoroot = await readGoTool(["env", "GOROOT"]);
   const canonicalGoroot = await realpath3(rawGoroot);
   const runtimeRoot = assertBoundedRuntimeRoot(canonicalGoroot);
-  const binary = join2(runtimeRoot, "bin", "go");
+  const binary = join3(runtimeRoot, "bin", "go");
   const probeDir = dirname4(probeFile);
-  const output = join2(probeTmp, "observe");
+  const output = join3(probeTmp, "observe");
   const isTestProbe = probeFile.endsWith("_test.go");
   const command = buildGoCommand({ binary, deps, files, isTestProbe, output, probeDir });
   const extraEnv = buildGoEnv({
@@ -23487,24 +23551,24 @@ function resolveProbeFile(check2) {
 }
 
 // sandbox/runner.mts
-import { mkdir as mkdir3, mkdtemp, rm as rm3, writeFile as writeFile2 } from "node:fs/promises";
+import { mkdir as mkdir3, mkdtemp, rm as rm3, writeFile as writeFile3 } from "node:fs/promises";
 import { tmpdir as tmpdir4 } from "node:os";
-import { dirname as dirname10, join as join10, resolve as resolve6, sep as sep6 } from "node:path";
+import { dirname as dirname10, join as join11, resolve as resolve6, sep as sep6 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 // sandbox/runner-sandbox.mts
-import { mkdir as mkdir2, symlink, writeFile } from "node:fs/promises";
-import { dirname as dirname9, join as join9, resolve as resolve5, sep as sep5 } from "node:path";
+import { mkdir as mkdir2, symlink, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname9, join as join10, resolve as resolve5, sep as sep5 } from "node:path";
 
 // sandbox/project-deps.mts
-import { access as access5, readdir as readdir3, readFile as readFile4, realpath as realpath9, stat as stat3 } from "node:fs/promises";
+import { access as access5, readdir as readdir3, readFile as readFile5, realpath as realpath9, stat as stat3 } from "node:fs/promises";
 import { homedir as homedir2 } from "node:os";
-import { delimiter, join as join8, sep as sep4 } from "node:path";
+import { delimiter, join as join9, sep as sep4 } from "node:path";
 import { env as hostEnvironment4 } from "node:process";
 
 // sandbox/rust-build.mts
-import { readdir, readFile as readFile2, realpath as realpath8, stat } from "node:fs/promises";
-import { join as join6, relative as relative2, sep as sep3 } from "node:path";
+import { readdir, readFile as readFile3, realpath as realpath8, stat } from "node:fs/promises";
+import { join as join7, relative as relative2, sep as sep3 } from "node:path";
 
 // storage/hash-source.mts
 import { createHash } from "node:crypto";
@@ -23519,10 +23583,10 @@ import { constants } from "node:fs";
 import { lstat, open, realpath as realpath5 } from "node:fs/promises";
 
 // storage/resolve-inside.mts
-import { isAbsolute, join as join3, resolve as resolve3, sep } from "node:path";
+import { isAbsolute, join as join4, resolve as resolve3, sep } from "node:path";
 function resolveInside({ root, path }) {
   const target = resolve3(root, path);
-  const prefix = join3(root, sep);
+  const prefix = join4(root, sep);
   const components = path.split(sep);
   if (isAbsolute(path) || components.includes("..") || !target.startsWith(prefix)) {
     throw new CheckerError({ message: "input falls outside the checkout." });
@@ -23532,7 +23596,7 @@ function resolveInside({ root, path }) {
 
 // storage/resolve-root.mts
 import { realpath as realpath4 } from "node:fs/promises";
-import { basename as basename3, dirname as dirname6, join as join4, resolve as resolve4 } from "node:path";
+import { basename as basename3, dirname as dirname6, join as join5, resolve as resolve4 } from "node:path";
 function readErrorCode(value3) {
   if (value3 instanceof Error && "code" in value3 && typeof value3.code === "string") {
     return value3.code;
@@ -23558,7 +23622,7 @@ async function resolveRoot(path) {
   }
   const trusted = await resolveRoot(parent);
   const child = basename3(absolute);
-  return join4(trusted, child);
+  return join5(trusted, child);
 }
 
 // storage/read-regular.mts
@@ -23720,7 +23784,7 @@ import { dirname as dirname8 } from "node:path";
 // storage/write-atomic.mts
 import { randomUUID } from "node:crypto";
 import { link as link2, mkdir, open as open2, realpath as realpath6, rename, rm } from "node:fs/promises";
-import { dirname as dirname7, join as join5, relative, sep as sep2 } from "node:path";
+import { dirname as dirname7, join as join6, relative, sep as sep2 } from "node:path";
 var PRIVATE_FILE = 384;
 var PRIVATE_DIR = 448;
 async function ensureSegment(path) {
@@ -23737,7 +23801,7 @@ async function ensureDirectory({ directory, root }) {
   }
   let current = root;
   for (const part of nested.split(sep2)) {
-    current = join5(current, part);
+    current = join6(current, part);
     await ensureSegment(current);
   }
 }
@@ -23759,7 +23823,7 @@ async function storeRecord({ handle, record: record2 }) {
 }
 async function writeTempRecord({ first, parent, target, value: value3 }) {
   const nonce = randomUUID();
-  const temp = join5(parent, `.tenet-${nonce}.tmp`);
+  const temp = join6(parent, `.tenet-${nonce}.tmp`);
   const handle = await open2(temp, "wx", PRIVATE_FILE);
   try {
     await storeRecord({ handle, record: value3 });
@@ -23851,8 +23915,8 @@ function buildPackageNameVariants(rawName) {
   return /* @__PURE__ */ new Set([rawName, underscored, hyphenated]);
 }
 async function readPackageNameVariants(projectRoot) {
-  const manifestPath = join6(projectRoot, "Cargo.toml");
-  const manifest = await runOptional(async () => await readFile2(manifestPath, "utf-8"));
+  const manifestPath = join7(projectRoot, "Cargo.toml");
+  const manifest = await runOptional(async () => await readFile3(manifestPath, "utf-8"));
   if (Option_exports.isNone(manifest)) {
     return /* @__PURE__ */ new Set();
   }
@@ -23875,8 +23939,8 @@ async function readCandidateDirectory(dirPath) {
   if (Option_exports.isNone(dirStat) || !dirStat.value.isDirectory()) {
     return Option_exports.none();
   }
-  const outputPath = join6(dirPath, "output");
-  const outPath = join6(dirPath, "out");
+  const outputPath = join7(dirPath, "output");
+  const outPath = join7(dirPath, "out");
   const hasOutputFile = await hasRegularFile(outputPath);
   const hasOutDir = await hasDirectory(outPath);
   if (!hasOutputFile && !hasOutDir) {
@@ -23894,14 +23958,14 @@ async function inspectBuildCandidate({
   if (pkg === void 0 || !packageNames.has(pkg)) {
     return Option_exports.none();
   }
-  const dirPath = join6(buildRoot, entry);
+  const dirPath = join7(buildRoot, entry);
   return await readCandidateDirectory(dirPath);
 }
 async function selectNewestBuildDir({
   canonicalRoot,
   packageNames
 }) {
-  const buildRoot = join6(canonicalRoot, "target", "debug", "build");
+  const buildRoot = join7(canonicalRoot, "target", "debug", "build");
   const listed = await runOptional(async () => await readdir(buildRoot));
   if (Option_exports.isNone(listed)) {
     return Option_exports.none();
@@ -23928,7 +23992,7 @@ function parseSafeRustCfgs(outputText) {
   return [...foundCfgs].toSorted().slice(0, MAX_BUILD_CFGS);
 }
 async function readBuildCfgs({ canonicalRoot, dirPath }) {
-  const outputPath = join6(dirPath, "output");
+  const outputPath = join7(dirPath, "output");
   const relativePath = relative2(canonicalRoot, outputPath);
   const text2 = await runOptional(
     async () => await readRegular({ limit: MAX_OUTPUT_BYTES, path: relativePath, root: canonicalRoot, truncate: true })
@@ -23942,7 +24006,7 @@ async function resolveSafeOutDir({
   canonicalRoot,
   dirPath
 }) {
-  const outPath = join6(dirPath, "out");
+  const outPath = join7(dirPath, "out");
   const canonicalOut = await runOptional(async () => await realpath8(outPath));
   if (Option_exports.isNone(canonicalOut)) {
     return Option_exports.none();
@@ -23995,14 +24059,14 @@ async function collectRustBuildArtifacts({
 }
 
 // sandbox/rust-deps.mts
-import { readdir as readdir2, readFile as readFile3, stat as stat2 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { readdir as readdir2, readFile as readFile4, stat as stat2 } from "node:fs/promises";
+import { join as join8 } from "node:path";
 var MAX_RUST_EXTERNS = 64;
 var RUST_CRATE_PATTERN = new RegExp("^lib(?<name>[A-Za-z0-9_]+)-[0-9a-f]{16}\\.(?<ext>rlib|dylib|so)$", "v");
 var CARGO_NAME_PATTERN = new RegExp('^\\s*name\\s*=\\s*"(?<name>[^"]+)"', "mv");
 async function readCargoPackageName(projectRoot) {
-  const manifestPath = join7(projectRoot, "Cargo.toml");
-  const manifest = await runOptional(async () => await readFile3(manifestPath, "utf-8"));
+  const manifestPath = join8(projectRoot, "Cargo.toml");
+  const manifest = await runOptional(async () => await readFile4(manifestPath, "utf-8"));
   if (Option_exports.isNone(manifest)) {
     return Option_exports.none();
   }
@@ -24032,7 +24096,7 @@ async function readRustArtifact({
   if (name === void 0 || name === selfName) {
     return Option_exports.none();
   }
-  const artifactPath = join7(depsDir, entry);
+  const artifactPath = join8(depsDir, entry);
   const mtimeMs = await readRustFileMtime(artifactPath);
   if (Option_exports.isNone(mtimeMs)) {
     return Option_exports.none();
@@ -24110,7 +24174,7 @@ async function resolveDirectory(candidate) {
   return await runOptional(async () => await readCanonicalDirectory(candidate));
 }
 async function resolveNodeDeps(projectRoot) {
-  const candidate = join8(projectRoot, "node_modules");
+  const candidate = join9(projectRoot, "node_modules");
   const nodeModules = await resolveDirectory(candidate);
   if (Option_exports.isNone(nodeModules)) {
     return EMPTY_DEPS;
@@ -24124,7 +24188,7 @@ async function findSitePackagesInLib(libDir) {
   }
   const pythonDirs = listed.value.filter((entry) => entry.startsWith("python")).toSorted();
   for (const entry of pythonDirs) {
-    const candidate = join8(libDir, entry, "site-packages");
+    const candidate = join9(libDir, entry, "site-packages");
     const sitePackages = await resolveDirectory(candidate);
     if (Option_exports.isSome(sitePackages)) {
       return sitePackages;
@@ -24133,16 +24197,16 @@ async function findSitePackagesInLib(libDir) {
   return Option_exports.none();
 }
 async function resolvePythonSitePackages(venvDir) {
-  const libCandidate = join8(venvDir, "lib");
+  const libCandidate = join9(venvDir, "lib");
   const libDir = await resolveDirectory(libCandidate);
   if (Option_exports.isSome(libDir)) {
     return await findSitePackagesInLib(libDir.value);
   }
-  const winCandidate = join8(venvDir, "Lib", "site-packages");
+  const winCandidate = join9(venvDir, "Lib", "site-packages");
   return await resolveDirectory(winCandidate);
 }
 async function resolvePythonDeps(projectRoot) {
-  const venvDir = join8(projectRoot, ".venv");
+  const venvDir = join9(projectRoot, ".venv");
   const pythonSitePackages = await resolvePythonSitePackages(venvDir);
   if (Option_exports.isNone(pythonSitePackages)) {
     return EMPTY_DEPS;
@@ -24150,7 +24214,7 @@ async function resolvePythonDeps(projectRoot) {
   return { pythonSitePackages: pythonSitePackages.value, rustBuildCfgs: [], rustExterns: [] };
 }
 async function resolveRustDeps(projectRoot) {
-  const candidate = join8(projectRoot, "target", "debug", "deps");
+  const candidate = join9(projectRoot, "target", "debug", "deps");
   const rustDepsDir = await resolveDirectory(candidate);
   const build = await collectRustBuildArtifacts({ projectRoot });
   if (Option_exports.isNone(rustDepsDir)) {
@@ -24163,21 +24227,21 @@ async function readProjectFile({
   name,
   projectRoot
 }) {
-  const candidate = join8(projectRoot, name);
-  return await runOptional(async () => await readFile4(candidate, "utf-8"));
+  const candidate = join9(projectRoot, name);
+  return await runOptional(async () => await readFile5(candidate, "utf-8"));
 }
 function readGoPathModCache() {
   const goPath = hostEnvironment4.GOPATH?.split(delimiter)[0]?.trim() ?? "";
   if (goPath.length === 0) {
     return "";
   }
-  return join8(goPath, "pkg", "mod");
+  return join9(goPath, "pkg", "mod");
 }
 function readGoModCacheCandidates() {
   const userHome = homedir2();
   const configured = hostEnvironment4.GOMODCACHE?.trim() ?? "";
   const goPathCache = readGoPathModCache();
-  const defaultCache = join8(userHome, "go", "pkg", "mod");
+  const defaultCache = join9(userHome, "go", "pkg", "mod");
   return [configured, goPathCache, defaultCache].filter((entry) => entry.length > 0);
 }
 async function resolveGoModCache(projectRoot) {
@@ -24193,7 +24257,7 @@ async function resolveGoModCache(projectRoot) {
   return Option_exports.none();
 }
 async function resolveGoDeps(projectRoot) {
-  const vendorCandidate = join8(projectRoot, "vendor");
+  const vendorCandidate = join9(projectRoot, "vendor");
   const vendorOption = await resolveDirectory(vendorCandidate);
   const modOption = await readProjectFile({ name: "go.mod", projectRoot });
   const sumOption = await readProjectFile({ name: "go.sum", projectRoot });
@@ -24312,11 +24376,11 @@ async function createDepLink({ source, target }) {
   await mkdir2(target, { recursive: true });
 }
 async function prepareDepLinks({ deps, files, work }) {
-  const nodeTarget = join9(work, "node_modules");
+  const nodeTarget = join10(work, "node_modules");
   await createDepLink({ source: deps.nodeModules, target: nodeTarget });
   const hasStagedVendor = [...files.keys()].some((path) => path.startsWith("vendor/"));
   if (!hasStagedVendor) {
-    const vendorTarget = join9(work, "vendor");
+    const vendorTarget = join10(work, "vendor");
     await createDepLink({ source: deps.goVendor, target: vendorTarget });
   }
 }
@@ -24406,6 +24470,7 @@ function assertCompleted({ deps, filePaths, result: result3, runtime }) {
   }
 }
 async function runProbe(probe) {
+  await writeRustInCrateLib({ inCrateRust: probe.inCrateRust, work: probe.work });
   const result3 = await execute(probe);
   if (probe.check.testFile !== void 0) {
     if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
@@ -24433,13 +24498,13 @@ async function createGoModFallback({
     return;
   }
   if (!files.has("go.mod")) {
-    const goModPath = join9(work, "go.mod");
+    const goModPath = join10(work, "go.mod");
     const goModContent = deps.goMod ?? "module tenet_check\n\ngo 1.21\n";
-    await writeFile(goModPath, goModContent, { flag: "wx" });
+    await writeFile2(goModPath, goModContent, { flag: "wx" });
   }
   if (!files.has("go.sum") && deps.goSum !== void 0) {
-    const goSumPath = join9(work, "go.sum");
-    await writeFile(goSumPath, deps.goSum, { flag: "wx" });
+    const goSumPath = join10(work, "go.sum");
+    await writeFile2(goSumPath, deps.goSum, { flag: "wx" });
   }
 }
 async function writeProbeFile({ check: check2, work }) {
@@ -24454,7 +24519,7 @@ async function writeProbeFile({ check: check2, work }) {
   }
   const parentDir = dirname9(targetPath);
   await mkdir2(parentDir, { recursive: true });
-  await writeFile(targetPath, check2.test, { flag: "wx" });
+  await writeFile2(targetPath, check2.test, { flag: "wx" });
 }
 async function createSandbox(input) {
   const { check: check2, files, projectRoot, work } = input;
@@ -24462,21 +24527,22 @@ async function createSandbox(input) {
   await prepareDepLinks({ deps, files, work });
   await createGoModFallback({ check: check2, deps, files, work });
   await writeProbeFile({ check: check2, work });
+  const inCrateRust = isRustInCrateProbe({ check: check2, files });
   const command = await buildCommand({ ...input, deps });
   const filePaths = [...files.keys()];
-  return async () => await runProbe({ check: check2, command, deps, filePaths });
+  return async () => await runProbe({ check: check2, command, deps, filePaths, inCrateRust, work });
 }
 
 // sandbox/runner.mts
 async function copySource({ path, source, work }) {
   const file = resolve6(work, path);
-  const prefix = join10(work, sep6);
+  const prefix = join11(work, sep6);
   if (!file.startsWith(prefix)) {
     throw new CheckerError({ message: "a staged source path falls outside the checkout" });
   }
   const parent = dirname10(file);
   await mkdir3(parent, { recursive: true });
-  await writeFile2(file, source, { flag: "wx" });
+  await writeFile3(file, source, { flag: "wx" });
 }
 async function prepareProject(project) {
   const copies = Effect_exports.forEach(
@@ -24504,8 +24570,8 @@ async function restoreSubject({ project, variant }) {
   if (source === void 0) {
     throw new CheckerError({ message: "the checker subject disappeared" });
   }
-  const targetPath = join10(work, check2.subject);
-  await writeFile2(targetPath, source);
+  const targetPath = join11(work, check2.subject);
+  await writeFile3(targetPath, source);
 }
 function readObservationHint(variant) {
   if (variant === "refactor") {
@@ -24580,8 +24646,8 @@ async function observe({
   skipActual = false
 }) {
   const temporary = tmpdir4();
-  const workPrefix = join10(temporary, "tenet-observe-");
-  const tmpPrefix = join10(temporary, "tenet-probe-tmp-");
+  const workPrefix = join11(temporary, "tenet-observe-");
+  const tmpPrefix = join11(temporary, "tenet-probe-tmp-");
   const work = await mkdtemp(workPrefix);
   const probeTmp = await mkdtemp(tmpPrefix);
   try {
@@ -24599,7 +24665,7 @@ var BWRAP3 = "/usr/bin/bwrap";
 var PYTHON2 = "/usr/bin/python3";
 var PRLIMIT3 = "/usr/bin/prlimit";
 var SANDBOX_EXEC3 = "/usr/bin/sandbox-exec";
-var RUNNER_REVISION = 8;
+var RUNNER_REVISION = 9;
 function readBinaryIdentity(path) {
   const read = Effect_exports.tryPromise(async () => await stat4(path));
   function buildMissingIdentity() {
@@ -25246,7 +25312,7 @@ async function readBoundedTestFiles({
 import { env as env4 } from "node:process";
 
 // progress-log.mts
-import { writeFile as writeFile3 } from "node:fs/promises";
+import { writeFile as writeFile4 } from "node:fs/promises";
 async function reportProgress({
   contract,
   phase,
@@ -25257,7 +25323,7 @@ async function reportProgress({
   }
   const target = progressFile;
   async function writePhase() {
-    await writeFile3(target, `${contract}	${phase}
+    await writeFile4(target, `${contract}	${phase}
 `, "utf-8");
   }
   await classifyResult({ message: "progress update ignored", run: writePhase });
@@ -25272,14 +25338,14 @@ import { pathToFileURL } from "node:url";
 // fx/fx-cache.mts
 import { access as access7, mkdir as mkdir4, mkdtemp as mkdtemp2, realpath as realpath10, rename as rename2, rm as rm4 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { isAbsolute as isAbsolute2, join as join12, relative as relative3, sep as sep7 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join13, relative as relative3, sep as sep7 } from "node:path";
 import { cwd, env as env2 } from "node:process";
 
 // fx/install-fx.mts
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { cp } from "node:fs/promises";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 import { env } from "node:process";
 
 // fx/resolve-asset.mts
@@ -25300,7 +25366,7 @@ async function resolveWorkerAsset(name) {
 var INSTALL_TIMEOUT_MS = 9e4;
 async function copyManifest(input) {
   const source = await resolveWorkerAsset(input.directory);
-  const target = join11(input.destination, input.directory);
+  const target = join12(input.destination, input.directory);
   await cp(source, target);
 }
 async function installFxRuntime(directory) {
@@ -25363,7 +25429,7 @@ async function publish({ directory, destination }) {
 }
 async function ensureInstallation({ cache: cache2, destination }) {
   await mkdir4(cache2, { mode: 448, recursive: true });
-  const prefix = join12(cache2, "install-");
+  const prefix = join13(cache2, "install-");
   const temporary = await mkdtemp2(prefix);
   try {
     await installFxRuntime(temporary);
@@ -25374,11 +25440,11 @@ async function ensureInstallation({ cache: cache2, destination }) {
 }
 async function resolveInstallation() {
   const userHome = homedir3();
-  const home = env2.XDG_CACHE_HOME ?? join12(userHome, ".cache");
-  const directory = join12(home, "tenet", "libfx");
+  const home = env2.XDG_CACHE_HOME ?? join13(userHome, ".cache");
+  const directory = join13(home, "tenet", "libfx");
   const cache2 = await resolveTrustedPath(directory);
-  const destination = join12(cache2, LIBFX_VERSION);
-  const entry = join12(destination, "node_modules", "libfx", "node.js");
+  const destination = join13(cache2, LIBFX_VERSION);
+  const entry = join13(destination, "node_modules", "libfx", "node.js");
   return { cache: cache2, destination, entry };
 }
 async function isCached(trusted) {
@@ -25822,7 +25888,7 @@ async function explainFindings({
 }
 
 // fx/generation.mts
-import { readFile as readFile5 } from "node:fs/promises";
+import { readFile as readFile6 } from "node:fs/promises";
 function encodeInput(request3) {
   const { contract, inventory, repair } = request3;
   const files = Object.fromEntries(inventory.files);
@@ -25845,16 +25911,16 @@ function encodeInput(request3) {
 }
 async function generate(request3) {
   const promptUrl = await resolveWorkerAsset("checker-prompt.md");
-  const instructions = await readFile5(promptUrl, "utf-8");
+  const instructions = await readFile6(promptUrl, "utf-8");
   const source = encodeInput(request3);
   return await runFxJson({ instructions, onRequest: request3.onRequest, source });
 }
 
 // fx/propose-fix.mts
-import { readFile as readFile6 } from "node:fs/promises";
+import { readFile as readFile7 } from "node:fs/promises";
 async function readFixPrompt() {
   const promptPath = await resolveWorkerAsset("fix-prompt.md");
-  return await readFile6(promptPath, "utf-8");
+  return await readFile7(promptPath, "utf-8");
 }
 function buildFixPayload({
   contracts,
@@ -27969,8 +28035,8 @@ var EXECUTION = { bytes: 16777216, files: 1024, source: 524288 };
 var MAX_FILES = 240;
 var MAX_BYTES = 524288;
 var MAX_SOURCE = 131072;
-var MAX_SAMPLES = 32768;
-var MAX_SAMPLE = 8192;
+var MAX_SAMPLES = 49152;
+var MAX_SAMPLE = 12288;
 function classifyReadablePath({ decision, excludeTests, path }) {
   if (excludeTests && decision !== "fail" && isTestOrFixturePath(path)) {
     return "skip";
@@ -28018,7 +28084,7 @@ async function readSample(input) {
   const result3 = await classifyResult({ message: "bounded source unavailable", run: runRead });
   return Result_exports.getSuccess(result3);
 }
-function createCapture({ root, budget }) {
+function createCapture({ budget, root, truncate = false }) {
   const files = /* @__PURE__ */ new Map();
   const omitted = [];
   let remaining = budget.bytes;
@@ -28028,7 +28094,7 @@ function createCapture({ root, budget }) {
       return;
     }
     const limit = Math.min(remaining, budget.source);
-    const result3 = await readSample({ limit, path, root });
+    const result3 = await readSample({ limit, path, root, truncate });
     if (Option_exports.isNone(result3)) {
       omitted.push(path);
       return;
@@ -28043,7 +28109,7 @@ function createCapture({ root, budget }) {
 }
 async function readSamples({ root, paths }) {
   const budget = { bytes: MAX_SAMPLES, files: paths.length, source: MAX_SAMPLE };
-  const pool = createCapture({ budget, root });
+  const pool = createCapture({ budget, root, truncate: true });
   for (const path of paths.toSorted()) {
     await pool.capture(path);
   }
@@ -28320,13 +28386,13 @@ function readCached(ctx) {
 }
 
 // review/receipt/receipt.mts
-import { dirname as dirname12, join as join13 } from "node:path";
+import { dirname as dirname12, join as join14 } from "node:path";
 var decodeReceipt = Schema_exports.decodeUnknownOption(Receipt, { onExcessProperty: "error" });
 function resolvePaths(contract) {
   const identity2 = hashSource(contract.path);
-  const receipt = join13("agent-checks", `${identity2}.json`);
+  const receipt = join14("agent-checks", `${identity2}.json`);
   const directory = dirname12(contract.path);
-  const lock = join13(directory, "agent-checks.lock.json");
+  const lock = join14(directory, "agent-checks.lock.json");
   return { lock, receipt };
 }
 async function readReceipt({
@@ -28711,7 +28777,7 @@ async function run2(input) {
 }
 
 // audit/synthesize.mts
-import { readFile as readFile7 } from "node:fs/promises";
+import { readFile as readFile8 } from "node:fs/promises";
 var EMPTY_FEEDBACK = {
   guards: [],
   unresolved: [],
@@ -28719,7 +28785,7 @@ var EMPTY_FEEDBACK = {
 };
 async function readAuditPrompt() {
   const promptPath = await resolveWorkerAsset("audit-prompt.md");
-  return await readFile7(promptPath, "utf-8");
+  return await readFile8(promptPath, "utf-8");
 }
 async function buildModulePayload({
   deep,
@@ -28829,6 +28895,16 @@ function mapContractOutputs(synthesis) {
     paths: item.paths
   }));
 }
+function mergeContractAssets({
+  assets = [],
+  paths,
+  relatedFiles = []
+}) {
+  const excludedPaths = /* @__PURE__ */ new Set([...paths, ...assets]);
+  const uniqueRelated = [...new Set(relatedFiles)];
+  const extras = uniqueRelated.filter((path) => !excludedPaths.has(path));
+  return [...assets, ...extras];
+}
 function readVerifyBudget({ candidates, leftBudget }) {
   const maxForCandidates = candidates * REQUESTS_PER_CONTRACT;
   if (leftBudget > SKEPTIC_RESERVE_REQUESTS) {
@@ -28851,7 +28927,17 @@ async function verifyModuleCandidates({
     candidates: synthesis.candidates.length,
     leftBudget
   });
-  const contracts = synthesis.candidates.map((item) => ({ ...item.contract, runtimePaths }));
+  const contracts = synthesis.candidates.map((item) => {
+    const assets = mergeContractAssets({
+      assets: item.contract.assets,
+      paths: item.contract.paths,
+      relatedFiles: module.relatedFiles
+    });
+    if (assets.length === 0) {
+      return { ...item.contract, runtimePaths };
+    }
+    return { ...item.contract, assets, runtimePaths };
+  });
   const findings = await run2({
     allowBrownfieldWitness: true,
     contracts,

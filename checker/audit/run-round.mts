@@ -110,6 +110,24 @@ type VerifyBudgetInput = Readonly<{
   leftBudget: number;
 }>;
 
+type MergeAssetsInput = Readonly<{
+  assets?: readonly string[];
+  paths: readonly string[];
+  relatedFiles?: readonly string[];
+}>;
+
+function mergeContractAssets({
+  assets = [],
+  paths,
+  relatedFiles = [],
+}: MergeAssetsInput): readonly string[] {
+  const excludedPaths = new Set<string>([...paths, ...assets]);
+  const uniqueRelated = [...new Set<string>(relatedFiles)];
+  const extras = uniqueRelated.filter((path) => !excludedPaths.has(path));
+
+  return [...assets, ...extras];
+}
+
 function readVerifyBudget({ candidates, leftBudget }: VerifyBudgetInput): number {
   const maxForCandidates = candidates * REQUESTS_PER_CONTRACT;
 
@@ -137,7 +155,19 @@ async function verifyModuleCandidates({
     leftBudget,
   });
 
-  const contracts = synthesis.candidates.map((item) => ({ ...item.contract, runtimePaths }));
+  const contracts = synthesis.candidates.map((item) => {
+    const assets = mergeContractAssets({
+      assets: item.contract.assets,
+      paths: item.contract.paths,
+      relatedFiles: module.relatedFiles,
+    });
+
+    if (assets.length === 0) {
+      return { ...item.contract, runtimePaths };
+    }
+
+    return { ...item.contract, assets, runtimePaths };
+  });
 
   const findings = await run({
     allowBrownfieldWitness: true,

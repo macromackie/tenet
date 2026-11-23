@@ -7,6 +7,7 @@ import { type Execution, runFile } from './host-tool.mts';
 import { createLinuxSandbox, createMacosSandbox, type SandboxCommand } from './os/index.mts';
 import { type ProjectDeps, resolveProjectDeps } from './project-deps.mts';
 import { resolveProbeFile } from './resolve-probe-file.mts';
+import { isRustInCrateProbe, writeRustInCrateLib } from './runtimes/index.mts';
 
 type SandboxInput = Readonly<{
   check: Check;
@@ -21,6 +22,8 @@ type Probe = Readonly<{
   command: SandboxCommand;
   deps: ProjectDeps;
   filePaths: readonly string[];
+  inCrateRust: boolean;
+  work: string;
 }>;
 
 type AssertionInput = Readonly<{ result: Execution; runtime: Check['runtime'] }>;
@@ -208,6 +211,8 @@ function assertCompleted({ deps, filePaths, result, runtime }: AssertCompletedIn
 }
 
 async function runProbe(probe: Probe): Promise<unknown> {
+  await writeRustInCrateLib({ inCrateRust: probe.inCrateRust, work: probe.work });
+
   const result = await execute(probe);
 
   if (probe.check.testFile !== undefined) {
@@ -282,8 +287,9 @@ export async function createSandbox(input: SandboxInput): Promise<() => Promise<
   await createGoModFallback({ check, deps, files, work });
   await writeProbeFile({ check, work });
 
+  const inCrateRust = isRustInCrateProbe({ check, files });
   const command = await buildCommand({ ...input, deps });
   const filePaths = [...files.keys()];
 
-  return async () => await runProbe({ check, command, deps, filePaths });
+  return async () => await runProbe({ check, command, deps, filePaths, inCrateRust, work });
 }

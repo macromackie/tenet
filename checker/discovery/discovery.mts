@@ -18,8 +18,8 @@ const EXECUTION = { bytes: 16_777_216, files: 1_024, source: 524_288 } as const;
 const MAX_FILES = 240;
 const MAX_BYTES = 524_288;
 const MAX_SOURCE = 131_072;
-const MAX_SAMPLES = 32_768;
-const MAX_SAMPLE = 8_192;
+const MAX_SAMPLES = 49_152;
+const MAX_SAMPLE = 12_288;
 
 type Selected = { files: Map<string, string>; omitted: readonly string[] };
 
@@ -102,7 +102,7 @@ function classifyPath({
   return classifyNonCodePath({ decision, extension, packageRoots, path });
 }
 
-type ReadSampleInput = { readonly root: string; readonly path: string; readonly limit: number };
+type ReadSampleInput = { readonly root: string; readonly path: string; readonly limit: number; readonly truncate?: boolean };
 
 async function readSample(input: ReadSampleInput): Promise<Option.Option<string>> {
   async function runRead() {
@@ -122,9 +122,9 @@ type SelectInput = {
   root: string;
 };
 
-type CreateCaptureInput = { readonly budget: Budget; readonly root: string };
+type CreateCaptureInput = { readonly budget: Budget; readonly root: string; readonly truncate?: boolean };
 
-function createCapture({ root, budget }: CreateCaptureInput) {
+function createCapture({ budget, root, truncate = false }: CreateCaptureInput) {
   const files = new Map<string, string>();
   const omitted: string[] = [];
   let remaining = budget.bytes;
@@ -137,7 +137,7 @@ function createCapture({ root, budget }: CreateCaptureInput) {
     }
 
     const limit = Math.min(remaining, budget.source);
-    const result = await readSample({ limit, path, root });
+    const result = await readSample({ limit, path, root, truncate });
 
     if (Option.isNone(result)) {
       omitted.push(path);
@@ -164,7 +164,7 @@ type ReadSamplesInput = {
 
 async function readSamples({ root, paths }: ReadSamplesInput): Promise<Record<string, string>> {
   const budget = { bytes: MAX_SAMPLES, files: paths.length, source: MAX_SAMPLE };
-  const pool = createCapture({ budget, root });
+  const pool = createCapture({ budget, root, truncate: true });
 
   for (const path of paths.toSorted()) {
     // Bound concurrent reads to the remaining packet size.

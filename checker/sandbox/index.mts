@@ -12,6 +12,8 @@ export { observe } from './runner.mts';
 export { runnerVersion } from './runner-version.mts';
 export {
   buildGoCommand,
+  buildRustCommand,
+  isRustInCrateProbe,
   readGoVersion,
   readPythonPaths,
   readRustCrate,

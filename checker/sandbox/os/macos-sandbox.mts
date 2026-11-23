@@ -10,6 +10,7 @@ import {
   buildNodeCommand,
   buildPythonCommand,
   buildRustCommand,
+  isRustInCrateProbe,
   readGoTool,
   readPythonPaths,
   readPythonTool,
@@ -115,6 +116,7 @@ function buildRustExtraEnv(outDir?: string): Readonly<Record<string, string>> {
 }
 
 async function resolveRustRuntime({
+  check,
   deps,
   files,
   probeFile,
@@ -127,7 +129,18 @@ async function resolveRustRuntime({
   const rustc = join(runtimeRoot, 'bin', 'rustc');
   const rustCrate = await readRustCrate({ deps, files, projectRoot });
   const depsMount = deps.rustDepsDir ?? '';
-  const command = buildRustCommand({ deps, depsMount, probeFile, probeTmp, rustCrate, rustc });
+  const inCrateTest = isRustInCrateProbe({ check, files });
+
+  const command = buildRustCommand({
+    deps,
+    depsMount,
+    inCrateTest,
+    probeFile,
+    probeTmp,
+    rustCrate,
+    rustc,
+  });
+
   const extraEnv = buildRustExtraEnv(deps.rustBuildOutDir);
 
   return { command, extraEnv, runtimeRoot };

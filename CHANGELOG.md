@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.32.0
+
+- Added Rust in-crate (`#[cfg(test)]`) probe execution (`sandbox/runtimes/is-rust-in-crate-probe.mts`, `write-rust-lib.mts`, `build-rust-command.mts`, `RUNNER_REVISION = 9`): probes declaring `#[test] fn tenet_observe()` compile against an ephemeral `src/__tenet_lib.rs` wrapper via `rustc --test` inside macOS Seatbelt and Linux `bubblewrap` (never mutating `src/lib.rs`), unlocking direct testing of `pub(crate)` and private internal Rust modules with full `build.rs` cfg and `OUT_DIR` support.
+- Forwarded `module.relatedFiles` (public package/crate entrypoints and cross-module seams) into candidate verification reference samples (`audit/run-round.mts`), and upgraded sample discovery (`discovery/discovery.mts`) to bounded UTF-8 prefix truncation (`MAX_SAMPLE = 12 KiB`, `MAX_SAMPLES = 48 KiB`) so larger public facade files such as `src/lib.rs` and `lib/svgo.js` reach probe generation intact instead of being silently dropped.
+
 ## v0.31.0
 
 - Upgraded sandboxed TypeScript execution (`node-resolve-hook.mts`, `RUNNER_REVISION = 8`) with a `load` hook that strips types via `module.stripTypeScriptTypes` and automatically elides bundler-style value imports and re-exports of type-only symbols (`export interface` / `export type`, including `export * from` chains), unlocking non-`verbatimModuleSyntax` TypeScript repositories without external compiler binaries.
