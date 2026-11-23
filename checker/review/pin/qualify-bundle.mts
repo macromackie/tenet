@@ -1,10 +1,11 @@
-import { Result } from 'effect';
+import { Option, Result } from 'effect';
 import type { CheckerError } from '../../checker-error.mts';
 import { classifyResult } from '../../classify-result.mts';
-import { observe, validate } from '../../sandbox/index.mts';
+import { isMissingExternalDepMessage, observe, validate } from '../../sandbox/index.mts';
 import type { Check, Finding, Inventory } from '../../types.d.mts';
 import { buildFinding } from '../build-finding.mts';
 import { buildOpenFinding } from '../build-open-finding.mts';
+import { tryBrownfieldWitness } from './brownfield-witness.mts';
 import { decodePlannerBundle } from './decode-bundle.mts';
 
 export type CandidateEvaluation = Readonly<{
@@ -12,9 +13,11 @@ export type CandidateEvaluation = Readonly<{
   extraUnresolved: readonly Finding[];
   open: readonly string[];
   qualified: readonly Check[];
+  unrecoverableErrors?: readonly string[];
 }>;
 
 type QualifyBundleInput = Readonly<{
+  allowBrownfieldWitness?: boolean;
   contractName: string;
   current: Inventory;
   projectRoot?: string;
@@ -23,58 +26,38 @@ type QualifyBundleInput = Readonly<{
 
 type SingleOutcome =
   | Readonly<{ check: Check; kind: 'qualified' }>
-  | Readonly<{ error: string; finding: Finding; kind: 'failed' }>;
+  | Readonly<{ error: string; finding: Finding; kind: 'failed'; unrecoverable: boolean }>;
 
 type CheckLabelInput = Readonly<{ candidate: unknown; index: number }>;
-
 type ParseSingleInput = Readonly<{ files: Inventory['files']; raw: unknown }>;
+type EmptyErrorInput = Readonly<{ contractName: string; message: string }>;
 
-type QualifySingleInput = Readonly<{
-  check: Check;
-  files: Inventory['runtimeFiles'];
-  projectRoot?: string;
-}>;
+type QualifySingleInput = Readonly<{ check: Check; files: Inventory['runtimeFiles']; projectRoot?: string }>;
 
 type FailCandidateInput = Readonly<{
-  check: string;
-  contractName: string;
-  detail: string;
-  subject?: string;
+  check: string; contractName: string; detail: string; subject?: string; witness?: Finding;
 }>;
 
 type RunCheckQualificationInput = Readonly<{
-  candidate: Check;
-  contractName: string;
-  files: Inventory['runtimeFiles'];
-  projectRoot?: string;
+  allowBrownfieldWitness: boolean; candidate: Check; contractName: string;
+  files: Inventory['runtimeFiles']; projectRoot?: string;
 }>;
 
 type SingleInput = Readonly<{
-  contractName: string;
-  current: Inventory;
-  index: number;
-  projectRoot?: string;
-  raw: unknown;
-  seenIds: ReadonlySet<string>;
+  allowBrownfieldWitness: boolean; contractName: string; current: Inventory;
+  index: number; projectRoot?: string; raw: unknown; seenIds: ReadonlySet<string>;
 }>;
 
 type ListState = Readonly<{
-  errors: readonly string[];
-  extraUnresolved: readonly Finding[];
-  qualified: readonly Check[];
-  seenIds: ReadonlySet<string>;
+  errors: readonly string[]; extraUnresolved: readonly Finding[];
+  qualified: readonly Check[]; seenIds: ReadonlySet<string>; unrecoverableErrors: readonly string[];
 }>;
 
 type RecordOutcomeInput = Readonly<{ outcome: SingleOutcome; state: ListState }>;
 
-type EmptyErrorInput = Readonly<{ contractName: string; message: string }>;
-
 type QualifyListInput = Readonly<{
-  contractName: string;
-  current: Inventory;
-  open: readonly string[];
-  projectRoot?: string;
-  rawChecks: readonly unknown[];
+  allowBrownfieldWitness: boolean; contractName: string; current: Inventory;
+  open: readonly string[]; projectRoot?: string; rawChecks: readonly unknown[];
 }>;
 
 function readCandidateError(error: unknown): string {
@@ -100,7 +83,13 @@ function readCheckLabel({ candidate, index }: CheckLabelInput): string {
 function buildEmptyError({ contractName, message }: EmptyErrorInput): CandidateEvaluation {
   const warning = buildOpenFinding({ contract: contractName, reason: message });
 
-  return { errors: [message], extraUnresolved: [warning], open: [], qualified: [] };
+  return {
+    errors: [message],
+    extraUnresolved: [warning],
+    open: [],
+    qualified: [],
+    unrecoverableErrors: [],
+  };
 }
 
 function parseSingle({ files, raw }: ParseSingleInput): Result.Result<Check, string> {
@@ -130,7 +119,14 @@ function failCandidate({
   contractName,
   detail,
   subject,
+  witness,
 }: FailCandidateInput): SingleOutcome {
+  if (witness !== undefined) {
+    return { error: `${check}: ${detail}`, finding: witness, kind: 'failed', unrecoverable: false };
+  }
+
+  const unrecoverable = isMissingExternalDepMessage(detail);
+
   const finding = buildFinding({
     check,
     contract: contractName,
@@ -139,10 +135,11 @@ function failCandidate({
     subject,
   });
 
-  return { error: `${check}: ${detail}`, finding, kind: 'failed' };
+  return { error: `${check}: ${detail}`, finding, kind: 'failed', unrecoverable };
 }
 
 async function runCheckQualification({
+  allowBrownfieldWitness,
   candidate,
   contractName,
   files,
@@ -156,15 +153,23 @@ async function runCheckQualification({
 
   const detail = readCandidateError(result.failure.cause);
 
-  return failCandidate({
-    check: candidate.id,
+  const witnessOption = await tryBrownfieldWitness({
+    allowBrownfieldWitness,
+    candidate,
     contractName,
     detail,
-    subject: candidate.subject,
+    files,
+    kind: 'qualify',
+    projectRoot,
   });
+
+  const witness = Option.getOrUndefined(witnessOption);
+
+  return failCandidate({ check: candidate.id, contractName, detail, subject: candidate.subject, witness });
 }
 
 async function checkCandidate({
+  allowBrownfieldWitness,
   contractName,
   current,
   index,
@@ -176,7 +181,19 @@ async function checkCandidate({
   const parsed = parseSingle({ files: current.files, raw });
 
   if (Result.isFailure(parsed)) {
-    return failCandidate({ check: label, contractName, detail: parsed.failure });
+    const witnessOption = await tryBrownfieldWitness({
+      allowBrownfieldWitness,
+      contractName,
+      current,
+      detail: parsed.failure,
+      kind: 'parse',
+      projectRoot,
+      raw,
+    });
+
+    const witness = Option.getOrUndefined(witnessOption);
+
+    return failCandidate({ check: label, contractName, detail: parsed.failure, witness });
   }
 
   const candidate = parsed.success;
@@ -191,6 +208,7 @@ async function checkCandidate({
   }
 
   return await runCheckQualification({
+    allowBrownfieldWitness,
     candidate,
     contractName,
     files: current.runtimeFiles,
@@ -202,10 +220,14 @@ function recordOutcome({ outcome, state }: RecordOutcomeInput): ListState {
   if (outcome.kind === 'qualified') {
     const nextIds = new Set([...state.seenIds, outcome.check.id]);
 
+    return { ...state, qualified: [...state.qualified, outcome.check], seenIds: nextIds };
+  }
+
+  if (outcome.unrecoverable) {
     return {
       ...state,
-      qualified: [...state.qualified, outcome.check],
-      seenIds: nextIds,
+      extraUnresolved: [...state.extraUnresolved, outcome.finding],
+      unrecoverableErrors: [...state.unrecoverableErrors, outcome.error],
     };
   }
 
@@ -217,6 +239,7 @@ function recordOutcome({ outcome, state }: RecordOutcomeInput): ListState {
 }
 
 async function qualifyList({
+  allowBrownfieldWitness,
   contractName,
   current,
   open,
@@ -228,12 +251,14 @@ async function qualifyList({
     extraUnresolved: [],
     qualified: [],
     seenIds: new Set<string>(),
+    unrecoverableErrors: [],
   };
 
   for (const [index, raw] of rawChecks.entries()) {
     // Qualify each candidate sequentially so every sandbox receives its full resource allowance.
     // oxlint-disable-next-line no-await-in-loop
     const outcome = await checkCandidate({
+      allowBrownfieldWitness,
       contractName,
       current,
       index,
@@ -245,16 +270,12 @@ async function qualifyList({
     state = recordOutcome({ outcome, state });
   }
 
-  return {
-    errors: state.errors,
-    extraUnresolved: state.extraUnresolved,
-    open,
-    qualified: state.qualified,
-  };
+  return { ...state, open };
 }
 
 /** Validate and qualify generated candidate checks on controls only, never inspecting actual code. */
 export async function qualifyBundle({
+  allowBrownfieldWitness = false,
   contractName,
   current,
   projectRoot,
@@ -266,5 +287,5 @@ export async function qualifyBundle({
     return buildEmptyError({ contractName, message: decoded.failure });
   }
 
-  return await qualifyList({ contractName, current, projectRoot, ...decoded.success });
+  return await qualifyList({ allowBrownfieldWitness, contractName, current, projectRoot, ...decoded.success });
 }

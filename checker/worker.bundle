@@ -20800,6 +20800,20 @@ function resolveAnnotationsKey(schema) {
   return schema.ast.context?.annotations;
 }
 
+// audit/reject-unverified.mts
+function rejectUnverifiedWitnesses(findings) {
+  return findings.map((row) => {
+    if (row.outcome === "failed" && row.brownfield_unverified === true) {
+      return {
+        ...row,
+        message: `unverified brownfield witness downgraded: skeptic review unavailable (${row.message})`,
+        outcome: "unresolved"
+      };
+    }
+    return row;
+  });
+}
+
 // audit/apply-skeptic.mts
 var SkepticVerdict = Schema_exports.Literals(["critical", "high", "medium", "reject"]);
 var SkepticReview = Schema_exports.Struct({
@@ -20826,8 +20840,35 @@ function formatSeverityMessage({ message, verdict }) {
   }
   return `${prefix}${message}`;
 }
-function applyReview({ review, row }) {
-  if (row.outcome !== "failed" || review === void 0) {
+function formatRejectedWitness({ reason, row }) {
+  return {
+    ...row,
+    message: `unverified brownfield witness downgraded: ${reason} (${row.message})`,
+    outcome: "unresolved"
+  };
+}
+function applyUnverifiedReview({ review, row }) {
+  if (review === void 0) {
+    return formatRejectedWitness({ reason: "skeptic omitted verdict", row });
+  }
+  if (review.verdict === "reject") {
+    const reason = review.reason.trim();
+    if (reason.length > 0) {
+      return {
+        ...row,
+        message: `dismissed by skeptic: ${reason} (${row.message})`,
+        outcome: "unresolved"
+      };
+    }
+    return formatRejectedWitness({ reason: "rejected by skeptic", row });
+  }
+  return {
+    ...row,
+    message: formatSeverityMessage({ message: row.message, verdict: review.verdict })
+  };
+}
+function applyVerifiedReview({ review, row }) {
+  if (review === void 0) {
     return row;
   }
   const reason = review.reason.trim();
@@ -20846,6 +20887,15 @@ function applyReview({ review, row }) {
     message: formatSeverityMessage({ message: row.message, verdict: review.verdict })
   };
 }
+function applyReview({ review, row }) {
+  if (row.outcome !== "failed") {
+    return row;
+  }
+  if (row.brownfield_unverified === true) {
+    return applyUnverifiedReview({ review, row });
+  }
+  return applyVerifiedReview({ review, row });
+}
 function appendFinding({ buckets, finding, review }) {
   if (finding.outcome !== "failed") {
     return { ...buckets, other: [...buckets.other, finding] };
@@ -20858,7 +20908,7 @@ function appendFinding({ buckets, finding, review }) {
 function applySkepticOutput({ findings, raw }) {
   const decoded = decodeReviews(raw);
   if (Option_exports.isNone(decoded)) {
-    return findings;
+    return rejectUnverifiedWitnesses(findings);
   }
   const reviewLookup = buildReviewLookup(decoded.value.reviews);
   let buckets = { critical: [], high: [], medium: [], other: [], unranked: [] };
@@ -21532,64 +21582,10 @@ async function reportProgress({
   await classifyResult({ message: "progress update ignored", run: writePhase });
 }
 
-// sandbox/controls/probe-diagnostics.mts
-var DIAGNOSTIC_LINES = 2;
-var DIAGNOSTIC_CHARS = 240;
-var ASCII_SPACE = 32;
-var ASCII_DEL = 127;
-var DIAGNOSTIC_FOOTER = new RegExp("^(?:error: aborting due to |For more information about this error|Node\\.js v\\d)", "v");
-var DIAGNOSTIC_ERROR = new RegExp("^(?:error(?:\\[|:)|Error\\b|TypeError:|RangeError:|ReferenceError:|SyntaxError:|URIError:|EvalError:|ModuleNotFoundError:|ImportError:|AttributeError:|ValueError:|KeyError:|AssertionError:|NameError:|RuntimeError:|ZeroDivisionError:|FileNotFoundError:|OSError:|Exception:|panic:|cannot find package|no required module provides package|\\.?\\/?[^\\s:]+\\.go:\\d+:)", "v");
-var RUST_MISSING_CRATE_PATTERN = new RegExp("error\\[E04(?:32|63)\\]", "v");
-var GO_MISSING_MODULE_PATTERN = new RegExp("no required module provides package|cannot find package", "v");
-function stripControlChars(text2) {
-  let clean = "";
-  for (const character of text2) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code >= ASCII_SPACE && code !== ASCII_DEL) {
-      clean += character;
-    } else {
-      clean += " ";
-    }
-  }
-  return clean;
-}
-function selectDiagnosticLines(lines) {
-  const highlighted = lines.filter((line) => DIAGNOSTIC_ERROR.test(line));
-  if (highlighted.length > 0) {
-    return highlighted.slice(0, DIAGNOSTIC_LINES);
-  }
-  return lines.slice(-DIAGNOSTIC_LINES);
-}
-function summarizeDiagnostic(stderr) {
-  const lines = stderr.split("\n").map((line) => line.trim()).filter((line) => line.length > 0 && !DIAGNOSTIC_FOOTER.test(line));
-  const selected = selectDiagnosticLines(lines).join(" | ");
-  const summary = stripControlChars(selected).trim();
-  if (summary.length <= DIAGNOSTIC_CHARS) {
-    return summary;
-  }
-  return summary.slice(0, DIAGNOSTIC_CHARS);
-}
-function readMissingDepHint({ deps, runtime, stderr }) {
-  if (runtime === "rust" && deps?.rustDepsDir === void 0 && RUST_MISSING_CRATE_PATTERN.test(stderr)) {
-    return " (run cargo build locally so compiled crate deps exist in target/debug/deps)";
-  }
-  if (runtime === "go" && deps?.goVendor === void 0 && GO_MISSING_MODULE_PATTERN.test(stderr)) {
-    return " (run go mod download or go mod vendor locally so Go module dependencies are cached)";
-  }
-  return "";
-}
-function formatProbeFailure({ base, deps, runtime, stderr }) {
-  const detail = summarizeDiagnostic(stderr);
-  const hint = readMissingDepHint({ deps, runtime, stderr });
-  if (detail.length === 0) {
-    return `${base}${hint}`;
-  }
-  return `${base}: ${detail}${hint}`;
-}
-
 // sandbox/controls/control-diagnostics.mts
 var MAX_PREVIEW_CHARS = 96;
 var MAX_NEARBY_HINTS = 3;
+var MAX_MATCH_LINE_HINTS = 8;
 var MIN_ANCHOR_CHARS = 6;
 var ESCAPED_NEWLINE = String.raw`\n`;
 function formatPreview(text2) {
@@ -21649,7 +21645,24 @@ function formatMissingMessage({ current, find, label }) {
   }
   return `control ${controlName} edit target ${preview} was not found in the subject file`;
 }
-function buildEditError({ current, find, kind, label }) {
+function formatMatchLines(matchLines) {
+  if (matchLines === void 0 || matchLines.length === 0) {
+    return "";
+  }
+  const shown = matchLines.slice(0, MAX_MATCH_LINE_HINTS).map((line) => `L${String(line)}`);
+  const joined = shown.join(", ");
+  if (matchLines.length > MAX_MATCH_LINE_HINTS) {
+    return ` (lines ${joined}, ...)`;
+  }
+  return ` (lines ${joined})`;
+}
+function buildEditError({
+  current,
+  find,
+  kind,
+  label,
+  matchLines
+}) {
   if (kind === "missing") {
     const missingMessage = formatMissingMessage({ current, find, label });
     return new CheckerError({ message: missingMessage });
@@ -21657,8 +21670,351 @@ function buildEditError({ current, find, kind, label }) {
   const controlName = JSON.stringify(label);
   const formatted = formatPreview(find);
   const preview = JSON.stringify(formatted);
-  const ambiguousMessage = `control ${controlName} edit target ${preview} matched multiple locations in the subject file`;
+  const lineSuffix = formatMatchLines(matchLines);
+  const ambiguousMessage = `control ${controlName} edit target ${preview} matched multiple locations in the subject file${lineSuffix}`;
   return new CheckerError({ message: ambiguousMessage });
+}
+
+// sandbox/controls/select-match.mts
+var LINE_DISAMBIGUATION_WINDOW = 15;
+function selectByLine({
+  matches,
+  targetLine
+}) {
+  const nearby = matches.filter(
+    (match7) => Math.abs(match7.line - targetLine) <= LINE_DISAMBIGUATION_WINDOW
+  );
+  if (nearby.length === 1) {
+    const first = nearby.at(0);
+    return Option_exports.fromUndefinedOr(first);
+  }
+  return Option_exports.none();
+}
+function selectByHint({
+  edit,
+  matches
+}) {
+  if (edit.occurrence !== void 0) {
+    const picked = matches.at(edit.occurrence - 1);
+    return Option_exports.fromUndefinedOr(picked);
+  }
+  if (edit.line === void 0) {
+    return Option_exports.none();
+  }
+  return selectByLine({ matches, targetLine: edit.line });
+}
+function selectUniqueMatch({
+  current,
+  edit,
+  label,
+  matches
+}) {
+  if (matches.length === 1) {
+    const sole = matches.at(0);
+    if (sole !== void 0) {
+      return sole;
+    }
+  }
+  const hinted = selectByHint({ edit, matches });
+  if (Option_exports.isSome(hinted)) {
+    return hinted.value;
+  }
+  const matchLines = matches.map((match7) => match7.line);
+  throw buildEditError({ current, find: edit.find, kind: "ambiguous", label, matchLines });
+}
+
+// sandbox/controls/split-source-lines.mts
+var LEADING_WS_PATTERN = new RegExp("^(?<indent>[ \\t]*)", "v");
+function readLeadingIndent(line) {
+  const match7 = LEADING_WS_PATTERN.exec(line);
+  return match7?.groups?.["indent"] ?? "";
+}
+function readRawEnd({ nl, total }) {
+  if (nl === -1) {
+    return total;
+  }
+  return nl;
+}
+function readContentEnd({ rawEnd, start, text: text2 }) {
+  if (rawEnd > start && text2[rawEnd - 1] === "\r") {
+    return rawEnd - 1;
+  }
+  return rawEnd;
+}
+function readEolSlice({ end, hasNext, rawEnd, text: text2 }) {
+  if (!hasNext) {
+    return "";
+  }
+  return text2.slice(end, rawEnd + 1);
+}
+function readLineAt({ start, text: text2 }) {
+  const nl = text2.indexOf("\n", start);
+  const hasNext = nl !== -1;
+  const rawEnd = readRawEnd({ nl, total: text2.length });
+  const end = readContentEnd({ rawEnd, start, text: text2 });
+  const eol = readEolSlice({ end, hasNext, rawEnd, text: text2 });
+  const content = text2.slice(start, end);
+  const indent = readLeadingIndent(content);
+  const trimmed = content.trim();
+  return { hasNext, line: { end, eol, indent, start, trimmed }, nextStart: rawEnd + 1 };
+}
+function splitSourceLines(text2) {
+  const lines = [];
+  let start = 0;
+  while (start <= text2.length) {
+    const entry = readLineAt({ start, text: text2 });
+    lines.push(entry.line);
+    if (!entry.hasNext) {
+      break;
+    }
+    start = entry.nextStart;
+  }
+  return lines;
+}
+
+// sandbox/controls/reindent-block.mts
+var LEADING_WS_PATTERN2 = new RegExp("^(?<indent>[ \\t]*)", "v");
+var CRLF_LENGTH = 2;
+function readLeadingIndent2(line) {
+  const match7 = LEADING_WS_PATTERN2.exec(line);
+  return match7?.groups?.["indent"] ?? "";
+}
+function readFileEol(text2) {
+  if (text2.includes("\r\n")) {
+    return "\r\n";
+  }
+  return "\n";
+}
+function stripOneTrailingEol(text2) {
+  if (text2.endsWith("\r\n")) {
+    return text2.slice(0, -CRLF_LENGTH);
+  }
+  if (text2.endsWith("\n")) {
+    return text2.slice(0, -1);
+  }
+  return text2;
+}
+function hasTrimmedBlockAt({ findLines, sourceLines, startIndex }) {
+  for (let offset = 0; offset < findLines.length; offset += 1) {
+    const sourceLine = sourceLines.at(startIndex + offset);
+    const findLine = findLines.at(offset);
+    if (sourceLine === void 0 || findLine === void 0) {
+      return false;
+    }
+    if (sourceLine.trimmed !== findLine.trim()) {
+      return false;
+    }
+  }
+  return true;
+}
+function buildBlockMatch({
+  anchorFind,
+  anchorSource,
+  consumeTrailingEol,
+  first,
+  last,
+  startIndex
+}) {
+  const findIndent = readLeadingIndent2(anchorFind);
+  if (consumeTrailingEol) {
+    return {
+      end: last.end + last.eol.length,
+      findIndent,
+      line: startIndex + 1,
+      sourceIndent: anchorSource.indent,
+      start: first.start
+    };
+  }
+  return {
+    end: last.end,
+    findIndent,
+    line: startIndex + 1,
+    sourceIndent: anchorSource.indent,
+    start: first.start
+  };
+}
+function readBlockAnchors({
+  findLines,
+  firstNonEmptyOffset,
+  sourceLines,
+  startIndex
+}) {
+  const rawFind = findLines.at(firstNonEmptyOffset);
+  const rawAnchor = sourceLines.at(startIndex + firstNonEmptyOffset);
+  const rawFirst = sourceLines.at(startIndex);
+  const rawLast = sourceLines.at(startIndex + findLines.length - 1);
+  const anchorFind = Option_exports.fromUndefinedOr(rawFind);
+  const anchorSource = Option_exports.fromUndefinedOr(rawAnchor);
+  const first = Option_exports.fromUndefinedOr(rawFirst);
+  const last = Option_exports.fromUndefinedOr(rawLast);
+  return Option_exports.all({ anchorFind, anchorSource, first, last });
+}
+function matchBlockAt({
+  consumeTrailingEol,
+  findLines,
+  firstNonEmptyOffset,
+  sourceLines,
+  startIndex
+}) {
+  if (!hasTrimmedBlockAt({ findLines, sourceLines, startIndex })) {
+    return Option_exports.none();
+  }
+  const anchors = readBlockAnchors({ findLines, firstNonEmptyOffset, sourceLines, startIndex });
+  return Option_exports.map(
+    anchors,
+    (found) => buildBlockMatch({ ...found, consumeTrailingEol, startIndex })
+  );
+}
+function collectBlockMatches({
+  consumeTrailingEol,
+  findLines,
+  sourceLines
+}) {
+  const firstNonEmptyOffset = findLines.findIndex((line) => line.trim().length > 0);
+  if (firstNonEmptyOffset === -1 || findLines.length > sourceLines.length) {
+    return [];
+  }
+  const matches = [];
+  const lastStart = sourceLines.length - findLines.length;
+  for (let startIndex = 0; startIndex <= lastStart; startIndex += 1) {
+    const hit = matchBlockAt({
+      consumeTrailingEol,
+      findLines,
+      firstNonEmptyOffset,
+      sourceLines,
+      startIndex
+    });
+    if (Option_exports.isSome(hit)) {
+      matches.push(hit.value);
+    }
+  }
+  return matches;
+}
+function computeAdjustedIndent({ findIndent, lineIndent, sourceIndent }) {
+  if (lineIndent.startsWith(findIndent)) {
+    const relative3 = lineIndent.slice(findIndent.length);
+    return `${sourceIndent}${relative3}`;
+  }
+  if (findIndent.startsWith(lineIndent)) {
+    const dedent = findIndent.length - lineIndent.length;
+    const keepLength = Math.max(0, sourceIndent.length - dedent);
+    return sourceIndent.slice(0, keepLength);
+  }
+  return sourceIndent;
+}
+function formatIndentedLine({ findIndent, line, sourceIndent }) {
+  if (line.trim().length === 0) {
+    return "";
+  }
+  const lineIndent = readLeadingIndent2(line);
+  const rest = line.slice(lineIndent.length);
+  const nextIndent = computeAdjustedIndent({ findIndent, lineIndent, sourceIndent });
+  return `${nextIndent}${rest}`;
+}
+function formatIndentedBlock({
+  eol,
+  findIndent,
+  replaceText,
+  sourceIndent
+}) {
+  if (replaceText.length === 0) {
+    return "";
+  }
+  const normalized = replaceText.replaceAll("\r\n", "\n");
+  const rawLines = normalized.split("\n");
+  const adjusted = rawLines.map((line) => formatIndentedLine({ findIndent, line, sourceIndent }));
+  return adjusted.join(eol);
+}
+function readReplaceBody(normalized) {
+  if (normalized.find.endsWith("\n")) {
+    return stripOneTrailingEol(normalized.replace);
+  }
+  return normalized.replace;
+}
+function replaceBlockMatch({ current, match: match7, normalized }) {
+  const replaceText = readReplaceBody(normalized);
+  const eol = readFileEol(current);
+  const replacement = formatIndentedBlock({
+    eol,
+    findIndent: match7.findIndent,
+    replaceText,
+    sourceIndent: match7.sourceIndent
+  });
+  const prefix = current.slice(0, match7.start);
+  const suffix = current.slice(match7.end);
+  return `${prefix}${replacement}${suffix}`;
+}
+function applyTrimmedBlockEdit({
+  current,
+  edit,
+  label,
+  normalized
+}) {
+  const stripped = stripOneTrailingEol(normalized.find);
+  const findLines = stripped.replaceAll("\r\n", "\n").split("\n");
+  const consumeTrailingEol = normalized.find.endsWith("\n") && normalized.replace.length === 0;
+  const sourceLines = splitSourceLines(current);
+  const matches = collectBlockMatches({ consumeTrailingEol, findLines, sourceLines });
+  if (matches.length === 0) {
+    throw buildEditError({ current, find: edit.find, kind: "missing", label });
+  }
+  const match7 = selectUniqueMatch({ current, edit, label, matches });
+  return replaceBlockMatch({ current, match: match7, normalized });
+}
+
+// sandbox/controls/match-control-edit.mts
+function convertToCrlf(text2) {
+  const lf = text2.replaceAll("\r\n", "\n");
+  return lf.replaceAll("\n", "\r\n");
+}
+function normalizeEditEol({ current, edit }) {
+  const sourceHasCrlf = current.includes("\r\n");
+  if (current.includes(edit.find)) {
+    if (sourceHasCrlf && edit.replace.includes("\n") && !edit.replace.includes("\r\n")) {
+      return { find: edit.find, replace: convertToCrlf(edit.replace) };
+    }
+    return { find: edit.find, replace: edit.replace };
+  }
+  if (sourceHasCrlf && edit.find.includes("\n")) {
+    return { find: convertToCrlf(edit.find), replace: convertToCrlf(edit.replace) };
+  }
+  if (!sourceHasCrlf && edit.find.includes("\r\n")) {
+    return {
+      find: edit.find.replaceAll("\r\n", "\n"),
+      replace: edit.replace.replaceAll("\r\n", "\n")
+    };
+  }
+  return { find: edit.find, replace: edit.replace };
+}
+function readLineNumberAt({ current, offset }) {
+  let line = 1;
+  for (let index2 = 0; index2 < offset; index2 += 1) {
+    if (current[index2] === "\n") {
+      line += 1;
+    }
+  }
+  return line;
+}
+function collectExactMatches({ current, target }) {
+  const matches = [];
+  let cursor = current.indexOf(target);
+  while (cursor !== -1) {
+    const line = readLineNumberAt({ current, offset: cursor });
+    matches.push({ end: cursor + target.length, line, start: cursor });
+    cursor = current.indexOf(target, cursor + 1);
+  }
+  return matches;
+}
+function applySingleEdit({ current, edit, label }) {
+  const normalized = normalizeEditEol({ current, edit });
+  const exactMatches = collectExactMatches({ current, target: normalized.find });
+  if (exactMatches.length > 0) {
+    const match7 = selectUniqueMatch({ current, edit, label, matches: exactMatches });
+    const prefix = current.slice(0, match7.start);
+    const suffix = current.slice(match7.end);
+    return `${prefix}${normalized.replace}${suffix}`;
+  }
+  return applyTrimmedBlockEdit({ current, edit, label, normalized });
 }
 
 // sandbox/controls/apply-control.mts
@@ -21675,12 +22031,33 @@ function readEditText({ allowEmpty, value: value3 }) {
   }
   return value3;
 }
+function readOptionalHint(value3) {
+  if (value3 === void 0) {
+    return Option_exports.none();
+  }
+  if (typeof value3 === "number" && Number.isInteger(value3) && value3 >= 1) {
+    return Option_exports.some(value3);
+  }
+  throw new CheckerError({
+    message: "a control edit line or occurrence hint must be a positive integer"
+  });
+}
 function readEditMap(item) {
   if (item === null || typeof item !== "object" || Array.isArray(item)) {
     throw new CheckerError({ message: "each control edit must be a find/replace object" });
   }
   const entries3 = Object.entries(item);
   return new Map(entries3);
+}
+function readEditHints(fields) {
+  const rawLine = fields.get("line");
+  const rawOccurrence = fields.get("occurrence");
+  const lineOption = readOptionalHint(rawLine);
+  const occurrenceOption = readOptionalHint(rawOccurrence);
+  return {
+    line: Option_exports.getOrUndefined(lineOption),
+    occurrence: Option_exports.getOrUndefined(occurrenceOption)
+  };
 }
 function readControlEdit(item) {
   const fields = readEditMap(item);
@@ -21691,30 +22068,8 @@ function readControlEdit(item) {
   if (find === replace) {
     throw new CheckerError({ message: "a control edit must change the matched source" });
   }
-  return { find, replace };
-}
-function normalizeEditTarget({ current, find }) {
-  if (current.includes(find)) {
-    return find;
-  }
-  if (find.includes("\r\n") && !current.includes("\r\n")) {
-    return find.replaceAll("\r\n", "\n");
-  }
-  return find;
-}
-function applySingleEdit({ current, edit, label }) {
-  const target = normalizeEditTarget({ current, find: edit.find });
-  const first = current.indexOf(target);
-  if (first === -1) {
-    throw buildEditError({ current, find: edit.find, kind: "missing", label });
-  }
-  const second = current.indexOf(target, first + 1);
-  if (second !== -1) {
-    throw buildEditError({ current, find: edit.find, kind: "ambiguous", label });
-  }
-  const prefix = current.slice(0, first);
-  const suffix = current.slice(first + target.length);
-  return `${prefix}${edit.replace}${suffix}`;
+  const hints = readEditHints(fields);
+  return { find, ...hints, replace };
 }
 function assertWithinLimit({ current, label, limit }) {
   if (Buffer.byteLength(current) <= limit) {
@@ -21772,8 +22127,409 @@ function applyControl({ control, label = "control", limit, source }) {
   throw new CheckerError({ message });
 }
 
+// sandbox/controls/is-missing-dep.mts
+var UNRECOVERABLE_DEP_PATTERNS = [
+  new RegExp('\\(missing external package "', "v"),
+  new RegExp("target\\/debug\\/deps", "v"),
+  new RegExp("go mod vendor", "v"),
+  new RegExp("missing go\\.sum entry", "v")
+];
+function isMissingExternalDepMessage(message) {
+  return UNRECOVERABLE_DEP_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+// sandbox/controls/missing-package.mts
+import { basename as basename2, extname } from "node:path";
+var SCOPED_PACKAGE_PARTS = 2;
+var PYTHON_PATTERNS = [
+  new RegExp(`ModuleNotFoundError:\\s*No module named ['"](?<pkg>[^'"]+)['"]`, "v"),
+  new RegExp(`ImportError:\\s*No module named ['"]?(?<pkg>[A-Za-z0-9_.\\-]+)['"]?`, "v"),
+  new RegExp(`ImportError:[^\\n]*(?:missing optional dependency|requires)\\s+['"](?<pkg>[A-Za-z0-9_.\\-]+)['"]`, "v")
+];
+var NODE_PATTERNS = [
+  new RegExp(`Cannot find (?:package|module) ['"](?<pkg>[^'"]+)['"]`, "v"),
+  new RegExp(`ERR_MODULE_NOT_FOUND[^\\n]*['"](?<pkg>[^'"]+)['"]`, "v")
+];
+var GO_PATTERNS = [
+  new RegExp("no required module provides package (?<pkg>[^\\s:;]+)", "v"),
+  new RegExp('cannot find package "(?<pkg>[^"]+)"', "v"),
+  new RegExp("missing go\\.sum entry for module providing package (?<pkg>[^\\s:;]+)", "v")
+];
+var RUST_PATTERNS = [
+  new RegExp("error\\[E0463\\]:[^\\n]*can't find crate for `(?<pkg>[A-Za-z0-9_\\-]+)`", "v"),
+  new RegExp("error\\[E0432\\]:[^\\n]*unresolved import `(?<pkg>[A-Za-z0-9_\\-]+)(?:::|`)", "v")
+];
+var GO_MODULE_PATTERN = new RegExp("^module\\s+(?<mod>\\S+)", "mv");
+var NON_BARE_PREFIXES = [".", "/", "file:", "node:"];
+var RUST_BUILTIN_CRATES = /* @__PURE__ */ new Set([
+  "alloc",
+  "core",
+  "crate",
+  "self",
+  "std",
+  "super"
+]);
+var CONTAINER_DIRS = /* @__PURE__ */ new Set(["lib", "packages", "pkg", "src"]);
+function readStem(name) {
+  const ext = extname(name);
+  if (ext.length === 0) {
+    return name;
+  }
+  return name.slice(0, -ext.length);
+}
+function readDirModules(path) {
+  const segments = path.split("/");
+  const first = segments.at(0);
+  const second = segments.at(1);
+  const dirs = [];
+  if (first !== void 0 && first.length > 0) {
+    dirs.push(first);
+  }
+  if (first !== void 0 && CONTAINER_DIRS.has(first) && second !== void 0) {
+    dirs.push(second);
+  }
+  return dirs;
+}
+function readPathModules(path) {
+  const dirs = readDirModules(path);
+  const name = basename2(path);
+  const stem = readStem(name);
+  if (stem.length === 0) {
+    return dirs;
+  }
+  const normalizedStem = stem.replaceAll("-", "_");
+  return [...dirs, stem, normalizedStem];
+}
+function collectLocalModules(filePaths) {
+  const localModules = /* @__PURE__ */ new Set();
+  if (filePaths === void 0) {
+    return localModules;
+  }
+  for (const path of filePaths) {
+    for (const mod of readPathModules(path)) {
+      localModules.add(mod);
+    }
+  }
+  return localModules;
+}
+function matchLine({ line, patterns }) {
+  for (const pattern of patterns) {
+    const match7 = pattern.exec(line);
+    const pkg = match7?.groups?.["pkg"]?.trim();
+    if (pkg !== void 0 && pkg.length > 0) {
+      return Option_exports.some(pkg);
+    }
+  }
+  return Option_exports.none();
+}
+function matchLastPattern({ lines, patterns }) {
+  for (let index2 = lines.length - 1; index2 >= 0; index2 -= 1) {
+    const line = lines.at(index2) ?? "";
+    const found = matchLine({ line, patterns });
+    if (Option_exports.isSome(found)) {
+      return found;
+    }
+  }
+  return Option_exports.none();
+}
+function isNonBareSpecifier(specifier) {
+  return NON_BARE_PREFIXES.some((prefix) => specifier.startsWith(prefix));
+}
+function readNodePackageName(specifier) {
+  if (isNonBareSpecifier(specifier)) {
+    return Option_exports.none();
+  }
+  const parts2 = specifier.split("/");
+  const head3 = parts2.at(0) ?? "";
+  const second = parts2.at(1) ?? "";
+  if (specifier.startsWith("@") && parts2.length >= SCOPED_PACKAGE_PARTS) {
+    return Option_exports.some(`${head3}/${second}`);
+  }
+  if (head3.length === 0) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(head3);
+}
+function readGoModulePath(goMod) {
+  if (goMod === void 0) {
+    return "";
+  }
+  const match7 = GO_MODULE_PATTERN.exec(goMod);
+  return match7?.groups?.["mod"]?.trim() ?? "";
+}
+function isLocalGoPackage({ deps, pkg }) {
+  if (pkg.startsWith(".") || pkg === "tenet_check" || pkg.startsWith("tenet_check/")) {
+    return true;
+  }
+  const modulePath = readGoModulePath(deps?.goMod);
+  if (modulePath.length === 0) {
+    return false;
+  }
+  return pkg === modulePath || pkg.startsWith(`${modulePath}/`);
+}
+function filterPythonPackage({ localModules, pkg }) {
+  const root = pkg.split(".").at(0) ?? "";
+  if (pkg.startsWith(".") || root.length === 0 || localModules.has(root)) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(root);
+}
+function filterNodePackage({ localModules, pkg }) {
+  const bare = readNodePackageName(pkg);
+  if (Option_exports.isNone(bare) || localModules.has(bare.value)) {
+    return Option_exports.none();
+  }
+  return bare;
+}
+function filterGoPackage({ deps, pkg }) {
+  if (isLocalGoPackage({ deps, pkg })) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(pkg);
+}
+function filterRustPackage({ localModules, pkg }) {
+  if (RUST_BUILTIN_CRATES.has(pkg) || localModules.has(pkg)) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(pkg);
+}
+function filterExternalPackage({
+  deps,
+  localModules,
+  pkg,
+  runtime
+}) {
+  switch (runtime) {
+    case "python": {
+      return filterPythonPackage({ localModules, pkg });
+    }
+    case "node": {
+      return filterNodePackage({ localModules, pkg });
+    }
+    case "go": {
+      return filterGoPackage({ deps, pkg });
+    }
+    case "rust": {
+      return filterRustPackage({ localModules, pkg });
+    }
+  }
+}
+function selectRuntimePatterns(runtime) {
+  switch (runtime) {
+    case "python": {
+      return PYTHON_PATTERNS;
+    }
+    case "node": {
+      return NODE_PATTERNS;
+    }
+    case "go": {
+      return GO_PATTERNS;
+    }
+    case "rust": {
+      return RUST_PATTERNS;
+    }
+  }
+}
+function detectMissingExternalPackage({
+  deps,
+  filePaths,
+  runtime,
+  stderr
+}) {
+  if (runtime === void 0) {
+    return Option_exports.none();
+  }
+  const lines = stderr.split("\n");
+  const patterns = selectRuntimePatterns(runtime);
+  const rawMatch = matchLastPattern({ lines, patterns });
+  if (Option_exports.isNone(rawMatch)) {
+    return Option_exports.none();
+  }
+  const localModules = collectLocalModules(filePaths);
+  return filterExternalPackage({ deps, localModules, pkg: rawMatch.value, runtime });
+}
+
+// sandbox/controls/strip-control-chars.mts
+var ASCII_SPACE = 32;
+var ASCII_DEL = 127;
+function stripControlChars(text2) {
+  let clean = "";
+  for (const character of text2) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code >= ASCII_SPACE && code !== ASCII_DEL) {
+      clean += character;
+    } else {
+      clean += " ";
+    }
+  }
+  return clean;
+}
+
+// sandbox/controls/parse-probe-stdout.mts
+var TENET_JSON_SENTINEL = "__TENET_JSON__:";
+var MAX_TRAILING_LINES = 200;
+var MAX_ERROR_PREVIEW_CHARS = 160;
+var JsonFromString = Schema_exports.fromJsonString(Schema_exports.Json);
+var decodeJson = Schema_exports.decodeUnknownOption(JsonFromString, { onExcessProperty: "error" });
+function cleanLine(text2) {
+  const collapsed = stripControlChars(text2).replaceAll(new RegExp("\\s+", "gv"), " ").trim();
+  if (collapsed.length <= MAX_ERROR_PREVIEW_CHARS) {
+    return collapsed;
+  }
+  return `${collapsed.slice(0, MAX_ERROR_PREVIEW_CHARS)}...`;
+}
+function buildInvalidStdoutError(lastLine) {
+  const sanitized = cleanLine(lastLine);
+  const preview = JSON.stringify(sanitized);
+  const message = `the isolated test produced non-JSON stdout (last line: ${preview})`;
+  return new CheckerError({ message });
+}
+function findLastNonEmptyLine(lines) {
+  for (let index2 = lines.length - 1; index2 >= 0; index2 -= 1) {
+    const candidate = lines.at(index2)?.trim() ?? "";
+    if (candidate.length > 0) {
+      return Option_exports.some({ index: index2, text: candidate });
+    }
+  }
+  return Option_exports.none();
+}
+function parseSentinelLine(lines) {
+  for (let index2 = lines.length - 1; index2 >= 0; index2 -= 1) {
+    const trimmed = lines.at(index2)?.trim() ?? "";
+    if (trimmed.startsWith(TENET_JSON_SENTINEL)) {
+      const payload = trimmed.slice(TENET_JSON_SENTINEL.length).trim();
+      const parsed = decodeJson(payload);
+      if (Option_exports.isSome(parsed)) {
+        return parsed;
+      }
+      throw buildInvalidStdoutError(trimmed);
+    }
+  }
+  return Option_exports.none();
+}
+function isBlockStart(line) {
+  return line.startsWith("{") || line.startsWith("[");
+}
+function isBlockEnd(line) {
+  return line.endsWith("}") || line.endsWith("]");
+}
+function trySliceAt({ lastIndex, lines, start }) {
+  const candidate = lines.at(start)?.trim() ?? "";
+  if (!isBlockStart(candidate)) {
+    return Option_exports.none();
+  }
+  const slice = lines.slice(start, lastIndex + 1).join("\n");
+  return decodeJson(slice);
+}
+function parseTrailingBlock({ lastIndex, lines }) {
+  const lastText = lines.at(lastIndex)?.trim() ?? "";
+  if (!isBlockEnd(lastText)) {
+    return Option_exports.none();
+  }
+  const floor = Math.max(0, lastIndex - MAX_TRAILING_LINES + 1);
+  for (let start = lastIndex - 1; start >= floor; start -= 1) {
+    const parsed = trySliceAt({ lastIndex, lines, start });
+    if (Option_exports.isSome(parsed)) {
+      return parsed;
+    }
+  }
+  return Option_exports.none();
+}
+function parseTailJson({ lastIndex, lines }) {
+  const lastText = lines.at(lastIndex)?.trim() ?? "";
+  const lastParsed = decodeJson(lastText);
+  if (Option_exports.isSome(lastParsed)) {
+    return lastParsed;
+  }
+  return parseTrailingBlock({ lastIndex, lines });
+}
+function parseFromLines(lines) {
+  const sentinelValue = parseSentinelLine(lines);
+  if (Option_exports.isSome(sentinelValue)) {
+    return sentinelValue.value;
+  }
+  const lastInfo = findLastNonEmptyLine(lines);
+  if (Option_exports.isNone(lastInfo)) {
+    throw new CheckerError({ message: "the isolated test produced empty stdout instead of JSON" });
+  }
+  const tailValue = parseTailJson({ lastIndex: lastInfo.value.index, lines });
+  if (Option_exports.isSome(tailValue)) {
+    return tailValue.value;
+  }
+  throw buildInvalidStdoutError(lastInfo.value.text);
+}
+function parseProbeStdout(stdout) {
+  const trimmed = stdout.trim();
+  if (trimmed.length === 0) {
+    throw new CheckerError({ message: "the isolated test produced empty stdout instead of JSON" });
+  }
+  const direct = decodeJson(trimmed);
+  if (Option_exports.isSome(direct)) {
+    return direct.value;
+  }
+  const lines = trimmed.split("\n");
+  return parseFromLines(lines);
+}
+
+// sandbox/controls/probe-diagnostics.mts
+var DIAGNOSTIC_LINES = 2;
+var DIAGNOSTIC_CHARS = 240;
+var DIAGNOSTIC_FOOTER = new RegExp("^(?:error: aborting due to |For more information about this error|Node\\.js v\\d)", "v");
+var DIAGNOSTIC_ERROR = new RegExp("^(?:error(?:\\[|:)|Error\\b|TypeError:|RangeError:|ReferenceError:|SyntaxError:|URIError:|EvalError:|ModuleNotFoundError:|ImportError:|AttributeError:|ValueError:|KeyError:|AssertionError:|NameError:|RuntimeError:|ZeroDivisionError:|FileNotFoundError:|OSError:|Exception:|panic:|cannot find package|no required module provides package|missing go\\.sum entry|\\.?\\/?[^\\s:]+\\.go:\\d+:)", "v");
+var RUST_MISSING_CRATE_PATTERN = new RegExp("error\\[E04(?:32|63)\\]", "v");
+var GO_MISSING_MODULE_PATTERN = new RegExp("no required module provides package|cannot find package", "v");
+var TAIL_DIAGNOSTIC_RUNTIMES = /* @__PURE__ */ new Set(["node", "python"]);
+function selectDiagnosticLines({ lines, runtime }) {
+  const highlighted = lines.filter((line) => DIAGNOSTIC_ERROR.test(line));
+  if (highlighted.length > 0) {
+    if (runtime !== void 0 && TAIL_DIAGNOSTIC_RUNTIMES.has(runtime)) {
+      return highlighted.slice(-DIAGNOSTIC_LINES);
+    }
+    return highlighted.slice(0, DIAGNOSTIC_LINES);
+  }
+  return lines.slice(-DIAGNOSTIC_LINES);
+}
+function summarizeDiagnostic({ runtime, stderr }) {
+  const lines = stderr.split("\n").map((line) => line.trim()).filter((line) => line.length > 0 && !DIAGNOSTIC_FOOTER.test(line));
+  const selected = selectDiagnosticLines({ lines, runtime }).join(" | ");
+  const summary = stripControlChars(selected).trim();
+  if (summary.length <= DIAGNOSTIC_CHARS) {
+    return summary;
+  }
+  return summary.slice(0, DIAGNOSTIC_CHARS);
+}
+function readMissingDepHint({ deps, filePaths, runtime, stderr }) {
+  const externalPkg = detectMissingExternalPackage({ deps, filePaths, runtime, stderr });
+  if (Option_exports.isSome(externalPkg)) {
+    const pkgLabel = JSON.stringify(externalPkg.value);
+    return ` (missing external package ${pkgLabel} is not installed in the sandbox environment)`;
+  }
+  if (runtime === "rust" && deps?.rustDepsDir === void 0 && RUST_MISSING_CRATE_PATTERN.test(stderr)) {
+    return " (run cargo build locally so compiled crate deps exist in target/debug/deps)";
+  }
+  if (runtime === "go" && deps?.goVendor === void 0 && GO_MISSING_MODULE_PATTERN.test(stderr)) {
+    return " (run go mod download or go mod vendor locally so Go module dependencies are cached)";
+  }
+  return "";
+}
+function formatProbeFailure({
+  base,
+  deps,
+  filePaths,
+  runtime,
+  stderr
+}) {
+  const detail = summarizeDiagnostic({ runtime, stderr });
+  const hint = readMissingDepHint({ deps, filePaths, runtime, stderr });
+  if (detail.length === 0) {
+    return `${base}${hint}`;
+  }
+  return `${base}: ${detail}${hint}`;
+}
+
 // sandbox/controls/validate-check.mts
 var MAX_FIELD_BYTES = 131072;
+var EDIT_LIMIT_PADDING = 32768;
 var ID_PATTERN = new RegExp("^[a-z][a-z0-9\\-]{0,63}$", "v");
 var NATIVE_TEST_RUNTIMES = /* @__PURE__ */ new Set(["node", "python"]);
 function readFields(candidate) {
@@ -21836,25 +22592,56 @@ function assertDistinctControls({ defect, good, refactor }) {
     throw new CheckerError({ message: "qualification requires three distinct alternatives" });
   }
 }
-function readControls({ fields, source }) {
+function readControlLimit({ control, source }) {
+  if (Array.isArray(control)) {
+    const padded = Buffer.byteLength(source) + EDIT_LIMIT_PADDING;
+    return Math.max(MAX_FIELD_BYTES, padded);
+  }
+  return MAX_FIELD_BYTES;
+}
+function resolveRefactor({
+  allowBrownfield,
+  defect,
+  explicitBrownfield,
+  good,
+  rawRefactor,
+  source
+}) {
+  if (allowBrownfield && rawRefactor === void 0) {
+    return { brownfield: true, defect, good, refactor: good };
+  }
+  const limit = readControlLimit({ control: rawRefactor, source });
+  const refactor = applyControl({ control: rawRefactor, label: "refactor", limit, source });
+  if (allowBrownfield && refactor === good) {
+    return { brownfield: true, defect, good, refactor };
+  }
+  assertDistinctControls({ defect, good, refactor });
+  if (allowBrownfield && explicitBrownfield) {
+    return { brownfield: true, defect, good, refactor };
+  }
+  return { defect, good, refactor };
+}
+function buildControl({ control, label, source }) {
+  const limit = readControlLimit({ control, source });
+  return applyControl({ control, label, limit, source });
+}
+function readControls({ fields, fromPin, source }) {
   const rawGood = fields.get("good");
   const rawDefect = fields.get("defect");
   const rawRefactor = fields.get("refactor");
-  const good = applyControl({ control: rawGood, label: "good", limit: MAX_FIELD_BYTES, source });
-  const defect = applyControl({
-    control: rawDefect,
-    label: "defect",
-    limit: MAX_FIELD_BYTES,
+  const good = buildControl({ control: rawGood, label: "good", source });
+  const defect = buildControl({ control: rawDefect, label: "defect", source });
+  const explicitBrownfield = fields.get("brownfield") === true;
+  const isBrownfieldOrigin = defect === source || fromPin && explicitBrownfield;
+  const allowBrownfield = good !== defect && isBrownfieldOrigin;
+  return resolveRefactor({
+    allowBrownfield,
+    defect,
+    explicitBrownfield,
+    good,
+    rawRefactor,
     source
   });
-  const refactor = applyControl({
-    control: rawRefactor,
-    label: "refactor",
-    limit: MAX_FIELD_BYTES,
-    source
-  });
-  assertDistinctControls({ defect, good, refactor });
-  return { defect, good, refactor };
 }
 function attachEntry({ base, fields, files }) {
   if (!fields.has("testFile")) {
@@ -21870,14 +22657,15 @@ function attachEntry({ base, fields, files }) {
   }
   return { ...base, testFile };
 }
-function validate3({ check: check2, files }) {
+function validate3({ check: check2, files, fromPin = false }) {
   const fields = readFields(check2);
   const target = readTarget({ fields, files });
   const source = files.get(target.subject);
   if (source === void 0) {
     throw new CheckerError({ message: "the generated checker target is missing from source" });
   }
-  const base = { ...target, ...readControls({ fields, source }) };
+  const controls = readControls({ fields, fromPin, source });
+  const base = { ...target, ...controls };
   return attachEntry({ base, fields, files });
 }
 
@@ -22017,7 +22805,7 @@ function buildNodeCommand({
 }
 
 // sandbox/runtimes/build-python-command.mts
-import { basename as basename2, dirname as dirname4 } from "node:path";
+import { basename as basename3, dirname as dirname4 } from "node:path";
 function buildPythonCommand({
   binary,
   check: check2,
@@ -22027,7 +22815,7 @@ function buildPythonCommand({
     return [binary, "-B", `./${probeFile2}`];
   }
   const testDir = dirname4(check2.testFile);
-  const testPattern = basename2(check2.testFile);
+  const testPattern = basename3(check2.testFile);
   return [binary, "-B", "-m", "unittest", "discover", "-s", `./${testDir}`, "-p", testPattern];
 }
 
@@ -23503,7 +24291,7 @@ function isPassing({ result: result3, runtime }) {
   });
   throw new CheckerError({ message });
 }
-function assertCompleted({ deps, result: result3, runtime }) {
+function assertCompleted({ deps, filePaths, result: result3, runtime }) {
   if (result3.status !== 0 && result3.stderr.startsWith("bwrap: Unknown option --size")) {
     throw new CheckerError({
       message: "install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit"
@@ -23514,6 +24302,7 @@ function assertCompleted({ deps, result: result3, runtime }) {
     const message = formatProbeFailure({
       base: `the isolated test exited with status ${code}`,
       deps,
+      filePaths,
       runtime,
       stderr: result3.stderr
     });
@@ -23530,9 +24319,13 @@ async function runProbe(probe) {
     }
     return isPassing({ result: result3, runtime: probe.check.runtime });
   }
-  assertCompleted({ deps: probe.deps, result: result3, runtime: probe.check.runtime });
-  const observed = JSON.parse(result3.stdout);
-  return observed;
+  assertCompleted({
+    deps: probe.deps,
+    filePaths: probe.filePaths,
+    result: result3,
+    runtime: probe.check.runtime
+  });
+  return parseProbeStdout(result3.stdout);
 }
 async function createGoModFallback({
   check: check2,
@@ -23570,7 +24363,8 @@ async function createSandbox(input) {
   await createGoModFallback({ check: check2, deps, files, work });
   await writeProbeFile({ check: check2, work });
   const command = await buildCommand({ ...input, deps });
-  return async () => await runProbe({ check: check2, command, deps });
+  const filePaths = [...files.keys()];
+  return async () => await runProbe({ check: check2, command, deps, filePaths });
 }
 
 // sandbox/runner.mts
@@ -23656,6 +24450,9 @@ async function qualifyControl({ project, variant }) {
 async function verifyControls(project) {
   await qualifyControl({ project, variant: "good" });
   await qualifyControl({ project, variant: "defect" });
+  if (project.check.brownfield === true) {
+    return;
+  }
   await qualifyControl({ project, variant: "refactor" });
 }
 async function executeObservation({
@@ -23699,7 +24496,7 @@ var BWRAP3 = "/usr/bin/bwrap";
 var PYTHON2 = "/usr/bin/python3";
 var PRLIMIT3 = "/usr/bin/prlimit";
 var SANDBOX_EXEC3 = "/usr/bin/sandbox-exec";
-var RUNNER_REVISION = 5;
+var RUNNER_REVISION = 6;
 function readBinaryIdentity(path) {
   const read = Effect_exports.tryPromise(async () => await stat3(path));
   function buildMissingIdentity() {
@@ -23780,20 +24577,44 @@ function collectOpen({ prior, repaired }) {
   const openItems = /* @__PURE__ */ new Set([...prior.open, ...repaired.open]);
   return [...openItems];
 }
-function collectUnresolved({ qualifiedIds, repaired }) {
-  return repaired.extraUnresolved.filter((finding) => !qualifiedIds.has(finding.check));
+function collectUnrecoverableErrors({ prior, repaired }) {
+  const unrecoverableItems = /* @__PURE__ */ new Set([
+    ...prior.unrecoverableErrors ?? [],
+    ...repaired.unrecoverableErrors ?? []
+  ]);
+  return [...unrecoverableItems];
+}
+function isPreservedPriorFinding(finding) {
+  return finding.brownfield_unverified === true || isMissingExternalDepMessage(finding.message);
+}
+function collectUnresolved({
+  prior,
+  qualifiedIds,
+  repaired
+}) {
+  const activeRepaired = repaired.extraUnresolved.filter(
+    (finding) => !qualifiedIds.has(finding.check)
+  );
+  const repairedIdList = activeRepaired.map((finding) => finding.check);
+  const coveredIds = /* @__PURE__ */ new Set([...qualifiedIds, ...repairedIdList]);
+  const preservedPrior = prior.extraUnresolved.filter(
+    (finding) => !coveredIds.has(finding.check) && isPreservedPriorFinding(finding)
+  );
+  return [...preservedPrior, ...activeRepaired];
 }
 function mergeEvaluations({ prior, repaired }) {
   const qualified = collectQualified({ prior, repaired });
   const qualifiedIdList = qualified.map((check2) => check2.id);
   const qualifiedIds = new Set(qualifiedIdList);
-  const extraUnresolved = collectUnresolved({ qualifiedIds, repaired });
+  const extraUnresolved = collectUnresolved({ prior, qualifiedIds, repaired });
   const open4 = collectOpen({ prior, repaired });
+  const unrecoverableErrors = collectUnrecoverableErrors({ prior, repaired });
   return {
     errors: repaired.errors,
     extraUnresolved,
     open: open4,
-    qualified
+    qualified,
+    unrecoverableErrors
   };
 }
 
@@ -23823,6 +24644,7 @@ var WitnessReproFields = Schema_exports.Struct({
 var WitnessRepro = Schema_exports.toEncoded(WitnessReproFields);
 var OptionalRepro = Schema_exports.OptionFromOptionalKey(WitnessRepro);
 var FindingFields = Schema_exports.Struct({
+  brownfield_unverified: OptionalFlag,
   check: Schema_exports.String,
   contract: Schema_exports.String,
   cost_usd: NullableCost,
@@ -23857,6 +24679,7 @@ var Contract = Schema_exports.toEncoded(ContractFields);
 var OptionalBase = Schema_exports.OptionFromOptionalNullOr(Schema_exports.String);
 var ContractList = Schema_exports.Array(Contract);
 var RequestFields = Schema_exports.Struct({
+  allowBrownfieldWitness: OptionalFlag,
   base: OptionalBase,
   contracts: ContractList,
   fresh: OptionalFlag,
@@ -23879,6 +24702,7 @@ var ReceiptFields = Schema_exports.Struct({
 });
 var Receipt = Schema_exports.toEncoded(ReceiptFields);
 var CheckFields = Schema_exports.Struct({
+  brownfield: OptionalFlag,
   defect: Schema_exports.String,
   expected: Schema_exports.Unknown,
   good: Schema_exports.String,
@@ -23917,7 +24741,7 @@ function parseBundle({ value: value3, files }) {
   if (checks.length > MAX_CHECKS || open4.length > MAX_CHECKS) {
     throw new CheckerError({ message: "checker plan exceeds the number of allowed checks" });
   }
-  const verified = checks.map((check2) => validate3({ check: check2, files }));
+  const verified = checks.map((check2) => validate3({ check: check2, files, fromPin: true }));
   const identifiers = verified.map((check2) => check2.id);
   const names = new Set(identifiers);
   if (names.size !== verified.length || names.size + open4.length === 0) {
@@ -23964,7 +24788,32 @@ function parsePin({ value: value3, current, contractHash }) {
 
 // review/build-finding.mts
 var SUMMARY_LIMIT = 512;
+function attachPinFlag({ finding, pin_reused }) {
+  if (pin_reused === true) {
+    return { ...finding, pin_reused: true };
+  }
+  return finding;
+}
+function attachOptionalMetadata({
+  brownfield_unverified,
+  finding,
+  pin_reused,
+  repro
+}) {
+  const base = attachPinFlag({ finding, pin_reused });
+  if (repro !== void 0 && brownfield_unverified === true) {
+    return { ...base, brownfield_unverified: true, repro };
+  }
+  if (repro !== void 0) {
+    return { ...base, repro };
+  }
+  if (brownfield_unverified === true) {
+    return { ...base, brownfield_unverified: true };
+  }
+  return base;
+}
 function buildFinding({
+  brownfield_unverified,
   pin_reused,
   repro,
   subject = null,
@@ -23979,21 +24828,203 @@ function buildFinding({
     reused: note.reused === true,
     subject
   };
-  if (pin_reused === true && repro !== void 0) {
-    return { ...finding, pin_reused: true, repro };
-  }
-  if (pin_reused === true) {
-    return { ...finding, pin_reused: true };
-  }
-  if (repro !== void 0) {
-    return { ...finding, repro };
-  }
-  return finding;
+  return attachOptionalMetadata({ brownfield_unverified, finding, pin_reused, repro });
 }
 
 // review/build-open-finding.mts
 function buildOpenFinding({ contract, reason }) {
   return buildFinding({ check: "discovery", contract, message: reason, outcome: "unresolved" });
+}
+
+// review/pin/brownfield-witness.mts
+var MAX_FIELD_BYTES2 = 131072;
+var MAX_REPRO_CODE_CHARS = 4e3;
+var MAX_REPRO_VALUE_CHARS = 512;
+var ID_PATTERN2 = new RegExp("^[a-z][a-z0-9\\-]{0,63}$", "v");
+var CONTROL_PARSE_MARKERS = [
+  '"good"',
+  '"refactor"',
+  "refactor matched good",
+  "three distinct alternatives"
+];
+function isControlOnlyParseError(detail) {
+  if (detail.includes('"defect"')) {
+    return false;
+  }
+  return CONTROL_PARSE_MARKERS.some((marker) => detail.includes(marker));
+}
+function isControlOnlyQualifyError(detail) {
+  if (isMissingExternalDepMessage(detail) || detail.includes('"defect"')) {
+    return false;
+  }
+  return detail.includes('"good"') || detail.includes('"refactor"');
+}
+function readBoundedField({ fields, key }) {
+  const value3 = fields.get(key);
+  if (typeof value3 !== "string" || value3.trim().length === 0 || Buffer.byteLength(value3) > MAX_FIELD_BYTES2) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(value3);
+}
+function readRuntimeOption(value3) {
+  switch (value3) {
+    case "go":
+    case "node":
+    case "python":
+    case "rust": {
+      return Option_exports.some(value3);
+    }
+    default: {
+      return Option_exports.none();
+    }
+  }
+}
+function readObjectFields(raw) {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return Option_exports.none();
+  }
+  const entries3 = Object.entries(raw);
+  const fields = new Map(entries3);
+  return Option_exports.some(fields);
+}
+function readTextParts(fields) {
+  const id2 = readBoundedField({ fields, key: "id" });
+  const subject = readBoundedField({ fields, key: "subject" });
+  const promise3 = readBoundedField({ fields, key: "promise" });
+  const test = readBoundedField({ fields, key: "test" });
+  return Option_exports.all({ id: id2, promise: promise3, subject, test });
+}
+function readCheckParts(fields) {
+  const texts = readTextParts(fields);
+  const rawRuntime = fields.get("runtime");
+  const runtime = readRuntimeOption(rawRuntime);
+  if (Option_exports.isNone(texts) || Option_exports.isNone(runtime)) {
+    return Option_exports.none();
+  }
+  if (!ID_PATTERN2.test(texts.value.id) || !fields.has("expected")) {
+    return Option_exports.none();
+  }
+  const expected = fields.get("expected");
+  return Option_exports.some({ ...texts.value, expected, runtime: runtime.value });
+}
+function extractProbeCheck({ files, raw }) {
+  const fieldsOption = readObjectFields(raw);
+  const partsOption = Option_exports.flatMap(fieldsOption, (fields) => readCheckParts(fields));
+  if (Option_exports.isNone(partsOption)) {
+    return Option_exports.none();
+  }
+  const parts2 = partsOption.value;
+  const source = files.get(parts2.subject);
+  if (source === void 0) {
+    return Option_exports.none();
+  }
+  return Option_exports.some({ ...parts2, defect: source, good: source, refactor: source });
+}
+function isPropertyCounterexample(value3) {
+  if (value3 === null || typeof value3 !== "object" || Array.isArray(value3)) {
+    return false;
+  }
+  const entries3 = Object.entries(value3);
+  const fields = new Map(entries3);
+  const ok = fields.get("ok");
+  const passed = fields.get("passed");
+  return ok === false && typeof passed === "number" && passed >= 1;
+}
+function buildRepro({ check: check2, observedValue }) {
+  const code = check2.test?.trim() ?? "";
+  if (code.length === 0) {
+    return Option_exports.none();
+  }
+  const expected = JSON.stringify(check2.expected).slice(0, MAX_REPRO_VALUE_CHARS);
+  const observed = JSON.stringify(observedValue).slice(0, MAX_REPRO_VALUE_CHARS);
+  const boundedCode = code.slice(0, MAX_REPRO_CODE_CHARS);
+  return Option_exports.some({ code: boundedCode, expected, observed, runtime: check2.runtime });
+}
+function hasAcceptableWitness({ goodPassed, observedValue }) {
+  return goodPassed || isPropertyCounterexample(observedValue) || observedValue !== void 0;
+}
+function buildWitnessFinding({
+  check: check2,
+  contractName,
+  goodPassed,
+  observedValue
+}) {
+  const reproOption = buildRepro({ check: check2, observedValue });
+  if (Option_exports.isNone(reproOption) || !hasAcceptableWitness({ goodPassed, observedValue })) {
+    return Option_exports.none();
+  }
+  const expectedText = JSON.stringify(check2.expected);
+  const observedText = JSON.stringify(observedValue);
+  const message = `[unverified brownfield witness] ${check2.promise} (expected ${expectedText}, got ${observedText})`;
+  const finding = buildFinding({
+    brownfield_unverified: true,
+    check: check2.id,
+    contract: contractName,
+    message,
+    outcome: "failed",
+    repro: reproOption.value,
+    subject: check2.subject
+  });
+  return Option_exports.some(finding);
+}
+async function observeUnmodifiedWitness({
+  check: check2,
+  contractName,
+  files,
+  goodPassed,
+  projectRoot
+}) {
+  async function runActual() {
+    return await observe({ check: check2, files, projectRoot, qualify: false });
+  }
+  const attempt = await classifyResult({
+    message: "brownfield witness probe failed",
+    run: runActual
+  });
+  if (Result_exports.isFailure(attempt) || attempt.success.passed) {
+    return Option_exports.none();
+  }
+  return buildWitnessFinding({
+    check: check2,
+    contractName,
+    goodPassed,
+    observedValue: attempt.success.value
+  });
+}
+async function tryParseWitness(input) {
+  if (!isControlOnlyParseError(input.detail)) {
+    return Option_exports.none();
+  }
+  const probeCheck = extractProbeCheck({ files: input.current.files, raw: input.raw });
+  if (Option_exports.isNone(probeCheck)) {
+    return Option_exports.none();
+  }
+  return await observeUnmodifiedWitness({
+    check: probeCheck.value,
+    contractName: input.contractName,
+    files: input.current.runtimeFiles,
+    goodPassed: false,
+    projectRoot: input.projectRoot
+  });
+}
+async function tryBrownfieldWitness(input) {
+  if (!input.allowBrownfieldWitness) {
+    return Option_exports.none();
+  }
+  if (input.kind === "parse") {
+    return await tryParseWitness(input);
+  }
+  if (!isControlOnlyQualifyError(input.detail)) {
+    return Option_exports.none();
+  }
+  const goodPassed = input.detail.includes('"refactor"');
+  return await observeUnmodifiedWitness({
+    check: input.candidate,
+    contractName: input.contractName,
+    files: input.files,
+    goodPassed,
+    projectRoot: input.projectRoot
+  });
 }
 
 // review/pin/decode-bundle.mts
@@ -24131,7 +25162,13 @@ function readCheckLabel({ candidate, index: index2 }) {
 }
 function buildEmptyError({ contractName, message }) {
   const warning = buildOpenFinding({ contract: contractName, reason: message });
-  return { errors: [message], extraUnresolved: [warning], open: [], qualified: [] };
+  return {
+    errors: [message],
+    extraUnresolved: [warning],
+    open: [],
+    qualified: [],
+    unrecoverableErrors: []
+  };
 }
 function parseSingle({ files, raw }) {
   function runValidate() {
@@ -24154,8 +25191,13 @@ function failCandidate({
   check: check2,
   contractName,
   detail,
-  subject
+  subject,
+  witness
 }) {
+  if (witness !== void 0) {
+    return { error: `${check2}: ${detail}`, finding: witness, kind: "failed", unrecoverable: false };
+  }
+  const unrecoverable = isMissingExternalDepMessage(detail);
   const finding = buildFinding({
     check: check2,
     contract: contractName,
@@ -24163,9 +25205,10 @@ function failCandidate({
     outcome: "unresolved",
     subject
   });
-  return { error: `${check2}: ${detail}`, finding, kind: "failed" };
+  return { error: `${check2}: ${detail}`, finding, kind: "failed", unrecoverable };
 }
 async function runCheckQualification({
+  allowBrownfieldWitness,
   candidate,
   contractName,
   files,
@@ -24176,14 +25219,20 @@ async function runCheckQualification({
     return { check: result3.success, kind: "qualified" };
   }
   const detail = readCandidateError(result3.failure.cause);
-  return failCandidate({
-    check: candidate.id,
+  const witnessOption = await tryBrownfieldWitness({
+    allowBrownfieldWitness,
+    candidate,
     contractName,
     detail,
-    subject: candidate.subject
+    files,
+    kind: "qualify",
+    projectRoot
   });
+  const witness = Option_exports.getOrUndefined(witnessOption);
+  return failCandidate({ check: candidate.id, contractName, detail, subject: candidate.subject, witness });
 }
 async function checkCandidate({
+  allowBrownfieldWitness,
   contractName,
   current,
   index: index2,
@@ -24194,7 +25243,17 @@ async function checkCandidate({
   const label = readCheckLabel({ candidate: raw, index: index2 });
   const parsed = parseSingle({ files: current.files, raw });
   if (Result_exports.isFailure(parsed)) {
-    return failCandidate({ check: label, contractName, detail: parsed.failure });
+    const witnessOption = await tryBrownfieldWitness({
+      allowBrownfieldWitness,
+      contractName,
+      current,
+      detail: parsed.failure,
+      kind: "parse",
+      projectRoot,
+      raw
+    });
+    const witness = Option_exports.getOrUndefined(witnessOption);
+    return failCandidate({ check: label, contractName, detail: parsed.failure, witness });
   }
   const candidate = parsed.success;
   if (seenIds.has(candidate.id)) {
@@ -24206,6 +25265,7 @@ async function checkCandidate({
     });
   }
   return await runCheckQualification({
+    allowBrownfieldWitness,
     candidate,
     contractName,
     files: current.runtimeFiles,
@@ -24215,10 +25275,13 @@ async function checkCandidate({
 function recordOutcome({ outcome, state }) {
   if (outcome.kind === "qualified") {
     const nextIds = /* @__PURE__ */ new Set([...state.seenIds, outcome.check.id]);
+    return { ...state, qualified: [...state.qualified, outcome.check], seenIds: nextIds };
+  }
+  if (outcome.unrecoverable) {
     return {
       ...state,
-      qualified: [...state.qualified, outcome.check],
-      seenIds: nextIds
+      extraUnresolved: [...state.extraUnresolved, outcome.finding],
+      unrecoverableErrors: [...state.unrecoverableErrors, outcome.error]
     };
   }
   return {
@@ -24228,6 +25291,7 @@ function recordOutcome({ outcome, state }) {
   };
 }
 async function qualifyList({
+  allowBrownfieldWitness,
   contractName,
   current,
   open: open4,
@@ -24238,10 +25302,12 @@ async function qualifyList({
     errors: [],
     extraUnresolved: [],
     qualified: [],
-    seenIds: /* @__PURE__ */ new Set()
+    seenIds: /* @__PURE__ */ new Set(),
+    unrecoverableErrors: []
   };
   for (const [index2, raw] of rawChecks.entries()) {
     const outcome = await checkCandidate({
+      allowBrownfieldWitness,
       contractName,
       current,
       index: index2,
@@ -24251,14 +25317,10 @@ async function qualifyList({
     });
     state = recordOutcome({ outcome, state });
   }
-  return {
-    errors: state.errors,
-    extraUnresolved: state.extraUnresolved,
-    open: open4,
-    qualified: state.qualified
-  };
+  return { ...state, open: open4 };
 }
 async function qualifyBundle({
+  allowBrownfieldWitness = false,
   contractName,
   current,
   projectRoot,
@@ -24268,7 +25330,7 @@ async function qualifyBundle({
   if (Result_exports.isFailure(decoded)) {
     return buildEmptyError({ contractName, message: decoded.failure });
   }
-  return await qualifyList({ contractName, current, projectRoot, ...decoded.success });
+  return await qualifyList({ allowBrownfieldWitness, contractName, current, projectRoot, ...decoded.success });
 }
 
 // review/pin/update-pin.mts
@@ -24641,10 +25703,10 @@ var CONTEXT_WINDOW = 256e3;
 var CONTEXT_LIMIT_PATTERN = new RegExp("context|token|window|too long|exceeds", "iv");
 var CheckerObject = Schema_exports.Record(Schema_exports.String, Schema_exports.Unknown);
 var CheckerJson = Schema_exports.fromJsonString(CheckerObject);
-var decodeJson = Schema_exports.decodeUnknownOption(CheckerJson, { onExcessProperty: "error" });
+var decodeJson2 = Schema_exports.decodeUnknownOption(CheckerJson, { onExcessProperty: "error" });
 function decodeAnswer(text2) {
   const content = text2.trim().replaceAll(new RegExp("^```(?:json)?\\s*|\\s*```$", "gv"), "");
-  const decoded = decodeJson(content);
+  const decoded = decodeJson2(content);
   if (Option_exports.isNone(decoded)) {
     throw new CheckerError({ message: "received invalid checker JSON" });
   }
@@ -24941,10 +26003,10 @@ async function readBaseInputs({
 }
 
 // discovery/discovery.mts
-import { basename as basename6, dirname as dirname10, extname as extname2 } from "node:path";
+import { basename as basename7, dirname as dirname10, extname as extname3 } from "node:path";
 
 // discovery/hash-surface.mts
-import { basename as basename3 } from "node:path";
+import { basename as basename4 } from "node:path";
 
 // discovery/manifests.mts
 var MANIFESTS = /* @__PURE__ */ new Set([
@@ -24955,6 +26017,30 @@ var MANIFESTS = /* @__PURE__ */ new Set([
   "pyproject.toml",
   "tsconfig.json"
 ]);
+var EXTENSIONS = /* @__PURE__ */ new Set([
+  ".js",
+  ".cjs",
+  ".mjs",
+  ".ts",
+  ".mts",
+  ".cts",
+  ".tsx",
+  ".jsx",
+  ".py",
+  ".rs",
+  ".go"
+]);
+var UNSUPPORTED_EXTENSIONS = /* @__PURE__ */ new Set([
+  ".java",
+  ".c",
+  ".cc",
+  ".cpp",
+  ".swift",
+  ".rb",
+  ".cs",
+  ".kt"
+]);
+var PACKAGE_DATA_EXTENSIONS = /* @__PURE__ */ new Set([".txt", ".json", ".csv"]);
 
 // discovery/hash-surface.mts
 var SURFACE_VERSION = 2;
@@ -24970,7 +26056,7 @@ var DECLARATION = new RegExp("(?:^|\\n)\\s*(?:export\\s+(?:(?:default|async)\\s+
 var MEMBER = new RegExp("(?:^|[\\{\\};\\n])\\s*(?:(?:public|static|async|readonly|abstract|get|set)\\s+)*(?<name>[A-Za-z_$][\\w$]*)\\s*\\([^\\(\\)\\{\\};]*\\)\\s*(?::[^=\\{\\};]+)?\\s*\\{", "gv");
 var EXPORT = new RegExp("(?:^|\\n)\\s*(?:export\\s+(?:type\\s+)?\\{[^\\}]+\\}(?:\\s+from\\s+[^;\\n]+)?|export\\s+\\*\\s+from\\s+[^;\\n]+|pub\\s+use\\s+[^;]+);?", "gv");
 function readSurface([path, source]) {
-  const name = basename3(path);
+  const name = basename4(path);
   if (MANIFESTS.has(name)) {
     return [path, hashSource(source)];
   }
@@ -24992,8 +26078,20 @@ function hashSurface({ contract, source, assets, omitted }) {
   return hashSource(identity2);
 }
 
+// discovery/is-hidden-dir.mts
+var RELATIVE_SEGMENTS = /* @__PURE__ */ new Set([".", ".."]);
+function isHiddenSegment(segment) {
+  return segment.startsWith(".") && !RELATIVE_SEGMENTS.has(segment);
+}
+function isHiddenDirectoryPath(path) {
+  const normalized = path.replaceAll("\\", "/");
+  const segments = normalized.split("/");
+  const parents = segments.slice(0, -1);
+  return parents.some((segment) => isHiddenSegment(segment));
+}
+
 // discovery/is-test-path.mts
-import { basename as basename4 } from "node:path";
+import { basename as basename5 } from "node:path";
 var TEST_SEGMENTS = /* @__PURE__ */ new Set([
   "__snapshots__",
   "__tests__",
@@ -25023,7 +26121,7 @@ function isTestOrFixturePath(path) {
   if (segments.some((segment) => TEST_SEGMENTS.has(segment))) {
     return true;
   }
-  const name = basename4(path);
+  const name = basename5(path);
   if (name.startsWith("test_") && name.endsWith(".py")) {
     return true;
   }
@@ -25031,7 +26129,7 @@ function isTestOrFixturePath(path) {
 }
 
 // discovery/rank-path.mts
-import { basename as basename5, extname } from "node:path";
+import { basename as basename6, extname as extname2 } from "node:path";
 var MIN_TOKEN_LENGTH = 3;
 var EXACT_PATH_SCORE = 100;
 var STEM_TOKEN_SCORE = 10;
@@ -25144,7 +26242,7 @@ function readContractTerms(contract) {
   return { exactPaths, tokens };
 }
 function isPrivateModule(path) {
-  const name = basename5(path);
+  const name = basename6(path);
   return name.startsWith("_") && name !== "__init__.py";
 }
 function isTestPath(path) {
@@ -25156,8 +26254,8 @@ function isGeneratedOrCompatPath(path) {
   return segments.some((segment) => GENERATED_SEGMENTS.has(segment));
 }
 function readPathStem(path) {
-  const name = basename5(path);
-  const extension = extname(name);
+  const name = basename6(path);
+  const extension = extname2(name);
   if (extension.length === 0) {
     return name;
   }
@@ -25183,13 +26281,7 @@ function scoreContractMatch({ path, terms }) {
   const pathHits = countTokenHits({ candidates: pathCandidates, tokens: terms.tokens });
   return stemHits * STEM_TOKEN_SCORE + pathHits;
 }
-function rankUnclassifiedPath({ matchScore, path }) {
-  if (isPrivateModule(path) || isTestPath(path)) {
-    return enumRank.privateOrTest;
-  }
-  if (isGeneratedOrCompatPath(path)) {
-    return enumRank.generatedOrCompat;
-  }
+function rankPublicPath({ matchScore, path }) {
   if (matchScore > 0) {
     return enumRank.contractMatch;
   }
@@ -25198,8 +26290,20 @@ function rankUnclassifiedPath({ matchScore, path }) {
   }
   return enumRank.otherPublic;
 }
+function rankUnclassifiedPath({ matchScore, path }) {
+  if (isHiddenDirectoryPath(path)) {
+    return enumRank.unrelated;
+  }
+  if (isPrivateModule(path) || isTestPath(path)) {
+    return enumRank.privateOrTest;
+  }
+  if (isGeneratedOrCompatPath(path)) {
+    return enumRank.generatedOrCompat;
+  }
+  return rankPublicPath({ matchScore, path });
+}
 function rankPath({ decision, matchScore, path }) {
-  const name = basename5(path);
+  const name = basename6(path);
   if (MANIFESTS.has(name)) {
     return enumRank.manifest;
   }
@@ -25245,30 +26349,6 @@ var MAX_BYTES = 524288;
 var MAX_SOURCE = 131072;
 var MAX_SAMPLES = 32768;
 var MAX_SAMPLE = 8192;
-var EXTENSIONS = /* @__PURE__ */ new Set([
-  ".js",
-  ".cjs",
-  ".mjs",
-  ".ts",
-  ".mts",
-  ".cts",
-  ".tsx",
-  ".jsx",
-  ".py",
-  ".rs",
-  ".go"
-]);
-var UNSUPPORTED_EXTENSIONS = /* @__PURE__ */ new Set([
-  ".java",
-  ".c",
-  ".cc",
-  ".cpp",
-  ".swift",
-  ".rb",
-  ".cs",
-  ".kt"
-]);
-var PACKAGE_DATA_EXTENSIONS = /* @__PURE__ */ new Set([".txt", ".json", ".csv"]);
 function classifyReadablePath({ decision, excludeTests, path }) {
   if (excludeTests && decision !== "fail" && isTestOrFixturePath(path)) {
     return "skip";
@@ -25276,8 +26356,22 @@ function classifyReadablePath({ decision, excludeTests, path }) {
   return "read";
 }
 function isPackageDataPath({ packageRoots, path }) {
-  const extension = extname2(path);
+  const extension = extname3(path);
   return PACKAGE_DATA_EXTENSIONS.has(extension) && packageRoots.some((root) => path.startsWith(`${root}/`));
+}
+function classifyNonCodePath({
+  decision,
+  extension,
+  packageRoots,
+  path
+}) {
+  if (isPackageDataPath({ packageRoots, path })) {
+    return "read";
+  }
+  if (decision === "fail" || UNSUPPORTED_EXTENSIONS.has(extension) && decision !== "not_applicable") {
+    return "omitted";
+  }
+  return "skip";
 }
 function classifyPath({
   path,
@@ -25285,18 +26379,15 @@ function classifyPath({
   excludeTests,
   packageRoots
 }) {
-  const extension = extname2(path);
-  const name = basename6(path);
+  if (isHiddenDirectoryPath(path) && decision !== "fail") {
+    return "skip";
+  }
+  const extension = extname3(path);
+  const name = basename7(path);
   if (EXTENSIONS.has(extension) || MANIFESTS.has(name)) {
     return classifyReadablePath({ decision, excludeTests, path });
   }
-  if (isPackageDataPath({ packageRoots, path })) {
-    return "read";
-  }
-  if (UNSUPPORTED_EXTENSIONS.has(extension) && decision !== "not_applicable" || decision === "fail") {
-    return "omitted";
-  }
-  return "skip";
+  return classifyNonCodePath({ decision, extension, packageRoots, path });
 }
 async function readSample(input) {
   async function runRead() {
@@ -25340,13 +26431,15 @@ function listPackageRoots(input) {
   if (input.budget !== EXECUTION) {
     return [];
   }
-  const packageModules = input.contract.paths.filter((path) => path.endsWith("/__init__.py"));
+  const packageModules = input.contract.paths.filter(
+    (path) => path.endsWith("/__init__.py") && !isHiddenDirectoryPath(path)
+  );
   return packageModules.map((path) => dirname10(path));
 }
 function hasProductionCode(paths) {
   return paths.some((path) => {
-    const extension = extname2(path);
-    return EXTENSIONS.has(extension) && !isTestOrFixturePath(path);
+    const extension = extname3(path);
+    return EXTENSIONS.has(extension) && !isHiddenDirectoryPath(path) && !isTestOrFixturePath(path);
   });
 }
 async function applyPath({ kind, path, pool }) {
@@ -25419,8 +26512,8 @@ async function readInventory(input) {
 }
 
 // review/receipt/evidence.mts
-var MAX_REPRO_CODE_CHARS = 4e3;
-var MAX_REPRO_VALUE_CHARS = 512;
+var MAX_REPRO_CODE_CHARS2 = 4e3;
+var MAX_REPRO_VALUE_CHARS2 = 512;
 async function isFailingAtBase({ evaluation, check: check2 }) {
   if (evaluation.base === null) {
     return false;
@@ -25438,14 +26531,14 @@ async function isFailingAtBase({ evaluation, check: check2 }) {
 }
 function encodeBoundedJson(value3) {
   const encoded = JSON.stringify(value3);
-  return encoded.slice(0, MAX_REPRO_VALUE_CHARS);
+  return encoded.slice(0, MAX_REPRO_VALUE_CHARS2);
 }
 function buildWitnessRepro({ check: check2, observedValue }) {
   const code = check2.test?.trim() ?? "";
   if (code.length === 0) {
     return Option_exports.none();
   }
-  const boundedCode = code.slice(0, MAX_REPRO_CODE_CHARS);
+  const boundedCode = code.slice(0, MAX_REPRO_CODE_CHARS2);
   const expected = encodeBoundedJson(check2.expected);
   const observed = encodeBoundedJson(observedValue);
   return Option_exports.some({
@@ -25655,7 +26748,7 @@ async function saveReceipt({ ctx, rows, pin }) {
     evaluation: { base, tools, current },
     job: { request: request3 }
   } = ctx;
-  const qualifications = rows.filter((row) => row.outcome !== "unresolved").map((row) => row.check);
+  const qualifications = rows.filter((row) => row.outcome !== "unresolved" && row.brownfield_unverified !== true).map((row) => row.check);
   const candidate = Option_exports.fromUndefinedOr(pin);
   const serialized = Option_exports.map(candidate, (recipe) => JSON.stringify(recipe));
   const signature = Option_exports.map(serialized, hashSource);
@@ -25691,7 +26784,6 @@ function reportCoverage({ omitted, contract }) {
 var MAX_REPAIR_PREVIEW_CHARS = 32768;
 var MAX_FULL_REPAIRS = 2;
 var MAX_PARTIAL_REPAIRS = 1;
-var MISSING_DEP_PATTERN = new RegExp("ERR_MODULE_NOT_FOUND|ModuleNotFoundError|error\\[E04(?:32|63)\\]|target\\/debug\\/deps|no required module provides package|cannot find package|go mod vendor", "v");
 function formatPreview2(value3) {
   const serialized = JSON.stringify(value3);
   if (serialized.length <= MAX_REPAIR_PREVIEW_CHARS) {
@@ -25725,6 +26817,7 @@ async function generateOnce(input) {
     progressFile: ctx.job.request.progressFile
   });
   const evaluated = await qualifyBundle({
+    allowBrownfieldWitness: ctx.job.request.allowBrownfieldWitness === true,
     contractName: ctx.job.contract.name,
     current: ctx.evaluation.current,
     projectRoot: ctx.evaluation.root,
@@ -25732,14 +26825,8 @@ async function generateOnce(input) {
   });
   return { evaluated, raw };
 }
-function isUnrecoverableMissingDependency(errors) {
-  return errors.length > 0 && errors.every((error) => MISSING_DEP_PATTERN.test(error));
-}
 function shouldRepair(evaluated) {
-  if (evaluated.errors.length === 0) {
-    return false;
-  }
-  return !isUnrecoverableMissingDependency(evaluated.errors);
+  return evaluated.errors.length > 0;
 }
 function readMaxRepairs(evaluated) {
   if (evaluated.qualified.length === 0) {
@@ -26144,6 +27231,7 @@ async function verifyModuleCandidates({
   });
   const contracts = synthesis.candidates.map((item) => ({ ...item.contract, runtimePaths }));
   const findings = await run2({
+    allowBrownfieldWitness: true,
     contracts,
     fresh,
     maxGenerations: reviewBudget,
@@ -26213,11 +27301,13 @@ var SKEPTIC_INSTRUCTIONS = [
   'Use "critical" for unhandled crashes/panics/exceptions on valid input, data loss, security boundary violations, or unexpected mutation of caller-owned inputs or receivers.',
   'Use "high" for concrete wrong results, round-trip or metamorphic contradictions, cross-API inconsistencies, or clear violations of documented guarantees.',
   'Use "medium" for genuine but narrow edge-case defects with limited impact.',
+  'Witnesses marked `brownfield_unverified: true` skipped control-patch verification; return "critical"|"high"|"medium" ONLY when `repro.code` clearly proves a real defect against `sources`/`docs`/`tests`, otherwise return "reject".',
   'Be skeptical: inspect `repro.code` carefully and prefer "reject" over inflating a flawed probe or intentional test-blessed quirk into a defect.'
 ].join("\n");
 async function buildSkepticPayload({ failed, module, root }) {
   const packet = await readModulePacket({ includeTests: true, module, root });
   const witnesses = failed.map((item) => ({
+    brownfield_unverified: item.brownfield_unverified === true,
     check: item.check,
     contract: item.contract,
     message: item.message,
@@ -26269,7 +27359,7 @@ async function reviewFailingWitnesses({
   const source = await buildSkepticPayload({ failed, module, root });
   const { costUsd, outcome, requests } = await callSkepticModel({ deep, source });
   if (Result_exports.isFailure(outcome)) {
-    return { costUsd, findings, requests };
+    return { costUsd, findings: rejectUnverifiedWitnesses(findings), requests };
   }
   const reviewed = applySkepticOutput({ findings, raw: outcome.success });
   return { costUsd, findings: reviewed, requests };
@@ -26348,8 +27438,11 @@ async function applySkepticFilter({
   report,
   root
 }) {
-  if (!hasFailingWitness(report.findings) || budget.readRemaining() <= 0) {
+  if (!hasFailingWitness(report.findings)) {
     return report;
+  }
+  if (budget.readRemaining() <= 0) {
+    return { ...report, findings: rejectUnverifiedWitnesses(report.findings) };
   }
   await reportProgress({ contract: module.name, phase: "reviewing witnesses", progressFile });
   const reviewed = await reviewFailingWitnesses({

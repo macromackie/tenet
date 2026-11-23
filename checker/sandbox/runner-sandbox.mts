@@ -2,7 +2,7 @@ import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { CheckerError } from '../checker-error.mts';
 import type { Check } from '../types.d.mts';
-import { formatProbeFailure } from './controls/index.mts';
+import { formatProbeFailure, parseProbeStdout } from './controls/index.mts';
 import { type Execution, runFile } from './host-tool.mts';
 import { createLinuxSandbox, createMacosSandbox, type SandboxCommand } from './os/index.mts';
 import { type ProjectDeps, resolveProjectDeps } from './project-deps.mts';
@@ -15,7 +15,12 @@ type SandboxInput = Readonly<{
   work: string;
 }>;
 
-type Probe = Readonly<{ check: Check; command: SandboxCommand; deps: ProjectDeps }>;
+type Probe = Readonly<{
+  check: Check;
+  command: SandboxCommand;
+  deps: ProjectDeps;
+  filePaths: readonly string[];
+}>;
 
 type AssertionInput = Readonly<{ result: Execution; runtime: Check['runtime'] }>;
 
@@ -29,6 +34,7 @@ type StageLinkInput = Readonly<{ source?: string; target: string }>;
 
 type AssertCompletedInput = Readonly<{
   deps: ProjectDeps;
+  filePaths: readonly string[];
   result: Execution;
   runtime: Check['runtime'];
 }>;
@@ -189,7 +195,7 @@ function isPassing({ result, runtime }: AssertionInput): boolean {
   throw new CheckerError({ message });
 }
 
-function assertCompleted({ deps, result, runtime }: AssertCompletedInput): void {
+function assertCompleted({ deps, filePaths, result, runtime }: AssertCompletedInput): void {
   if (result.status !== 0 && result.stderr.startsWith('bwrap: Unknown option --size')) {
     throw new CheckerError({
       message: 'install bubblewrap 0.7 or later to enforce the 64 MiB temporary filesystem limit',
@@ -202,6 +208,7 @@ function assertCompleted({ deps, result, runtime }: AssertCompletedInput): void 
     const message = formatProbeFailure({
       base: `the isolated test exited with status ${code}`,
       deps,
+      filePaths,
       runtime,
       stderr: result.stderr,
     });
@@ -223,11 +230,14 @@ async function runProbe(probe: Probe): Promise<unknown> {
     return isPassing({ result, runtime: probe.check.runtime });
   }
 
-  assertCompleted({ deps: probe.deps, result, runtime: probe.check.runtime });
+  assertCompleted({
+    deps: probe.deps,
+    filePaths: probe.filePaths,
+    result,
+    runtime: probe.check.runtime,
+  });
 
-  const observed: unknown = JSON.parse(result.stdout);
-
-  return observed;
+  return parseProbeStdout(result.stdout);
 }
 
 async function createGoModFallback({
@@ -277,6 +287,7 @@ export async function createSandbox(input: SandboxInput): Promise<() => Promise<
   await writeProbeFile({ check, work });
 
   const command = await buildCommand({ ...input, deps });
+  const filePaths = [...files.keys()];
 
-  return async () => await runProbe({ check, command, deps });
+  return async () => await runProbe({ check, command, deps, filePaths });
 }

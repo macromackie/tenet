@@ -2,6 +2,7 @@ import { CheckerError } from '../../checker-error.mts';
 
 const MAX_PREVIEW_CHARS = 96;
 const MAX_NEARBY_HINTS = 3;
+const MAX_MATCH_LINE_HINTS = 8;
 const MIN_ANCHOR_CHARS = 6;
 const ESCAPED_NEWLINE = String.raw`\n`;
 
@@ -25,6 +26,7 @@ type EditErrorInput = Readonly<{
   find: string;
   kind: 'ambiguous' | 'missing';
   label: string;
+  matchLines?: readonly number[];
 }>;
 
 function formatPreview(text: string): string {
@@ -108,8 +110,29 @@ function formatMissingMessage({ current, find, label }: MissingMessageInput): st
   return `control ${controlName} edit target ${preview} was not found in the subject file`;
 }
 
+function formatMatchLines(matchLines?: readonly number[]): string {
+  if (matchLines === undefined || matchLines.length === 0) {
+    return '';
+  }
+
+  const shown = matchLines.slice(0, MAX_MATCH_LINE_HINTS).map((line) => `L${String(line)}`);
+  const joined = shown.join(', ');
+
+  if (matchLines.length > MAX_MATCH_LINE_HINTS) {
+    return ` (lines ${joined}, ...)`;
+  }
+
+  return ` (lines ${joined})`;
+}
+
 /** Build an actionable diagnostic error when a control patch target is missing or ambiguous. */
-export function buildEditError({ current, find, kind, label }: EditErrorInput): CheckerError {
+export function buildEditError({
+  current,
+  find,
+  kind,
+  label,
+  matchLines,
+}: EditErrorInput): CheckerError {
   if (kind === 'missing') {
     const missingMessage = formatMissingMessage({ current, find, label });
 
@@ -119,7 +142,8 @@ export function buildEditError({ current, find, kind, label }: EditErrorInput): 
   const controlName = JSON.stringify(label);
   const formatted = formatPreview(find);
   const preview = JSON.stringify(formatted);
-  const ambiguousMessage = `control ${controlName} edit target ${preview} matched multiple locations in the subject file`;
+  const lineSuffix = formatMatchLines(matchLines);
+  const ambiguousMessage = `control ${controlName} edit target ${preview} matched multiple locations in the subject file${lineSuffix}`;
 
   return new CheckerError({ message: ambiguousMessage });
 }

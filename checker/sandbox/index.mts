@@ -1,4 +1,11 @@
-export { validate } from './controls/index.mts';
+export {
+  applyControl,
+  detectMissingExternalPackage,
+  formatProbeFailure,
+  isMissingExternalDepMessage,
+  parseProbeStdout,
+  validate,
+} from './controls/index.mts';
 export { assertSandboxAvailable } from './os/index.mts';
 export { observe } from './runner.mts';
 export { runnerVersion } from './runner-version.mts';

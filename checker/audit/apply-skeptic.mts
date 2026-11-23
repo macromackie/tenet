@@ -1,5 +1,6 @@
 import { Option, Schema } from 'effect';
 import type { Finding } from '../types.d.mts';
+import { rejectUnverifiedWitnesses } from './reject-unverified.mts';
 
 const SkepticVerdict = Schema.Literals(['critical', 'high', 'medium', 'reject']);
 
@@ -36,6 +37,11 @@ type FormatMessageInput = Readonly<{
   verdict: SkepticVerdict;
 }>;
 
+type RejectWitnessInput = Readonly<{
+  reason: string;
+  row: Finding;
+}>;
+
 type SeverityBuckets = Readonly<{
   critical: readonly Finding[];
   high: readonly Finding[];
@@ -70,8 +76,41 @@ function formatSeverityMessage({ message, verdict }: FormatMessageInput): string
   return `${prefix}${message}`;
 }
 
-function applyReview({ review, row }: FormatFindingInput): Finding {
-  if (row.outcome !== 'failed' || review === undefined) {
+function formatRejectedWitness({ reason, row }: RejectWitnessInput): Finding {
+  return {
+    ...row,
+    message: `unverified brownfield witness downgraded: ${reason} (${row.message})`,
+    outcome: 'unresolved',
+  };
+}
+
+function applyUnverifiedReview({ review, row }: FormatFindingInput): Finding {
+  if (review === undefined) {
+    return formatRejectedWitness({ reason: 'skeptic omitted verdict', row });
+  }
+
+  if (review.verdict === 'reject') {
+    const reason = review.reason.trim();
+
+    if (reason.length > 0) {
+      return {
+        ...row,
+        message: `dismissed by skeptic: ${reason} (${row.message})`,
+        outcome: 'unresolved',
+      };
+    }
+
+    return formatRejectedWitness({ reason: 'rejected by skeptic', row });
+  }
+
+  return {
+    ...row,
+    message: formatSeverityMessage({ message: row.message, verdict: review.verdict }),
+  };
+}
+
+function applyVerifiedReview({ review, row }: FormatFindingInput): Finding {
+  if (review === undefined) {
     return row;
   }
 
@@ -95,6 +134,18 @@ function applyReview({ review, row }: FormatFindingInput): Finding {
   };
 }
 
+function applyReview({ review, row }: FormatFindingInput): Finding {
+  if (row.outcome !== 'failed') {
+    return row;
+  }
+
+  if (row.brownfield_unverified === true) {
+    return applyUnverifiedReview({ review, row });
+  }
+
+  return applyVerifiedReview({ review, row });
+}
+
 function appendFinding({ buckets, finding, review }: AppendFindingInput): SeverityBuckets {
   if (finding.outcome !== 'failed') {
     return { ...buckets, other: [...buckets.other, finding] };
@@ -112,7 +163,7 @@ export function applySkepticOutput({ findings, raw }: ApplySkepticInput): readon
   const decoded = decodeReviews(raw);
 
   if (Option.isNone(decoded)) {
-    return findings;
+    return rejectUnverifiedWitnesses(findings);
   }
 
   const reviewLookup = buildReviewLookup(decoded.value.reviews);

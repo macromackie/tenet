@@ -26,7 +26,7 @@ export function parseBundle({ value, files }: ParseBundleInput): Bundle {
     throw new CheckerError({ message: 'checker plan exceeds the number of allowed checks' });
   }
 
-  const verified = checks.map((check) => validate({ check, files }));
+  const verified = checks.map((check) => validate({ check, files, fromPin: true }));
   const identifiers = verified.map((check) => check.id);
   const names: ReadonlySet<string> = new Set(identifiers);
 

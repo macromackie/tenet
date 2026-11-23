@@ -1,5 +1,6 @@
 import { basename, extname } from 'node:path';
 import type { Contract } from '../types.d.mts';
+import { isHiddenDirectoryPath } from './is-hidden-dir.mts';
 import { MANIFESTS } from './manifests.mts';
 
 const MIN_TOKEN_LENGTH = 3;
@@ -80,37 +81,12 @@ const STOP_WORDS: ReadonlySet<string> = new Set([
   'with',
 ]);
 
-type ContractTerms = Readonly<{
-  exactPaths: ReadonlySet<string>;
-  tokens: ReadonlySet<string>;
-}>;
-
-type RankPathInput = Readonly<{
-  decision?: string;
-  matchScore: number;
-  path: string;
-}>;
-
-type CountHitsInput = Readonly<{
-  candidates: readonly string[];
-  tokens: ReadonlySet<string>;
-}>;
-
-type ScoreMatchInput = Readonly<{
-  path: string;
-  terms: ContractTerms;
-}>;
-
-type RankUnclassifiedInput = Readonly<{
-  matchScore: number;
-  path: string;
-}>;
-
-type SortKeyInput = Readonly<{
-  group: number;
-  matchScore: number;
-  path: string;
-}>;
+type ContractTerms = Readonly<{ exactPaths: ReadonlySet<string>; tokens: ReadonlySet<string> }>;
+type RankPathInput = Readonly<{ decision?: string; matchScore: number; path: string }>;
+type CountHitsInput = Readonly<{ candidates: readonly string[]; tokens: ReadonlySet<string> }>;
+type ScoreMatchInput = Readonly<{ path: string; terms: ContractTerms }>;
+type RankUnclassifiedInput = Readonly<{ matchScore: number; path: string }>;
+type SortKeyInput = Readonly<{ group: number; matchScore: number; path: string }>;
 
 function splitIdentifierTokens(text: string): readonly string[] {
   const spaced = text.replaceAll(CAMEL_BOUNDARY, '$<prev> $<next>').toLowerCase();
@@ -217,15 +193,7 @@ function scoreContractMatch({ path, terms }: ScoreMatchInput): number {
   return stemHits * STEM_TOKEN_SCORE + pathHits;
 }
 
-function rankUnclassifiedPath({ matchScore, path }: RankUnclassifiedInput): number {
-  if (isPrivateModule(path) || isTestPath(path)) {
-    return enumRank.privateOrTest;
-  }
-
-  if (isGeneratedOrCompatPath(path)) {
-    return enumRank.generatedOrCompat;
-  }
-
+function rankPublicPath({ matchScore, path }: RankUnclassifiedInput): number {
   if (matchScore > 0) {
     return enumRank.contractMatch;
   }
@@ -235,6 +203,22 @@ function rankUnclassifiedPath({ matchScore, path }: RankUnclassifiedInput): numb
   }
 
   return enumRank.otherPublic;
+}
+
+function rankUnclassifiedPath({ matchScore, path }: RankUnclassifiedInput): number {
+  if (isHiddenDirectoryPath(path)) {
+    return enumRank.unrelated;
+  }
+
+  if (isPrivateModule(path) || isTestPath(path)) {
+    return enumRank.privateOrTest;
+  }
+
+  if (isGeneratedOrCompatPath(path)) {
+    return enumRank.generatedOrCompat;
+  }
+
+  return rankPublicPath({ matchScore, path });
 }
 
 function rankPath({ decision, matchScore, path }: RankPathInput): number {

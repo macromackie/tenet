@@ -147,6 +147,11 @@ async function qualifyControl({ project, variant }: SampleInput): Promise<void> 
 async function verifyControls(project: Staged): Promise<void> {
   await qualifyControl({ project, variant: 'good' });
   await qualifyControl({ project, variant: 'defect' });
+
+  if (project.check.brownfield === true) {
+    return;
+  }
+
   await qualifyControl({ project, variant: 'refactor' });
 }
 

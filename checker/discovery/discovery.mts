@@ -4,8 +4,14 @@ import { classifyResult } from '../classify-result.mts';
 import { hashSource, readRegular } from '../storage/index.mts';
 import type { Contract, Inventory } from '../types.d.mts';
 import { hashSurface } from './hash-surface.mts';
+import { isHiddenDirectoryPath } from './is-hidden-dir.mts';
 import { isTestOrFixturePath } from './is-test-path.mts';
-import { MANIFESTS } from './manifests.mts';
+import {
+  EXTENSIONS,
+  MANIFESTS,
+  PACKAGE_DATA_EXTENSIONS,
+  UNSUPPORTED_EXTENSIONS,
+} from './manifests.mts';
 import { listRankedPaths } from './rank-path.mts';
 
 const EXECUTION = { bytes: 16_777_216, files: 1_024, source: 524_288 } as const;
@@ -14,33 +20,6 @@ const MAX_BYTES = 524_288;
 const MAX_SOURCE = 131_072;
 const MAX_SAMPLES = 32_768;
 const MAX_SAMPLE = 8_192;
-
-const EXTENSIONS: ReadonlySet<string> = new Set([
-  '.js',
-  '.cjs',
-  '.mjs',
-  '.ts',
-  '.mts',
-  '.cts',
-  '.tsx',
-  '.jsx',
-  '.py',
-  '.rs',
-  '.go',
-]);
-
-const UNSUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
-  '.java',
-  '.c',
-  '.cc',
-  '.cpp',
-  '.swift',
-  '.rb',
-  '.cs',
-  '.kt',
-]);
-
-const PACKAGE_DATA_EXTENSIONS: ReadonlySet<string> = new Set(['.txt', '.json', '.csv']);
 
 type Selected = { files: Map<string, string>; omitted: readonly string[] };
 
@@ -79,12 +58,40 @@ function isPackageDataPath({ packageRoots, path }: PackageDataInput): boolean {
   );
 }
 
+type NonCodeInput = Readonly<{
+  decision?: string;
+  extension: string;
+  packageRoots: readonly string[];
+  path: string;
+}>;
+
+function classifyNonCodePath({
+  decision,
+  extension,
+  packageRoots,
+  path,
+}: NonCodeInput): 'read' | 'omitted' | 'skip' {
+  if (isPackageDataPath({ packageRoots, path })) {
+    return 'read';
+  }
+
+  if (decision === 'fail' || (UNSUPPORTED_EXTENSIONS.has(extension) && decision !== 'not_applicable')) {
+    return 'omitted';
+  }
+
+  return 'skip';
+}
+
 function classifyPath({
   path,
   decision,
   excludeTests,
   packageRoots,
 }: ClassifyPathInput): 'read' | 'omitted' | 'skip' {
+  if (isHiddenDirectoryPath(path) && decision !== 'fail') {
+    return 'skip';
+  }
+
   const extension = extname(path);
   const name = basename(path);
 
@@ -92,18 +99,7 @@ function classifyPath({
     return classifyReadablePath({ decision, excludeTests, path });
   }
 
-  if (isPackageDataPath({ packageRoots, path })) {
-    return 'read';
-  }
-
-  if (
-    (UNSUPPORTED_EXTENSIONS.has(extension) && decision !== 'not_applicable') ||
-    decision === 'fail'
-  ) {
-    return 'omitted';
-  }
-
-  return 'skip';
+  return classifyNonCodePath({ decision, extension, packageRoots, path });
 }
 
 type ReadSampleInput = { readonly root: string; readonly path: string; readonly limit: number };
@@ -185,7 +181,9 @@ function listPackageRoots(input: SelectInput): readonly string[] {
     return [];
   }
 
-  const packageModules = input.contract.paths.filter((path) => path.endsWith('/__init__.py'));
+  const packageModules = input.contract.paths.filter(
+    (path) => path.endsWith('/__init__.py') && !isHiddenDirectoryPath(path),
+  );
 
   return packageModules.map((path) => dirname(path));
 }
@@ -194,7 +192,7 @@ function hasProductionCode(paths: readonly string[]): boolean {
   return paths.some((path) => {
     const extension = extname(path);
 
-    return EXTENSIONS.has(extension) && !isTestOrFixturePath(path);
+    return EXTENSIONS.has(extension) && !isHiddenDirectoryPath(path) && !isTestOrFixturePath(path);
   });
 }
 

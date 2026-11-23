@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.29.0
+
+- Isolated probe JSON observation from noisy library stdout (`parseProbeStdout` + `RUNNER_REVISION = 6`): supports pure JSON, explicit `__TENET_JSON__:` sentinels, trailing single-line JSON after framework logs (such as `[GIN-debug]`), and trailing multi-line JSON blocks so stdout-logging frameworks no longer drop valid probes as `unresolved`.
+- Upgraded control patch matching (`applyControl`) with bidirectional LF/CRLF normalization, optional `line` / `occurrence` disambiguators, trimmed-line contiguous block matching with re-indentation, line-numbered ambiguous match diagnostics, and large-file edit ceilings.
+- Added external missing-dependency fast-fail across Python, Node, Go, and Rust (`missing-package.mts`): slices Python/Node tracebacks from the tail so chained `ModuleNotFoundError`/`ImportError` exceptions are preserved, distinguishes missing host packages from fixable local import typos, and partitions unrecoverable errors out of repair loops with zero wasted retries.
+- Unlocked safe brownfield qualification in `tenet audit`: allows single-fix brownfield controls (`defect === actual && good !== defect`) without a redundant `refactor` mutant, and promotes clean unmodified failing witnesses with `repro` through a mandatory Skeptic v2 confirmation gate (auto-downgrading to `unresolved` if Skeptic rejects, omits, or cannot run, and never polluting `.contracts/` pins).
+- Filtered hidden tool/cache dot-directories (`.yarn/`, `.venv/`, `.cache/`, `.tox/`, `.next/`, `.pytest_cache/`, etc.) across `tenet-engine`, `tenet audit`, and the embedded checker discovery while preserving `.contracts/`, `.github/`, and root dotfiles.
+- Upgraded `checker-prompt.md` and `audit-prompt.md` to synthesize deterministic 50–300 case `< 200ms` combinatorial/property fuzzing probes with ~30-step minimal counterexample shrinking (`{"ok":false,"passed":<n>,"case":...}`).
+
 ## v0.28.0
 
 - Fixed silent dropping of oversized docs, tests, cross-module seam files, and monolithic production files in `tenet audit`: `readModulePacket` now reads bounded UTF-8 prefixes on line boundaries instead of discarding files above per-file byte limits, and `discover` automatically splits monolithic source files (`> 48 KB` up to `512 KB`) into contiguous semantic definition-aligned line windows (`windows`) so every part of large core files is audited with header/import context intact.

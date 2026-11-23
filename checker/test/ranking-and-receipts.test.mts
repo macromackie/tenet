@@ -101,26 +101,28 @@ void test('refactor-only control collision and failure emit targeted repair guid
     return;
   }
 
-  const files = new Map<string, string>([['sample.py', 'def f(x):\n    return 0\n']]);
+  const greenfieldFiles = new Map<string, string>([['sample.py', 'def f(x):\n    return 1\n']]);
 
   assert.throws(
     () =>
       validate({
         check: {
-          defect: [],
+          defect: [{ find: 'return 1', replace: 'return 0' }],
           expected: 1,
-          good: [{ find: 'return 0', replace: 'return 1' }],
+          good: [],
           id: 'same-refactor',
           promise: 'f returns 1.',
-          refactor: [{ find: 'return 0', replace: 'return 1' }],
+          refactor: [],
           runtime: 'python',
           subject: 'sample.py',
           test: 'import sample\nprint(sample.f(0))\n',
         },
-        files,
+        files: greenfieldFiles,
       }),
     /refactor matched good; rewrite refactor as a distinct behavior-preserving edit/v,
   );
+
+  const files = new Map<string, string>([['sample.py', 'def f(x):\n    return 0\n']]);
 
   const badRefactor: Check = {
     defect: 'def f(x):\n    return 0\n',

@@ -16,7 +16,9 @@ export async function saveReceipt({ ctx, rows, pin }: SaveReceiptInput): Promise
     job: { request },
   } = ctx;
 
-  const qualifications = rows.filter((row) => row.outcome !== 'unresolved').map((row) => row.check);
+  const qualifications = rows
+    .filter((row) => row.outcome !== 'unresolved' && row.brownfield_unverified !== true)
+    .map((row) => row.check);
 
   const candidate = Option.fromUndefinedOr(pin);
   const serialized = Option.map(candidate, (recipe) => JSON.stringify(recipe));

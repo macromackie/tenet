@@ -11,9 +11,6 @@ const MAX_REPAIR_PREVIEW_CHARS = 32_768;
 const MAX_FULL_REPAIRS = 2;
 const MAX_PARTIAL_REPAIRS = 1;
 
-const MISSING_DEP_PATTERN =
-  /ERR_MODULE_NOT_FOUND|ModuleNotFoundError|error\[E04(?:32|63)\]|target\/debug\/deps|no required module provides package|cannot find package|go mod vendor/v;
-
 export type Checked = {
   cache: boolean;
   pin: Pin;
@@ -86,6 +83,7 @@ async function generateOnce(input: GenerationCallInput): Promise<GeneratedAttemp
   });
 
   const evaluated = await qualifyBundle({
+    allowBrownfieldWitness: ctx.job.request.allowBrownfieldWitness === true,
     contractName: ctx.job.contract.name,
     current: ctx.evaluation.current,
     projectRoot: ctx.evaluation.root,
@@ -95,16 +93,8 @@ async function generateOnce(input: GenerationCallInput): Promise<GeneratedAttemp
   return { evaluated, raw };
 }
 
-function isUnrecoverableMissingDependency(errors: readonly string[]): boolean {
-  return errors.length > 0 && errors.every((error) => MISSING_DEP_PATTERN.test(error));
-}
-
 function shouldRepair(evaluated: CandidateEvaluation): boolean {
-  if (evaluated.errors.length === 0) {
-    return false;
-  }
-
-  return !isUnrecoverableMissingDependency(evaluated.errors);
+  return evaluated.errors.length > 0;
 }
 
 function readMaxRepairs(evaluated: CandidateEvaluation): number {

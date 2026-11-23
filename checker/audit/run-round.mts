@@ -140,6 +140,7 @@ async function verifyModuleCandidates({
   const contracts = synthesis.candidates.map((item) => ({ ...item.contract, runtimePaths }));
 
   const findings = await run({
+    allowBrownfieldWitness: true,
     contracts,
     fresh,
     maxGenerations: reviewBudget,

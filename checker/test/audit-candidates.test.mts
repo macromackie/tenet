@@ -7,6 +7,7 @@ import {
   applySkepticOutput,
   parseAuditCandidates,
   readModulePacket,
+  rejectUnverifiedWitnesses,
   selectAuditTier,
 } from '../audit/index.mts';
 import type { Finding } from '../types.d.mts';
@@ -219,4 +220,64 @@ void test('readModulePacket slices semantic windows and truncates oversized test
   } finally {
     await rm(root, { force: true, recursive: true });
   }
+});
+
+function buildUnverifiedWitnesses(): readonly Finding[] {
+  return [
+    {
+      ...makeFinding({ check: 'confirmed-bf', message: 'Mismatch.', outcome: 'failed' }),
+      brownfield_unverified: true,
+    },
+    {
+      ...makeFinding({ check: 'rejected-bf', message: 'Mismatch.', outcome: 'failed' }),
+      brownfield_unverified: true,
+    },
+    {
+      ...makeFinding({ check: 'omitted-bf', message: 'Mismatch.', outcome: 'failed' }),
+      brownfield_unverified: true,
+    },
+    makeFinding({ check: 'verified-check', message: 'Mismatch.', outcome: 'failed' }),
+  ];
+}
+
+function assertUnverifiedVerdicts(findings: readonly Finding[]): void {
+  const reviewed = applySkepticOutput({
+    findings,
+    raw: {
+      reviews: [
+        { check: 'confirmed-bf', reason: 'Real bug on zero.', verdict: 'high' },
+        { check: 'rejected-bf', reason: '', verdict: 'reject' },
+      ],
+    },
+  });
+
+  const confirmed = reviewed.find((row) => row.check === 'confirmed-bf');
+  const rejected = reviewed.find((row) => row.check === 'rejected-bf');
+  const omitted = reviewed.find((row) => row.check === 'omitted-bf');
+  const verified = reviewed.find((row) => row.check === 'verified-check');
+  const hasHighPrefix = (confirmed?.message ?? '').startsWith('[high] ');
+
+  assert.deepEqual(
+    [confirmed?.outcome, hasHighPrefix, rejected?.outcome, omitted?.outcome, verified?.outcome],
+    ['failed', true, 'unresolved', 'unresolved', 'failed'],
+  );
+}
+
+void test('skeptic requires explicit severity for unverified brownfield witnesses and downgrades otherwise', () => {
+  const findings = buildUnverifiedWitnesses();
+
+  assertUnverifiedVerdicts(findings);
+
+  const onFailure = rejectUnverifiedWitnesses(findings);
+  const bfFailed = onFailure.filter((row) => row.brownfield_unverified === true);
+  const allRejectedOnFailure = bfFailed.every((row) => row.outcome === 'unresolved');
+  const verifiedAfter = onFailure.find((row) => row.check === 'verified-check');
+  const onMalformed = applySkepticOutput({ findings, raw: { malformed: true } });
+  const bfMalformed = onMalformed.filter((row) => row.brownfield_unverified === true);
+  const allRejectedOnMalformed = bfMalformed.every((row) => row.outcome === 'unresolved');
+
+  assert.deepEqual(
+    [allRejectedOnFailure, verifiedAfter?.outcome, allRejectedOnMalformed],
+    [true, 'failed', true],
+  );
 });

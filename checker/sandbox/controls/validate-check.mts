@@ -2,14 +2,27 @@ import { CheckerError } from '../../checker-error.mts';
 import type { Check } from '../../types.d.mts';
 import { applyControl } from './apply-control.mts';
 
-type CandidateInput = Readonly<{ check: unknown; files: ReadonlyMap<string, string> }>;
+type CandidateInput = Readonly<{
+  check: unknown;
+  files: ReadonlyMap<string, string>;
+  fromPin?: boolean;
+}>;
 
 type Input = Readonly<{
   fields: ReadonlyMap<string, unknown>;
   files: ReadonlyMap<string, string>;
 }>;
 
-type ControlInput = Readonly<{ fields: Input['fields']; source: string }>;
+type ControlInput = Readonly<{
+  fields: Input['fields'];
+  fromPin: boolean;
+  source: string;
+}>;
+
+type ControlLimitInput = Readonly<{
+  control: unknown;
+  source: string;
+}>;
 
 type NativeInput = Readonly<{
   base: Omit<Check, 'test' | 'testFile'>;
@@ -17,7 +30,10 @@ type NativeInput = Readonly<{
   files: Input['files'];
 }>;
 
+type ControlsResult = Pick<Check, 'brownfield' | 'defect' | 'good' | 'refactor'>;
+
 const MAX_FIELD_BYTES = 131_072;
+const EDIT_LIMIT_PADDING = 32_768;
 const ID_PATTERN = /^[a-z][a-z0-9\-]{0,63}$/v;
 const NATIVE_TEST_RUNTIMES: ReadonlySet<string> = new Set(['node', 'python']);
 
@@ -104,29 +120,83 @@ function assertDistinctControls({ defect, good, refactor }: DistinctControlsInpu
   }
 }
 
-function readControls({ fields, source }: ControlInput): Pick<Check, 'defect' | 'good' | 'refactor'> {
-  const rawGood = fields.get('good');
-  const rawDefect = fields.get('defect');
-  const rawRefactor = fields.get('refactor');
-  const good = applyControl({ control: rawGood, label: 'good', limit: MAX_FIELD_BYTES, source });
+function readControlLimit({ control, source }: ControlLimitInput): number {
+  if (Array.isArray(control)) {
+    const padded = Buffer.byteLength(source) + EDIT_LIMIT_PADDING;
 
-  const defect = applyControl({
-    control: rawDefect,
-    label: 'defect',
-    limit: MAX_FIELD_BYTES,
-    source,
-  });
+    return Math.max(MAX_FIELD_BYTES, padded);
+  }
 
-  const refactor = applyControl({
-    control: rawRefactor,
-    label: 'refactor',
-    limit: MAX_FIELD_BYTES,
-    source,
-  });
+  return MAX_FIELD_BYTES;
+}
+
+type ResolveRefactorInput = Readonly<{
+  allowBrownfield: boolean;
+  defect: string;
+  explicitBrownfield: boolean;
+  good: string;
+  rawRefactor: unknown;
+  source: string;
+}>;
+
+function resolveRefactor({
+  allowBrownfield,
+  defect,
+  explicitBrownfield,
+  good,
+  rawRefactor,
+  source,
+}: ResolveRefactorInput): ControlsResult {
+  if (allowBrownfield && rawRefactor === undefined) {
+    return { brownfield: true, defect, good, refactor: good };
+  }
+
+  const limit = readControlLimit({ control: rawRefactor, source });
+  const refactor = applyControl({ control: rawRefactor, label: 'refactor', limit, source });
+
+  if (allowBrownfield && refactor === good) {
+    return { brownfield: true, defect, good, refactor };
+  }
 
   assertDistinctControls({ defect, good, refactor });
 
+  if (allowBrownfield && explicitBrownfield) {
+    return { brownfield: true, defect, good, refactor };
+  }
+
   return { defect, good, refactor };
+}
+
+type BuildControlInput = Readonly<{
+  control: unknown;
+  label: string;
+  source: string;
+}>;
+
+function buildControl({ control, label, source }: BuildControlInput): string {
+  const limit = readControlLimit({ control, source });
+
+  return applyControl({ control, label, limit, source });
+}
+
+function readControls({ fields, fromPin, source }: ControlInput): ControlsResult {
+  const rawGood = fields.get('good');
+  const rawDefect = fields.get('defect');
+  const rawRefactor = fields.get('refactor');
+  const good = buildControl({ control: rawGood, label: 'good', source });
+  const defect = buildControl({ control: rawDefect, label: 'defect', source });
+  const explicitBrownfield = fields.get('brownfield') === true;
+  const isBrownfieldOrigin = defect === source || (fromPin && explicitBrownfield);
+  const allowBrownfield = good !== defect && isBrownfieldOrigin;
+
+  return resolveRefactor({
+    allowBrownfield,
+    defect,
+    explicitBrownfield,
+    good,
+    rawRefactor,
+    source,
+  });
 }
 
 function attachEntry({ base, fields, files }: NativeInput): Check {
@@ -148,7 +218,7 @@ function attachEntry({ base, fields, files }: NativeInput): Check {
 }
 
 /** Decode the observation, materialize controls and verify project paths supplied by the planner. */
-export function validate({ check, files }: CandidateInput): Check {
+export function validate({ check, files, fromPin = false }: CandidateInput): Check {
   const fields = readFields(check);
   const target = readTarget({ fields, files });
   const source = files.get(target.subject);
@@ -157,7 +227,8 @@ export function validate({ check, files }: CandidateInput): Check {
     throw new CheckerError({ message: 'the generated checker target is missing from source' });
   }
 
-  const base = { ...target, ...readControls({ fields, source }) };
+  const controls = readControls({ fields, fromPin, source });
+  const base = { ...target, ...controls };
 
   return attachEntry({ base, fields, files });
 }

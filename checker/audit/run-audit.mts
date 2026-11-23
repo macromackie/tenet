@@ -2,6 +2,7 @@ import { reportProgress } from '../progress-log.mts';
 import { assertSandboxAvailable } from '../sandbox/index.mts';
 import type { Finding } from '../types.d.mts';
 import { mergeModuleReports } from './merge-report.mts';
+import { rejectUnverifiedWitnesses } from './reject-unverified.mts';
 import { type BudgetTracker, type RoundInput, runModuleRound } from './run-round.mts';
 import { reviewFailingWitnesses } from './skeptic.mts';
 import type { PriorRoundFeedback } from './synthesize.mts';
@@ -130,8 +131,12 @@ async function applySkepticFilter({
   report,
   root,
 }: ApplySkepticInput): Promise<AuditModuleReport> {
-  if (!hasFailingWitness(report.findings) || budget.readRemaining() <= 0) {
+  if (!hasFailingWitness(report.findings)) {
     return report;
+  }
+
+  if (budget.readRemaining() <= 0) {
+    return { ...report, findings: rejectUnverifiedWitnesses(report.findings) };
   }
 
   await reportProgress({ contract: module.name, phase: 'reviewing witnesses', progressFile });

@@ -27,6 +27,7 @@ export type WitnessRepro = typeof WitnessRepro.Type;
 const OptionalRepro = Schema.OptionFromOptionalKey(WitnessRepro);
 
 const FindingFields = Schema.Struct({
+  brownfield_unverified: OptionalFlag,
   check: Schema.String,
   contract: Schema.String,
   cost_usd: NullableCost,
@@ -70,6 +71,7 @@ const OptionalBase = Schema.OptionFromOptionalNullOr(Schema.String);
 const ContractList = Schema.Array(Contract);
 
 const RequestFields = Schema.Struct({
+  allowBrownfieldWitness: OptionalFlag,
   base: OptionalBase,
   contracts: ContractList,
   fresh: OptionalFlag,
@@ -98,6 +100,7 @@ export const Receipt = Schema.toEncoded(ReceiptFields);
 export type Receipt = typeof Receipt.Type;
 
 const CheckFields = Schema.Struct({
+  brownfield: OptionalFlag,
   defect: Schema.String,
   expected: Schema.Unknown,
   good: Schema.String,

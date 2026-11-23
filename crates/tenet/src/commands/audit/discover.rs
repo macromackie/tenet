@@ -5,7 +5,13 @@ mod shard;
 use alloc::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
-use context::{TestIndex, collect_all_docs, format_slash_path, select_module_docs};
+use context::{
+    TestIndex,
+    collect_all_docs,
+    collect_manifests,
+    format_slash_path,
+    select_module_docs,
+};
 use seams::{
     HeaderIndex,
     collect_shard_changes,
@@ -33,18 +39,8 @@ const AUDIT_ONLY_SKIP_SEGMENTS: &[&str] = &[
     "translations",
     "vendored",
 ];
-const MANIFEST_NAMES: &[&str] = &[
-    "Cargo.toml",
-    "go.mod",
-    "package.json",
-    "pyproject.toml",
-    "setup.cfg",
-    "setup.py",
-];
 const MAX_RUNTIME_PATHS: usize = 1_024;
 const NON_RUNTIME_SEGMENTS: &[&str] = &[
-    ".contracts",
-    ".github",
     "__pycache__",
     "__snapshots__",
     "__tests__",
@@ -210,23 +206,15 @@ fn build_test_index(root: &Path, paths: &[PathBuf]) -> TestIndex {
     TestIndex::build(root, &test_paths)
 }
 
-fn collect_manifests(paths: &[PathBuf]) -> Vec<String> {
-    let mut manifests = Vec::new();
-    for path in paths {
-        if path
-            .parent()
-            .is_some_and(|parent| !parent.as_os_str().is_empty())
-        {
-            continue;
-        }
-        if let Some(name) = path.file_name().and_then(|item| item.to_str())
-            && MANIFEST_NAMES.contains(&name)
-        {
-            manifests.push(format_slash_path(path));
-        }
-    }
-    manifests.sort();
-    manifests
+fn has_hidden_dir(path: &Path) -> bool {
+    path.parent().is_some_and(|parent| {
+        parent.components().any(|component| {
+            matches!(
+                component,
+                Component::Normal(segment) if segment.to_string_lossy().starts_with('.')
+            )
+        })
+    })
 }
 
 fn has_segment(path: &Path, blocked: &[&str]) -> bool {
@@ -250,13 +238,7 @@ fn is_matching_filter(path: &Path, filters: &[PathBuf]) -> bool {
 }
 
 fn is_runtime_source(path: &Path) -> bool {
-    let Some(ext) = path.extension().and_then(|item| item.to_str()) else {
-        return false;
-    };
-    if !SOURCE_EXTENSIONS.contains(&ext) || has_segment(path, NON_RUNTIME_SEGMENTS) {
-        return false;
-    }
-    let Some(name) = path.file_name().and_then(|item| item.to_str()) else {
+    let Some((name, ext)) = read_source_name_and_ext(path, NON_RUNTIME_SEGMENTS) else {
         return false;
     };
     !is_test_filename(name, ext)
@@ -278,14 +260,8 @@ fn is_test_filename(name: &str, ext: &str) -> bool {
 }
 
 fn is_test_source(path: &Path) -> bool {
-    let Some(ext) = path.extension().and_then(|item| item.to_str()) else {
-        return false;
-    };
-    if !SOURCE_EXTENSIONS.contains(&ext) || has_segment(path, &["node_modules", "target", "vendor"])
-    {
-        return false;
-    }
-    let Some(name) = path.file_name().and_then(|item| item.to_str()) else {
+    let Some((name, ext)) = read_source_name_and_ext(path, &["node_modules", "target", "vendor"])
+    else {
         return false;
     };
     has_segment(path, TEST_SEGMENTS) || is_test_filename(name, ext)
@@ -296,4 +272,16 @@ fn read_module_key(path: &Path) -> String {
         Some(parent) if !parent.as_os_str().is_empty() => format_slash_path(parent),
         _ => String::from("root"),
     }
+}
+
+fn read_source_name_and_ext<'path>(
+    path: &'path Path,
+    blocked: &[&str],
+) -> Option<(&'path str, &'path str)> {
+    let ext = path.extension().and_then(|item| item.to_str())?;
+    if !SOURCE_EXTENSIONS.contains(&ext) || has_hidden_dir(path) || has_segment(path, blocked) {
+        return None;
+    }
+    let name = path.file_name().and_then(|item| item.to_str())?;
+    Some((name, ext))
 }

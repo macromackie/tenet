@@ -5,6 +5,7 @@ import type { Finding } from '../types.d.mts';
 import { applySkepticOutput } from './apply-skeptic.mts';
 import { selectAuditTier } from './model-tier.mts';
 import { readModulePacket } from './packet.mts';
+import { rejectUnverifiedWitnesses } from './reject-unverified.mts';
 import type { AuditModule } from './wire.mts';
 
 const SKEPTIC_INSTRUCTIONS = [
@@ -14,6 +15,7 @@ const SKEPTIC_INSTRUCTIONS = [
   'Use "critical" for unhandled crashes/panics/exceptions on valid input, data loss, security boundary violations, or unexpected mutation of caller-owned inputs or receivers.',
   'Use "high" for concrete wrong results, round-trip or metamorphic contradictions, cross-API inconsistencies, or clear violations of documented guarantees.',
   'Use "medium" for genuine but narrow edge-case defects with limited impact.',
+  'Witnesses marked `brownfield_unverified: true` skipped control-patch verification; return "critical"|"high"|"medium" ONLY when `repro.code` clearly proves a real defect against `sources`/`docs`/`tests`, otherwise return "reject".',
   'Be skeptical: inspect `repro.code` carefully and prefer "reject" over inflating a flawed probe or intentional test-blessed quirk into a defect.',
 ].join('\n');
 
@@ -45,6 +47,7 @@ async function buildSkepticPayload({ failed, module, root }: BuildPayloadInput):
   const packet = await readModulePacket({ includeTests: true, module, root });
 
   const witnesses = failed.map((item) => ({
+    brownfield_unverified: item.brownfield_unverified === true,
     check: item.check,
     contract: item.contract,
     message: item.message,
@@ -107,7 +110,7 @@ export async function reviewFailingWitnesses({
   const { costUsd, outcome, requests } = await callSkepticModel({ deep, source });
 
   if (Result.isFailure(outcome)) {
-    return { costUsd, findings, requests };
+    return { costUsd, findings: rejectUnverifiedWitnesses(findings), requests };
   }
 
   const reviewed = applySkepticOutput({ findings, raw: outcome.success });

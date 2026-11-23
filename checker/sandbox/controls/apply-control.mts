@@ -1,10 +1,9 @@
+import { Option } from 'effect';
 import { CheckerError } from '../../checker-error.mts';
-import { buildEditError } from './control-diagnostics.mts';
+import { applySingleEdit, type ControlEdit } from './match-control-edit.mts';
 
 const MAX_CONTROL_EDITS = 8;
 const MAX_EDIT_BYTES = 65_536;
-
-type ControlEdit = Readonly<{ find: string; replace: string }>;
 
 type ControlInput = Readonly<{
   control: unknown;
@@ -18,22 +17,11 @@ type ReadEditTextInput = Readonly<{
   value: unknown;
 }>;
 
-type ApplySingleInput = Readonly<{
-  current: string;
-  edit: ControlEdit;
-  label: string;
-}>;
-
 type ApplyEditsInput = Readonly<{
   edits: readonly unknown[];
   label: string;
   limit: number;
   source: string;
-}>;
-
-type NormalizeInput = Readonly<{
-  current: string;
-  find: string;
 }>;
 
 type LimitCheckInput = Readonly<{
@@ -45,6 +33,12 @@ type LimitCheckInput = Readonly<{
 type StringControlInput = Readonly<{
   control: string;
   label: string;
+  limit: number;
+}>;
+
+type OversizedControlInput = Readonly<{
+  bytes: number;
+  controlName: string;
   limit: number;
 }>;
 
@@ -62,6 +56,20 @@ function readEditText({ allowEmpty, value }: ReadEditTextInput): string {
   return value;
 }
 
+function readOptionalHint(value: unknown): Option.Option<number> {
+  if (value === undefined) {
+    return Option.none();
+  }
+
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1) {
+    return Option.some(value);
+  }
+
+  throw new CheckerError({
+    message: 'a control edit line or occurrence hint must be a positive integer',
+  });
+}
+
 function readEditMap(item: unknown): ReadonlyMap<string, unknown> {
   if (item === null || typeof item !== 'object' || Array.isArray(item)) {
     throw new CheckerError({ message: 'each control edit must be a find/replace object' });
@@ -70,6 +78,20 @@ function readEditMap(item: unknown): ReadonlyMap<string, unknown> {
   const entries = Object.entries(item);
 
   return new Map<string, unknown>(entries);
+}
+
+type HintPair = Readonly<{ line?: number; occurrence?: number }>;
+
+function readEditHints(fields: ReadonlyMap<string, unknown>): HintPair {
+  const rawLine = fields.get('line');
+  const rawOccurrence = fields.get('occurrence');
+  const lineOption = readOptionalHint(rawLine);
+  const occurrenceOption = readOptionalHint(rawOccurrence);
+
+  return {
+    line: Option.getOrUndefined(lineOption),
+    occurrence: Option.getOrUndefined(occurrenceOption),
+  };
 }
 
 function readControlEdit(item: unknown): ControlEdit {
@@ -83,39 +105,9 @@ function readControlEdit(item: unknown): ControlEdit {
     throw new CheckerError({ message: 'a control edit must change the matched source' });
   }
 
-  return { find, replace };
-}
+  const hints = readEditHints(fields);
 
-function normalizeEditTarget({ current, find }: NormalizeInput): string {
-  if (current.includes(find)) {
-    return find;
-  }
-
-  if (find.includes('\r\n') && !current.includes('\r\n')) {
-    return find.replaceAll('\r\n', '\n');
-  }
-
-  return find;
-}
-
-function applySingleEdit({ current, edit, label }: ApplySingleInput): string {
-  const target = normalizeEditTarget({ current, find: edit.find });
-  const first = current.indexOf(target);
-
-  if (first === -1) {
-    throw buildEditError({ current, find: edit.find, kind: 'missing', label });
-  }
-
-  const second = current.indexOf(target, first + 1);
-
-  if (second !== -1) {
-    throw buildEditError({ current, find: edit.find, kind: 'ambiguous', label });
-  }
-
-  const prefix = current.slice(0, first);
-  const suffix = current.slice(first + target.length);
-
-  return `${prefix}${edit.replace}${suffix}`;
+  return { find, ...hints, replace };
 }
 
 function assertWithinLimit({ current, label, limit }: LimitCheckInput): void {
@@ -149,12 +141,6 @@ function applyEdits({ edits, label, limit, source }: ApplyEditsInput): string {
 
   return current;
 }
-
-type OversizedControlInput = Readonly<{
-  bytes: number;
-  controlName: string;
-  limit: number;
-}>;
 
 function buildOversizedControlError({
   bytes,

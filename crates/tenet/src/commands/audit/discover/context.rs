@@ -8,6 +8,14 @@ use std::{
 const DOC_LIMIT: usize = 4;
 const GENERIC_STEMS: &[&str] = &["__init__", "index", "init", "lib", "main", "mod"];
 const LOW_TEST_THRESHOLD: usize = 1;
+const MANIFEST_NAMES: &[&str] = &[
+    "Cargo.toml",
+    "go.mod",
+    "package.json",
+    "pyproject.toml",
+    "setup.cfg",
+    "setup.py",
+];
 const MAX_TEST_FILE_BYTES: usize = 16_000;
 const MAX_TEST_FILES: usize = 192;
 const MAX_TEST_TOTAL_BYTES: usize = 1_000_000;
@@ -124,6 +132,26 @@ pub(super) fn collect_all_docs(paths: &[PathBuf]) -> Vec<String> {
     }
     docs.sort();
     docs
+}
+
+/// Collect root-level package manifest paths across the repository.
+pub(super) fn collect_manifests(paths: &[PathBuf]) -> Vec<String> {
+    let mut manifests = Vec::new();
+    for path in paths {
+        if path
+            .parent()
+            .is_some_and(|parent| !parent.as_os_str().is_empty())
+        {
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(|item| item.to_str())
+            && MANIFEST_NAMES.contains(&name)
+        {
+            manifests.push(format_slash_path(path));
+        }
+    }
+    manifests.sort();
+    manifests
 }
 
 /// Format a relative repository path using forward slashes across platforms.

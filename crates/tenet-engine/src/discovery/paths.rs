@@ -16,9 +16,38 @@ use crate::lock;
 /// The names a scan never enters or reads.
 const PROTECTED_NAMES: [&str; 4] = [".git", ".tenet", ".tenet.lock", ".env"];
 
+/// Hidden tool, cache, build, and virtualenv directories skipped during discovery while keeping
+/// dotfiles and checked-in config directories (`.contracts`, `.github`, `.cargo`, `.config`)
+/// visible.
+const SKIPPED_HIDDEN_DIRS: &[&str] = &[
+    ".cache",
+    ".eggs",
+    ".gradle",
+    ".hypothesis",
+    ".mypy_cache",
+    ".next",
+    ".nox",
+    ".nuxt",
+    ".parcel-cache",
+    ".pnpm-store",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".svelte-kit",
+    ".tox",
+    ".turbo",
+    ".venv",
+    ".wrangler",
+    ".yarn",
+];
+
 fn is_protected(name: &OsStr) -> bool {
     let text = name.to_string_lossy();
     PROTECTED_NAMES.contains(&text.as_ref()) || text.starts_with(".env.")
+}
+
+fn is_skipped_hidden_dir(name: &OsStr) -> bool {
+    name.to_str()
+        .is_some_and(|text| SKIPPED_HIDDEN_DIRS.contains(&text))
 }
 
 /// List all repository-relative files eligible for contract assessment under `root`.
@@ -34,7 +63,8 @@ pub fn list_paths(root: &Path) -> Result<Vec<PathBuf>, DiscoveryError> {
             entry.depth() == 0
                 || !(is_protected(entry.file_name())
                     || entry.file_type().is_some_and(|kind| kind.is_dir())
-                        && (entry.path().join(".git").symlink_metadata().is_ok()
+                        && (is_skipped_hidden_dir(entry.file_name())
+                            || entry.path().join(".git").symlink_metadata().is_ok()
                             || entry
                                 .path()
                                 .strip_prefix(&prefix)

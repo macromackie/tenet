@@ -3,10 +3,54 @@ import type { Finding } from '../types.d.mts';
 const SUMMARY_LIMIT = 512;
 
 type BuildFindingInput = Pick<Finding, 'check' | 'contract' | 'message' | 'outcome'> &
-  Partial<Pick<Finding, 'pin_reused' | 'repro' | 'reused' | 'subject'>>;
+  Partial<Pick<Finding, 'brownfield_unverified' | 'pin_reused' | 'repro' | 'reused' | 'subject'>>;
+
+type OptionalFlagsInput = Readonly<{
+  brownfield_unverified?: boolean;
+  finding: Finding;
+  pin_reused?: boolean;
+  repro?: Finding['repro'];
+}>;
+
+type WithPinInput = Readonly<{
+  finding: Finding;
+  pin_reused?: boolean;
+}>;
+
+function attachPinFlag({ finding, pin_reused }: WithPinInput): Finding {
+  if (pin_reused === true) {
+    return { ...finding, pin_reused: true };
+  }
+
+  return finding;
+}
+
+function attachOptionalMetadata({
+  brownfield_unverified,
+  finding,
+  pin_reused,
+  repro,
+}: OptionalFlagsInput): Finding {
+  const base = attachPinFlag({ finding, pin_reused });
+
+  if (repro !== undefined && brownfield_unverified === true) {
+    return { ...base, brownfield_unverified: true, repro };
+  }
+
+  if (repro !== undefined) {
+    return { ...base, repro };
+  }
+
+  if (brownfield_unverified === true) {
+    return { ...base, brownfield_unverified: true };
+  }
+
+  return base;
+}
 
 /** Build a single line of terminal-safe evidence. */
 export function buildFinding({
+  brownfield_unverified,
   pin_reused,
   repro,
   subject = null,
@@ -27,17 +71,5 @@ export function buildFinding({
     subject,
   };
 
-  if (pin_reused === true && repro !== undefined) {
-    return { ...finding, pin_reused: true, repro };
-  }
-
-  if (pin_reused === true) {
-    return { ...finding, pin_reused: true };
-  }
-
-  if (repro !== undefined) {
-    return { ...finding, repro };
-  }
-
-  return finding;
+  return attachOptionalMetadata({ brownfield_unverified, finding, pin_reused, repro });
 }

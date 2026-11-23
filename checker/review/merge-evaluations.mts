@@ -1,8 +1,15 @@
+import { isMissingExternalDepMessage } from '../sandbox/index.mts';
 import type { Check, Finding } from '../types.d.mts';
 import type { CandidateEvaluation } from './pin/index.mts';
 
 type MergeEvaluationsInput = Readonly<{
   prior: CandidateEvaluation;
+  repaired: CandidateEvaluation;
+}>;
+
+type CollectUnresolvedInput = Readonly<{
+  prior: CandidateEvaluation;
+  qualifiedIds: ReadonlySet<string>;
   repaired: CandidateEvaluation;
 }>;
 
@@ -26,13 +33,36 @@ function collectOpen({ prior, repaired }: MergeEvaluationsInput): readonly strin
   return [...openItems];
 }
 
-type CollectUnresolvedInput = Readonly<{
-  qualifiedIds: ReadonlySet<string>;
-  repaired: CandidateEvaluation;
-}>;
+function collectUnrecoverableErrors({ prior, repaired }: MergeEvaluationsInput): readonly string[] {
+  const unrecoverableItems = new Set<string>([
+    ...(prior.unrecoverableErrors ?? []),
+    ...(repaired.unrecoverableErrors ?? []),
+  ]);
 
-function collectUnresolved({ qualifiedIds, repaired }: CollectUnresolvedInput): readonly Finding[] {
-  return repaired.extraUnresolved.filter((finding) => !qualifiedIds.has(finding.check));
+  return [...unrecoverableItems];
+}
+
+function isPreservedPriorFinding(finding: Finding): boolean {
+  return finding.brownfield_unverified === true || isMissingExternalDepMessage(finding.message);
+}
+
+function collectUnresolved({
+  prior,
+  qualifiedIds,
+  repaired,
+}: CollectUnresolvedInput): readonly Finding[] {
+  const activeRepaired = repaired.extraUnresolved.filter(
+    (finding) => !qualifiedIds.has(finding.check),
+  );
+
+  const repairedIdList = activeRepaired.map((finding) => finding.check);
+  const coveredIds = new Set<string>([...qualifiedIds, ...repairedIdList]);
+
+  const preservedPrior = prior.extraUnresolved.filter(
+    (finding) => !coveredIds.has(finding.check) && isPreservedPriorFinding(finding),
+  );
+
+  return [...preservedPrior, ...activeRepaired];
 }
 
 /** Combine previously qualified checks with newly repaired candidates without losing progress. */
@@ -40,13 +70,15 @@ export function mergeEvaluations({ prior, repaired }: MergeEvaluationsInput): Ca
   const qualified = collectQualified({ prior, repaired });
   const qualifiedIdList = qualified.map((check) => check.id);
   const qualifiedIds = new Set<string>(qualifiedIdList);
-  const extraUnresolved = collectUnresolved({ qualifiedIds, repaired });
+  const extraUnresolved = collectUnresolved({ prior, qualifiedIds, repaired });
   const open = collectOpen({ prior, repaired });
+  const unrecoverableErrors = collectUnrecoverableErrors({ prior, repaired });
 
   return {
     errors: repaired.errors,
     extraUnresolved,
     open,
     qualified,
+    unrecoverableErrors,
   };
 }
