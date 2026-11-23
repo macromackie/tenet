@@ -188,17 +188,34 @@ fn write_terminal(out: &mut impl Write, rendered: &RenderedAudit<'_>) -> Result<
     Ok(())
 }
 
-fn write_witness_row(out: &mut impl Write, witness: &WitnessRow<'_>) -> Result<(), CommandError> {
-    let location = witness.subject.unwrap_or(witness.module);
+/// Write the common header and message lines for one failing witness row.
+pub(in crate::commands) fn write_witness_header(
+    out: &mut impl Write,
+    contract: &str,
+    check: &str,
+    location: &str,
+    message: &str,
+) -> Result<(), CommandError> {
     writeln!(
         out,
-        "  {} {}/{}  {}",
+        "  {} {}/{check}  {}",
         format_marker("FAIL"),
-        output::format_styled(witness.contract).bold(),
-        witness.check,
+        output::format_styled(contract).bold(),
         format_dim(location),
     )?;
-    writeln!(out, "    {}", format_display(witness.message))?;
+    writeln!(out, "    {}", format_display(message))?;
+    Ok(())
+}
+
+fn write_witness_row(out: &mut impl Write, witness: &WitnessRow<'_>) -> Result<(), CommandError> {
+    let location = witness.subject.unwrap_or(witness.module);
+    write_witness_header(
+        out,
+        witness.contract,
+        witness.check,
+        location,
+        witness.message,
+    )?;
     if let Some(repro) = witness.repro {
         let observed = repro.observed.as_deref().unwrap_or("null");
         writeln!(

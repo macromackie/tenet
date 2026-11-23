@@ -12,7 +12,7 @@ use crate::error::CommandError;
 const MAX_SLUG_LEN: usize = 48;
 
 /// Materialize runnable witness reproducer scripts under `dir` and return their written paths.
-pub(super) fn write_witness_repros(
+pub(in crate::commands) fn write_witness_repros(
     dir: &Path,
     reports: &[AuditModuleReport],
 ) -> Result<BTreeMap<(String, String), PathBuf>, CommandError> {

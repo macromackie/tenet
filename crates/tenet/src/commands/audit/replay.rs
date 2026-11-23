@@ -63,6 +63,7 @@ pub(in crate::commands) fn build_replay_target(
         lock_path: contract_lock_paths
             .get(finding.contract.as_str())
             .map(|path| (*path).to_owned()),
+        pin_root: None,
         repro: finding.repro.clone(),
         subject: finding.subject.as_deref().map(format_slash_path),
     }
@@ -188,20 +189,42 @@ fn format_expected_observed(expected: Option<&str>, observed: Option<&str>) -> O
     }
 }
 
-fn format_replay_badge(outcome: Outcome) -> (String, String) {
+fn format_replay_badge(outcome: Outcome, pass_label: &str) -> (String, String) {
     match outcome {
         Outcome::Passed => {
             (
                 format_marker("PASS"),
-                output::format_styled("FIXED (PASS)")
-                    .green()
-                    .bold()
-                    .to_string(),
+                output::format_styled(pass_label).green().bold().to_string(),
             )
         },
         Outcome::Failed => (format_marker("FAIL"), format_painted("FAIL")),
         Outcome::Unresolved => (format_marker("REVIEW"), format_painted("REVIEW")),
     }
+}
+
+/// Write a slice of replay results as formatted status rows using `pass_label` for passing rows.
+pub(in crate::commands) fn write_replay_results(
+    out: &mut impl Write,
+    results: &[AuditReplayResult],
+    pass_label: &str,
+) -> Result<(), CommandError> {
+    for result in results {
+        let (marker, label) = format_replay_badge(result.outcome, pass_label);
+        write_status_row(
+            out,
+            &StatusRow {
+                check: &result.check,
+                contract: &result.contract,
+                expected: result.expected.as_deref(),
+                label,
+                marker,
+                message: &result.message,
+                observed: result.observed.as_deref(),
+                subject: result.subject.as_deref(),
+            },
+        )?;
+    }
+    Ok(())
 }
 
 fn read_replay_exit_status(results: &[AuditReplayResult]) -> ExitStatus {
@@ -259,22 +282,7 @@ fn write_replay_terminal(
             format_marker("PASS"),
         )?;
     } else {
-        for result in results {
-            let (marker, label) = format_replay_badge(result.outcome);
-            write_status_row(
-                out,
-                &StatusRow {
-                    check: &result.check,
-                    contract: &result.contract,
-                    expected: result.expected.as_deref(),
-                    label,
-                    marker,
-                    message: &result.message,
-                    observed: result.observed.as_deref(),
-                    subject: result.subject.as_deref(),
-                },
-            )?;
-        }
+        write_replay_results(out, results, "FIXED (PASS)")?;
     }
     writeln!(
         out,

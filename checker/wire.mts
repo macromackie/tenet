@@ -13,6 +13,8 @@ const OptionalNullableCost = Schema.OptionFromOptionalKey(NullableCost);
 const OptionalCount = Schema.OptionFromOptionalKey(Schema.Int);
 const OptionalFlag = Schema.OptionFromOptionalKey(Schema.Boolean);
 const Runtime = Schema.Literals(['node', 'python', 'rust', 'go']);
+const Severity = Schema.Literals(['critical', 'high', 'medium']);
+const OptionalSeverity = Schema.OptionFromOptionalKey(Severity);
 
 const WitnessReproFields = Schema.Struct({
   code: Schema.String,
@@ -40,6 +42,7 @@ const FindingFields = Schema.Struct({
   repro: OptionalRepro,
   requested: Schema.Boolean,
   reused: Schema.Boolean,
+  severity: OptionalSeverity,
   subject: NullableText,
 });
 
@@ -108,6 +111,8 @@ const CheckFields = Schema.Struct({
   promise: Schema.String,
   refactor: Schema.String,
   runtime: Runtime,
+  scriptFile: OptionalText,
+  scriptHash: OptionalText,
   subject: Schema.String,
   test: OptionalText,
   testFile: OptionalText,

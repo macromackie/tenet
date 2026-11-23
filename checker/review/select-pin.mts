@@ -166,6 +166,7 @@ function mergePriorPin({ ctx, generated }: MergePriorInput): SelectedPin {
 
   const pin = updatePin({
     files: ctx.evaluation.current.runtimeFiles,
+    handEditedIds: ctx.handEditedIds,
     next: generated.pin,
     prior: ctx.pin,
   });

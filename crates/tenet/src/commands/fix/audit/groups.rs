@@ -9,6 +9,8 @@ use tenet_checks::behavior::{
     AuditModuleReport,
     AuditReplayTarget,
     Outcome,
+    SeverityLevel,
+    is_severity_at_least,
 };
 
 use super::super::super::audit::{
@@ -28,6 +30,7 @@ pub(super) fn build_fix_groups(
     queue: &AuditQueue,
     contract_filter: Option<&str>,
     filters: &[PathBuf],
+    min_severity: SeverityLevel,
     discovered_modules: &[AuditModuleInput],
     runtime_paths: &[String],
 ) -> Vec<AuditFixGroup> {
@@ -38,6 +41,7 @@ pub(super) fn build_fix_groups(
             report,
             contract_filter,
             filters,
+            min_severity,
             discovered_modules,
             runtime_paths,
         ) {
@@ -53,12 +57,18 @@ pub(super) fn build_module_group(
     report: &AuditModuleReport,
     contract_filter: Option<&str>,
     filters: &[PathBuf],
+    min_severity: SeverityLevel,
     discovered_modules: &[AuditModuleInput],
     runtime_paths: &[String],
 ) -> Option<AuditFixGroup> {
     let contract_lock_paths = build_contract_lock_paths(&report.contracts);
-    let (witnesses, selected_contract_names, mut selected_file_paths) =
-        collect_group_witnesses(report, contract_filter, filters, &contract_lock_paths);
+    let (witnesses, selected_contract_names, mut selected_file_paths) = collect_group_witnesses(
+        report,
+        contract_filter,
+        filters,
+        min_severity,
+        &contract_lock_paths,
+    );
     if witnesses.is_empty() {
         return None;
     }
@@ -125,6 +135,7 @@ fn collect_group_witnesses<'report>(
     report: &'report AuditModuleReport,
     contract_filter: Option<&str>,
     filters: &[PathBuf],
+    min_severity: SeverityLevel,
     contract_lock_paths: &BTreeMap<&str, &str>,
 ) -> (
     Vec<AuditFixWitness>,
@@ -136,6 +147,7 @@ fn collect_group_witnesses<'report>(
     let mut selected_file_paths = BTreeSet::new();
     for finding in &report.findings {
         if finding.outcome != Outcome::Failed
+            || !is_severity_at_least(finding.read_effective_severity(), min_severity)
             || contract_filter.is_some_and(|name| finding.contract != name)
             || !is_matching_finding(&report.name, finding.subject.as_deref(), filters)
         {
@@ -151,6 +163,7 @@ fn collect_group_witnesses<'report>(
             contract: target.contract,
             lock_path: target.lock_path,
             message: finding.message.clone(),
+            pin_root: target.pin_root,
             repro: target.repro,
             subject: target.subject,
         });
@@ -183,7 +196,7 @@ fn select_group_contracts(
     contracts
 }
 
-fn select_group_test_files(
+pub(in crate::commands::fix) fn select_group_test_files(
     module_name: &str,
     files: &[String],
     discovered_modules: &[AuditModuleInput],

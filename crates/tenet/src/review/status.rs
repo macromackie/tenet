@@ -1,10 +1,22 @@
 mod checks;
+mod coverage;
 
 use std::{io::Write as _, path::Path};
 
 pub(crate) use checks::write_mechanical;
-use checks::{collect_failed_behavior_contracts, format_contract_row_state, write_unchecked};
-use serde_json::json;
+use checks::{
+    collect_failed_behavior_contracts,
+    format_contract_row_state,
+    write_status_json,
+    write_unchecked,
+};
+use coverage::write_coverage_section;
+pub(crate) use coverage::{
+    RepoCoverage,
+    compute_coverage,
+    discover_all_contracts,
+    format_coverage_line,
+};
 use tenet_checks::mechanical;
 use tenet_engine::{
     ContractState,
@@ -14,7 +26,6 @@ use tenet_engine::{
 };
 
 use super::{
-    STATUS_VERSION,
     check_command,
     find_model,
     format_ago,
@@ -32,9 +43,7 @@ use crate::{
 
 #[expect(
     clippy::arithmetic_side_effects,
-    clippy::indexing_slicing,
-    reason = "Counts are bounded by the stored review's contracts, and `value` is a JSON object \
-              the function builds."
+    reason = "Counts are bounded by the stored review's contracts."
 )]
 #[expect(
     clippy::else_if_without_else,
@@ -77,7 +86,11 @@ pub(crate) async fn report_status(
     } else {
         None
     };
-    let review = if mechanical.is_some() {
+    let coverage = compute_coverage(root, state).ok();
+    let has_contracts = coverage
+        .as_ref()
+        .is_some_and(|map| !map.contracts.is_empty());
+    let review = if mechanical.is_some() || has_contracts {
         Review::read(state)?
     } else {
         Review::open_existing(state)?
@@ -100,15 +113,17 @@ pub(crate) async fn report_status(
                 Some(&unchecked.base),
                 &unchecked.to_string(),
                 mechanical.as_deref(),
+                coverage.as_ref(),
                 json,
             );
         },
-        Err(error @ ReviewError::NoChecks) if mechanical.is_some() => {
+        Err(error @ ReviewError::NoChecks) if mechanical.is_some() || has_contracts => {
             return write_unchecked(
                 &mut out,
                 None,
                 &error.to_string(),
                 mechanical.as_deref(),
+                coverage.as_ref(),
                 json,
             );
         },
@@ -124,41 +139,15 @@ pub(crate) async fn report_status(
     let semantic = review::summarize_overall(current.contracts.iter().map(|entry| &entry.state));
     let status = ExitStatus::from(semantic.max(generated::summarize_status(&generated)));
     if json {
-        let contracts = current
-            .contracts
-            .iter()
-            .map(|entry| {
-                let mut value = serde_json::to_value(&entry.state)?;
-                value["contract"] = json!(entry.contract.name);
-                value["path"] = json!(entry.contract.path);
-                value["selection"] =
-                    json!({"rev": entry.selection.rev, "paths": entry.selection.paths});
-                value["input"] = json!(entry.input);
-                value["assessed_in"] = json!(entry.assessment.map(|assessment| assessment.rev));
-                value["model"] = json!(find_model(entry).map(|verdict| verdict.status));
-                value["model_violation"] =
-                    json!(find_model(entry).and_then(|verdict| verdict.violation));
-                value["model_answer"] = json!(find_model(entry).and_then(|verdict| verdict.answer));
-                value["min_confidence"] = json!(entry.min_confidence);
-                value["behavior_failed"] =
-                    json!(behavior_failed.contains(entry.contract.name.as_str()));
-                Ok(value)
-            })
-            .collect::<Result<Vec<_>, CommandError>>()?;
-        let mut document = json!({
-                "review": current.latest.review,
-                "base": current.latest.base_oid,
-                "revision": current.latest.rev,
-                "unchanged": current.unchanged,
-                "contracts": contracts,
-                "deleted_contracts": current.deleted,
-                "exit_code": u8::from(status),
-        });
-        document["behavior_checks"] = json!(generated);
-        if let Some(rows) = &mechanical {
-            document["mechanical_evidence"] = json!(rows);
-        }
-        output::write_document(&mut out, STATUS_VERSION, document)?;
+        write_status_json(
+            &mut out,
+            &current,
+            &behavior_failed,
+            &generated,
+            mechanical.as_deref(),
+            coverage.as_ref(),
+            status,
+        )?;
         return Ok(status);
     }
     writeln!(
@@ -221,6 +210,9 @@ pub(crate) async fn report_status(
         write_mechanical(&mut out, rows)?;
     }
     generated::write_section(&mut out, &generated)?;
+    if let Some(map) = &coverage {
+        write_coverage_section(&mut out, map)?;
+    }
     let pending: Vec<_> = current
         .contracts
         .iter()

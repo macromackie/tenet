@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { cp, mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { readInventory } from '../discovery/index.mts';
 import { run } from '../review/index.mts';
@@ -77,7 +77,9 @@ async function installPin({
 
   const serializedPin = JSON.stringify(pin);
   const lockPath = join(root, lock);
+  const lockDir = dirname(lockPath);
 
+  await mkdir(lockDir, { recursive: true });
   await writeFile(lockPath, serializedPin);
 }
 
@@ -108,6 +110,17 @@ async function verifyReuse(root: string) {
   assertPinReplay(fresh);
 }
 
+type CopyPinLockInput = Readonly<{ from: string; to: string }>;
+
+async function copyPinLock({ from, to }: CopyPinLockInput): Promise<void> {
+  const cloneLockPath = join(to, lock);
+  const cloneLockDir = dirname(cloneLockPath);
+  const lockPath = join(from, lock);
+
+  await mkdir(cloneLockDir, { recursive: true });
+  await cp(lockPath, cloneLockPath);
+}
+
 async function replayOnClone(context: TestContext): Promise<string> {
   const root = await preparePinned(context);
 
@@ -115,10 +128,7 @@ async function replayOnClone(context: TestContext): Promise<string> {
 
   const clean = await createProject(context);
 
-  const cloneLockPath = join(clean, lock);
-  const lockPath = join(root, lock);
-
-  await cp(lockPath, cloneLockPath);
+  await copyPinLock({ from: root, to: clean });
 
   const [fresh] = await assess({ root: clean });
 

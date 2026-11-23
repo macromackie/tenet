@@ -1,13 +1,14 @@
 use alloc::collections::BTreeSet;
 use std::io;
 
-use serde_json::json;
+use serde_json::{Value, json};
 use tenet_checks::{
     behavior::{Finding, Outcome as BehaviorOutcome},
     mechanical::{self, Freshness, Outcome},
 };
-use tenet_engine::review::CurrentContract;
+use tenet_engine::review::{self, CurrentContract};
 
+use super::coverage::{RepoCoverage, write_coverage_section};
 use crate::{
     cli::ExitStatus,
     error::CommandError,
@@ -163,15 +164,74 @@ fn write_details(out: &mut impl io::Write, row: &mechanical::Evidence) -> io::Re
     Ok(())
 }
 
+fn attach_optional_sections(
+    document: &mut Value,
+    mechanical: Option<&[mechanical::Evidence]>,
+    coverage: Option<&RepoCoverage>,
+) {
+    if let Some(rows) = mechanical {
+        document["mechanical_evidence"] = json!(rows);
+    }
+    if let Some(map) = coverage {
+        document["coverage"] = json!(map);
+    }
+}
+
 #[expect(
     clippy::indexing_slicing,
-    reason = "The document is built as an object before adding optional mechanical evidence."
+    reason = "The JSON document is constructed as an object before optional fields are inserted."
 )]
+pub(super) fn write_status_json(
+    out: &mut impl io::Write,
+    current: &review::Current<'_>,
+    behavior_failed_contracts: &BTreeSet<&str>,
+    generated: &[Finding],
+    mechanical: Option<&[mechanical::Evidence]>,
+    coverage: Option<&RepoCoverage>,
+    status: ExitStatus,
+) -> Result<(), CommandError> {
+    let contracts = current
+        .contracts
+        .iter()
+        .map(|entry| {
+            let mut value = serde_json::to_value(&entry.state)?;
+            value["contract"] = json!(entry.contract.name);
+            value["path"] = json!(entry.contract.path);
+            value["selection"] =
+                json!({"rev": entry.selection.rev, "paths": entry.selection.paths});
+            value["input"] = json!(entry.input);
+            value["assessed_in"] = json!(entry.assessment.map(|assessment| assessment.rev));
+            value["model"] = json!(find_model(entry).map(|verdict| verdict.status));
+            value["model_violation"] =
+                json!(find_model(entry).and_then(|verdict| verdict.violation));
+            value["model_answer"] = json!(find_model(entry).and_then(|verdict| verdict.answer));
+            value["min_confidence"] = json!(entry.min_confidence);
+            value["behavior_failed"] =
+                json!(behavior_failed_contracts.contains(entry.contract.name.as_str()));
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>, CommandError>>()?;
+    let mut document = json!({
+        "review": current.latest.review,
+        "base": current.latest.base_oid,
+        "revision": current.latest.rev,
+        "unchanged": current.unchanged,
+        "contracts": contracts,
+        "deleted_contracts": current.deleted,
+        "exit_code": u8::from(status),
+    });
+    document["behavior_checks"] = json!(generated);
+    attach_optional_sections(&mut document, mechanical, coverage);
+    output::write_document(out, STATUS_VERSION, document)?;
+    Ok(())
+}
+
 pub(super) fn write_unchecked(
     out: &mut impl io::Write,
     base: Option<&str>,
     message: &str,
     mechanical: Option<&[mechanical::Evidence]>,
+    coverage: Option<&RepoCoverage>,
     json: bool,
 ) -> Result<ExitStatus, CommandError> {
     if json {
@@ -182,12 +242,13 @@ pub(super) fn write_unchecked(
             "exit_code": u8::from(ExitStatus::Pending),
             "message": message,
         });
-        if let Some(rows) = mechanical {
-            document["mechanical_evidence"] = json!(rows);
-        }
+        attach_optional_sections(&mut document, mechanical, coverage);
         output::write_document(out, STATUS_VERSION, document)?;
     } else {
         writeln!(out, "{message}")?;
+        if let Some(map) = coverage {
+            write_coverage_section(out, map)?;
+        }
         if let Some(rows) = mechanical {
             write_mechanical(out, rows)?;
         }

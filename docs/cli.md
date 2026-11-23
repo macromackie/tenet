@@ -1,13 +1,12 @@
 # Commands
 
 ```sh
-tenet init [--starter [NAME]] [--yes] [--scope DIR] [--json]
 tenet doctor [--json]
-tenet audit [PATHS...] [--deep] [--save] [--fresh] [--max-requests N] [--json]
-tenet check
-tenet check --base origin/main
+tenet scan [PATHS...] [--apply|--yes] [--ephemeral] [--base REF] [--deep] [--starter [NAME]] [--library DIR] [--scope DIR] [--repros-dir DIR] [--fresh] [--max-requests N] [--json]
+tenet check [PATHS...] [--base REF] [--offline|--replay] [--full] [--contract NAME] [--json]
 tenet check --qualify CONTRACT/NAME [--json]
 tenet check --final [--evidence PATH] [--json]
+tenet fix [PATHS...] [--contract NAME] [--base REF] [--severity LEVEL] [--max-requests N] [--from-audit] [--json]
 tenet status [--base REF] [--evidence PATH] [--json] [--prune-cache]
 tenet show NAME [PATH ...] [--json]
 tenet show --pending [--json]
@@ -33,49 +32,71 @@ Inside it, `tenet.contract` and `tenet.pair` spans cover each contract and each 
 `tenet.wait` times each wait for a parallel slot.
 `cache.hit` and `budget.exhausted` events mark answers read from the cache and requests the budget refuses.
 
-## Setup and diagnostics
+## Diagnostics
 
 ```sh
-tenet init                       # Preview recommended catalog contracts for this repo
-tenet init --yes                 # Install recommended catalog contracts and lock them
-tenet init --starter api-guards  # Scaffold a local starter .contracts/001-api-guards/CONTRACT.md
-tenet doctor                     # Check credentials, Node.js, sandbox tooling, and repo setup
+tenet doctor
+tenet doctor --json
 ```
-
-`tenet init` handles Day-1 setup without overwriting existing contracts. By default it inspects public declarations and
-suggests matching contracts from the catalog with ready-to-run `tenet contracts add` commands. Pass `--yes` to install
-those suggestions immediately into `--scope` (default `.`), or `--starter [NAME]` to scaffold a valid local
-`CONTRACT.md` offline.
 
 `tenet doctor` verifies provider credentials (`OPENROUTER_API_KEY` or `TYPESAFE_API_KEY`), Node.js/npm, local sandbox
 tooling (`/usr/bin/sandbox-exec` on macOS, or `bubblewrap >= 0.7` and `prlimit` on Linux), language runtimes (`python3`,
-`rustc`), Git status, `.contracts/` validity, `.tenet.lock` validity, committed `agent-checks.lock.json` behavior pins,
-and that `.tenet/` has its `.gitignore` guard and is not tracked in Git. It exits `0` when required checks pass and `1`
-when any required check needs attention. Both commands support `--json`.
+`rustc`), Git status, `.contracts/` validity, `.tenet.lock` validity, locked runtime scripts in `scripts/.lock.json`
+(and legacy `agent-checks.lock.json` pins), and the `.tenet/` `.gitignore` guard so `.tenet/` is never tracked in Git.
+It exits `0` when all required checks pass and `1` when any required check needs attention.
 
-## Module audit
+## Scan
 
 ```sh
-tenet audit                      # Synthesize and falsify per-module contracts across the repo
-tenet audit src/ --deep --json   # Add adversarial edge-case synthesis and emit JSON
-tenet audit --save               # Persist verified contracts and pinned checks into .contracts/
+tenet scan                                 # Preview recommended catalog contracts and module findings
+tenet scan --apply                         # Write contracts and runnable scripts into .contracts/
+tenet scan --ephemeral                     # Run a zero-commit trial scan without modifying tracked files
+tenet scan --starter api-guards            # Scaffold a local starter .contracts/001-api-guards/CONTRACT.md
+tenet scan src/ --base origin/main --deep  # Audit changed modules with adversarial edge-case synthesis
 ```
 
-`tenet audit` requires `OPENROUTER_API_KEY` and an available local sandbox. It discovers production source modules
-(excluding tests, fixtures, vendor, and build artifacts), splits large directories into bounded shards, synthesizes
-focused behavioral contracts per module, and immediately falsifies them inside the OS sandbox. Progress is saved
-incrementally in `.tenet/audit.json` so reruns resume cleanly unless `--fresh` is passed, and tracked repository files
-stay untouched unless `--save` is passed. It exits `1` when verified `× FAIL` defects are found, `4` when synthesis
-fails transiently, and `0` when no verified defects remain.
+`tenet scan` unifies repository onboarding and module auditing. It inspects production source modules (excluding tests,
+fixtures, vendor, and build artifacts), recommends matching catalog contracts, splits large directories into bounded
+shards, synthesizes focused behavioral contracts per module, and falsifies them inside the local OS sandbox.
 
-## Full check
+| Option             | Purpose                                                                                               |
+| ------------------ | ----------------------------------------------------------------------------------------------------- |
+| `--apply`, `--yes` | Install recommended catalog contracts and write verified contracts plus `scripts/` into `.contracts/` |
+| `--ephemeral`      | Run a trial scan without writing to `.contracts/` or modifying tracked repository files               |
+| `--base REF`       | Limit module discovery to modules containing files changed since `REF`                                |
+| `--deep`           | Add adversarial edge-case synthesis alongside API and documentation guarantees                        |
+| `--starter [NAME]` | Scaffold a local starter `CONTRACT.md` offline without querying the catalog                           |
+| `--library DIR`    | Read catalog recommendations from a local catalog checkout (or set `TENET_CATALOG_DIR`)               |
+| `--scope DIR`      | Directory whose `.contracts/` receives created or installed contracts (default `.`)                   |
+| `--repros-dir DIR` | Write runnable reproducer scripts for failing witnesses into `DIR`                                    |
+| `--fresh`          | Ignore saved `.tenet/audit.json` progress and re-scan selected modules                                |
+| `--max-requests N` | Bound model requests across synthesis and behavior checks                                             |
+| `--json`           | Print the scan report as a JSON document                                                              |
+
+Synthesis and falsification require `OPENROUTER_API_KEY` and a local sandbox; `--starter` and local `--library` previews
+work offline. Incremental progress saves to `.tenet/audit.json` so reruns resume unless `--fresh` is passed. `tenet scan`
+exits `1` when verified `× FAIL` defects are found, `4` when synthesis fails transiently, and `0` when no verified
+defects remain.
+
+`tenet init` and `tenet audit` remain supported as backwards-compatible aliases for `tenet scan`.
+
+## Full and offline checks
 
 ```sh
 tenet check
 tenet check --contract cache-values
+tenet check --offline
+tenet check --offline --contract timeouts
 ```
 
-Assess the current repository without assuming that any contract holds. File judgments are followed by a bounded repository assessment to check missing files and requirements that span files.
+`tenet check` assesses the current repository without assuming any contract holds. File judgments are followed by a
+bounded repository assessment to check missing files and requirements that span files, alongside static lint checks and
+locked runtime scripts.
+
+`tenet check --offline` (alias `--replay`) replays static checks, declared local checks, and locked runtime scripts
+under `.contracts/<NNN>-<name>/scripts/` (plus legacy `agent-checks.lock.json` pins) inside the local OS sandbox without
+calling an LLM or requiring provider credentials. Use `--offline` in pre-commit hooks, air-gapped environments, or CI jobs
+that run without API keys.
 
 `tenet check src/` checks those paths together with explicit context. Coverage is calculated for each contract.
 Selecting every file in a nested contract can verify it. A smaller selection can conclude `clear` or `failed`;
@@ -139,6 +160,33 @@ If the snapshot has no `.contracts`, Tenet copies `.contracts` from its parent d
 
 Without a patch this is a full check. With a patch it is a diff check. `--base` and `--snapshot` cannot be combined.
 
+## Fix
+
+```sh
+tenet fix
+tenet fix --contract cleanup src/
+tenet fix --severity high --max-requests 20
+tenet fix --base origin/main --json
+```
+
+`tenet fix` combines native lint fixes (Oxlint and Ruff configurations from adopted contract `assets/`) with a bounded,
+sandboxed patch-and-reverify repair loop for failing runtime scripts under `.contracts/<NNN>-<name>/scripts/` and
+recorded audit witnesses. No separate `--from-audit` flag is required; `--from-audit` remains supported as a
+compatibility alias.
+
+| Option             | Purpose                                                                |
+| ------------------ | ---------------------------------------------------------------------- |
+| `--contract NAME`  | Limit repairs to one contract                                          |
+| `--base REF`       | Limit native fixes to files changed since `REF`                        |
+| `--severity LEVEL` | Restrict runtime repairs to findings at or above `LEVEL`               |
+| `--max-requests N` | Bound model requests during sandboxed runtime repair turns             |
+| `--from-audit`     | Compatibility alias targeting failing witnesses in `.tenet/audit.json` |
+| `--json`           | Print applied fixes, patches, and re-verification results as JSON      |
+
+Native fixes apply on temporary copies, rerun the linter, and write changes only when verification succeeds. Runtime
+repairs verify each candidate patch against the failing script inside the OS sandbox. See
+[Local checks](./local-checks.md#apply-fixes).
+
 ## Review state
 
 Each `check` outside a snapshot appends a revision to `.tenet/events.jsonl` with every contract's input and conclusion,
@@ -148,16 +196,20 @@ the working tree with that commit, not with what `--base` names today.
 The directory ignores itself; if Git tracks a file in it anyway, every command below exits 2 until it is untracked.
 Each contract is settled or pending; see [Reviews](./reviews.md).
 
-| Command                  | Effect                                                                                                       | Exit                                               |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
-| `status`                 | Recompute inputs from the working tree and list each contract's state; never writes or calls a model         | As `check`                                         |
-| `status --base REF`      | The same for the review against `REF`                                                                        | As `check`, or 4 when no check compares with `REF` |
-| `status --prune-cache`   | First remove the cached answers this Tenet cannot reuse, and say how many on stderr; the log stays unchanged | As `status`                                        |
-| `status --evidence PATH` | Compare [local mechanical evidence](#mechanical-evidence) with the working tree                              | As `status`, or 2 for invalid evidence             |
-| `show NAME`              | Show the model's answer, records, changes since an outdated result, the contract, and the change             | 0                                                  |
-| `show --pending`         | Show every pending contract and their shared change once                                                     | 0                                                  |
-| `record NAME`            | Settle the contract's current input with a conclusion, evidence, and a message                               | 0, or 2 if refused                                 |
-| `log [NAME]`             | List revisions, assessments, and records, newest first; `--json` prints each entry in order                  | 0                                                  |
+| Command                  | Effect                                                                                                                      | Exit                                               |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `status`                 | Print repository coverage and each contract's settled or pending state from the working tree; never writes or calls a model | As `check`                                         |
+| `status --base REF`      | The same for the review against `REF`                                                                                       | As `check`, or 4 when no check compares with `REF` |
+| `status --prune-cache`   | First remove the cached answers this Tenet cannot reuse, and say how many on stderr; the log stays unchanged                | As `status`                                        |
+| `status --evidence PATH` | Compare [local mechanical evidence](#mechanical-evidence) with the working tree                                             | As `status`, or 2 for invalid evidence             |
+| `show NAME`              | Show the contract rule, model answer, records, changes since an outdated result, diff, and runnable paths under `scripts/`  | 0                                                  |
+| `show --pending`         | Show every pending contract, their runnable script paths, and their shared change once                                      | 0                                                  |
+| `record NAME`            | Settle the contract's current input with a conclusion, evidence, and a message                                              | 0, or 2 if refused                                 |
+| `log [NAME]`             | List revisions, assessments, and records, newest first; `--json` prints each entry in order                                 | 0                                                  |
+
+`status` opens with a `Coverage` block reporting governed and ungoverned repository scope before listing settled and
+pending contract rows. `show NAME` prints the direct filesystem path for each materialized script in
+`.contracts/<NNN>-<name>/scripts/` so developers and agents can inspect or execute it directly.
 
 `record` refuses a contract whose scoped files changed after its latest check: run `check` again first. The conclusion
 must fit the check: `verified` for a full check of the full contract, `preserved` or `unaffected` for a diff, and `clear`
@@ -177,12 +229,13 @@ file, `status` lists it once per check. Pass that check's paths after the name, 
 records and earlier assessments, and counts of the older ones. `show --pending --json` lists every pending contract in
 that form and each changed file's patch once. See [JSON](./json.md) for every command's format.
 
-`tenet check` always runs with a configured model so no check silently skips model review. Use `tenet status` to
-recompute states from the working tree without calling a model, `tenet check --dry-run` to preview planned requests
-without credentials, or `--max-requests N` to bound new model requests. Repeated identical requests are answered from
-`.tenet/answers.jsonl`; `--fresh` asks the model again. An answer is reused only by the same Tenet version and provider,
-for the model revision the provider reported. `status --prune-cache` removes answers an earlier Tenet wrote and those a
-later answer to the same request replaced. Delete `.tenet/` to forget the review.
+`tenet check` runs with a configured model by default so online checks never silently skip semantic review. Use
+`tenet check --offline` (alias `--replay`) to replay static checks, declared local checks, and locked runtime scripts
+without provider credentials, `tenet status` to inspect coverage and review states offline, `tenet check --dry-run` to
+preview planned requests without credentials, or `--max-requests N` to bound new model requests. Repeated identical
+requests are answered from `.tenet/answers.jsonl`; `--fresh` asks the model again. An answer is reused only by the same
+Tenet version and provider, for the model revision the provider reported. `status --prune-cache` removes answers an
+earlier Tenet wrote and those a later answer to the same request replaced. Delete `.tenet/` to forget the review.
 
 ## Mechanical evidence
 
@@ -281,11 +334,12 @@ as version 1 otherwise. A Tenet older than 0.11.0 cannot read a version 2 lock, 
 | Option                       | Default          | Purpose                                                                                                                                                   |
 | ---------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--contract NAME`            | all contracts    | Select one requirement                                                                                                                                    |
+| `--offline`, `--replay`      | off              | Replay static lint checks, declared local checks, and locked runtime scripts without calling an LLM or requiring provider credentials                     |
 | `--context PATH[:START-END]` | none             | Add a repository file, or only its lines START through END, to check inputs; repeat for more files or ranges; see [Add context](./reviews.md#add-context) |
 | `--context-profile PROFILE`  | `standard`       | Select `standard` or `long` evidence and provider byte limits; also accepted by `export`                                                                  |
 | `--contract-batch-size N`    | 1                | Ask about up to N contracts for the same file together; accepts 1 through 64                                                                              |
 | `--jobs N`                   | 4                | Maximum simultaneous model requests                                                                                                                       |
-| `--max-requests N`           | 1000             | Request budget, including combined assessments                                                                                                            |
+| `--max-requests N`           | 2000             | Request budget, including combined assessments                                                                                                            |
 | `--min-confidence N`         | 0.8              | Route lower-confidence answers to unresolved; accepts 0 through 1                                                                                         |
 | `--provider NAME`            | openrouter       | Select provider                                                                                                                                           |
 | `--model ID`                 | provider default | Select a supported pinned model                                                                                                                           |
@@ -306,7 +360,7 @@ earlier answers. `file_pairs` counts selected file/contract checks, including ch
 The summary also counts `combined_over_limit`, the contracts whose combined input exceeds the limit after reduction, and
 reports the diff's `coverage`. When the requests to send exceed `--max-requests`, it prints a warning to stderr. A diff with no changes
 prints `No changes since BASE; nothing to check.` Only execution errors exit 2.
-`validate`, `contracts`, `skills`, `status`, `show`, `log`, and `export` also work without credentials.
+`check --offline`, `validate`, `contracts`, `skills`, `status`, `show`, `log`, and `export` also work without credentials.
 
 ## Assessment inputs
 
@@ -363,4 +417,4 @@ Either discovery found no files there, because ignore files or excluded names hi
 or no selected contract governs the files found.
 
 Symlinks are not followed. Symbolic links and empty, binary, or non-UTF-8 files are skipped: they stay in the inventory, but no model judges their contents. Unreadable inputs are errors.
-Use [behavior checks](./behavior-checks.md) to generate a replayable check from an English rule. Use `tenet fix` to apply supported native fixes.
+Use [behavior checks](./behavior-checks.md) to materialize runnable scripts under `scripts/`. Use `tenet fix` to apply native lint fixes and sandboxed runtime repairs.

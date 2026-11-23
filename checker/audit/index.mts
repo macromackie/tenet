@@ -6,5 +6,6 @@ export { parseAuditCandidates } from './parse-candidates.mts';
 export { rejectUnverifiedWitnesses } from './reject-unverified.mts';
 export { runAuditReplay } from './replay.mts';
 export { AuditReplayRequest } from './replay-wire.mts';
+export { resolveReplayCheck } from './resolve-replay-check.mts';
 export { runAudit } from './run-audit.mts';
 export { AuditRequest, type AuditResponse } from './wire.mts';

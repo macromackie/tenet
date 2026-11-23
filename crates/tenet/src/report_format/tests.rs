@@ -18,6 +18,7 @@ fn sample_finding(check: &str, message: &str, requested: bool, reused: bool) -> 
         repro: None,
         requested,
         reused,
+        severity: None,
         subject: None,
     }
 }

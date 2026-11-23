@@ -6,53 +6,64 @@ use std::{
 
 use anyhow::Context as _;
 use serde::Serialize;
-use tenet_checks::behavior::{AuditModuleReport, Outcome};
+use tenet_checks::behavior::{AuditModuleReport, Outcome, PinBundleState, copy_staged_pin_bundle};
+use tenet_engine::discover_contracts;
 
 use crate::error::CommandError;
 
 const CONTRACTS_DIR: &str = ".contracts";
 const VERIFIED_OUTCOMES: &[Outcome] = &[Outcome::Failed, Outcome::Passed];
 
-/// One contract saved into `.contracts/` when `tenet audit --save` runs.
+/// One contract saved into `.contracts/` or `.tenet/scan/.contracts/`.
 #[derive(Clone, Debug, Serialize)]
-pub(super) struct SavedContract {
+pub(in crate::commands) struct SavedContract {
     pub name: String,
     pub path: PathBuf,
     pub pin_saved: bool,
 }
 
-/// Write synthesized contracts that produced verified executable checks into `.contracts/`.
-pub(super) fn save_verified_contracts(
+/// Collect contract names discovered across every scope under `root`.
+pub(in crate::commands) fn read_global_contract_names(
     root: &Path,
+) -> Result<BTreeSet<String>, CommandError> {
+    let contracts = discover_contracts(root)?;
+    Ok(contracts.into_iter().map(|item| item.name).collect())
+}
+
+/// Write synthesized contracts that produced verified checks into `contracts_dir`,
+/// deduplicating against `existing_names` and existing folders in `contracts_dir`.
+pub(in crate::commands) fn save_contracts_to(
+    contracts_dir: &Path,
+    existing_names: &BTreeSet<String>,
     state: &Path,
     reports: &[AuditModuleReport],
 ) -> Result<Vec<SavedContract>, CommandError> {
-    let contracts_root = root.join(CONTRACTS_DIR);
-    let mut existing_names = read_existing_names(&contracts_root);
-    let mut next_number = read_next_number(&contracts_root);
+    let mut seen_names = existing_names.clone();
+    seen_names.extend(read_existing_names(contracts_dir));
+    let mut next_number = read_next_number(contracts_dir);
     let mut saved = Vec::new();
     for report in reports {
         let verified_names = list_verified_contract_names(report);
         for contract in &report.contracts {
-            if !verified_names.contains(&contract.name) || existing_names.contains(&contract.name) {
+            if !verified_names.contains(&contract.name) || seen_names.contains(&contract.name) {
                 continue;
             }
             let folder_name = format!("{next_number:03}-{}", contract.name);
-            let folder = contracts_root.join(&folder_name);
+            let folder = contracts_dir.join(&folder_name);
             fs::create_dir_all(&folder)
                 .with_context(|| format!("create contract folder {:?}", folder.display()))?;
             let doc_path = folder.join("CONTRACT.md");
             fs::write(&doc_path, &contract.document)
                 .with_context(|| format!("write contract {:?}", doc_path.display()))?;
-            let pin_saved = copy_staged_pin(state, &contract.lock_path, &folder)?.is_some();
-            let relative = PathBuf::from(CONTRACTS_DIR)
-                .join(&folder_name)
-                .join("CONTRACT.md");
-            let _inserted = existing_names.insert(contract.name.clone());
+            let pin_saved =
+                copy_staged_pin_bundle(&state.join(&contract.lock_path), &folder).with_context(
+                    || format!("materialize behavior scripts in {:?}", folder.display()),
+                )? == PinBundleState::Written;
+            let _inserted = seen_names.insert(contract.name.clone());
             next_number = next_number.saturating_add(1);
             saved.push(SavedContract {
                 name: contract.name.clone(),
-                path: relative,
+                path: doc_path,
                 pin_saved,
             });
         }
@@ -60,19 +71,26 @@ pub(super) fn save_verified_contracts(
     Ok(saved)
 }
 
-fn copy_staged_pin(
+/// Write synthesized contracts that produced verified executable checks into `<root>/.contracts/`.
+pub(super) fn save_verified_contracts(
+    root: &Path,
     state: &Path,
-    lock_path: &str,
-    folder: &Path,
-) -> Result<Option<PathBuf>, CommandError> {
-    let source = state.join(lock_path);
-    if !source.is_file() {
-        return Ok(None);
+    reports: &[AuditModuleReport],
+) -> Result<Vec<SavedContract>, CommandError> {
+    let contracts_root = root.join(CONTRACTS_DIR);
+    let existing = read_global_contract_names(root)?;
+    let mut saved = save_contracts_to(&contracts_root, &existing, state, reports)?;
+    strip_saved_path_prefix(&mut saved, root);
+    Ok(saved)
+}
+
+/// Strip `base` from saved contract paths where possible for concise display and JSON output.
+pub(in crate::commands) fn strip_saved_path_prefix(saved: &mut [SavedContract], base: &Path) {
+    for item in saved {
+        if let Ok(relative) = item.path.strip_prefix(base) {
+            item.path = relative.to_path_buf();
+        }
     }
-    let destination = folder.join("agent-checks.lock.json");
-    let _copied = fs::copy(&source, &destination)
-        .with_context(|| format!("copy staged pin to {:?}", destination.display()))?;
-    Ok(Some(destination))
 }
 
 fn list_verified_contract_names(report: &AuditModuleReport) -> BTreeSet<String> {

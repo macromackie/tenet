@@ -33,6 +33,9 @@ pub(super) async fn evaluate(
     state: &Path,
     check: &Check,
 ) -> Result<ExitStatus, CommandError> {
+    if check.offline {
+        return super::offline::run(root, state, check).await;
+    }
     if let Some(selector) = &check.qualify {
         return super::qualification::run(root, selector, check.run.json).await;
     }

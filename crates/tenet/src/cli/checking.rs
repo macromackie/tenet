@@ -36,6 +36,14 @@ pub(crate) struct Check {
     /// Verify the final selected source with both semantic review and trusted project checks.
     #[arg(long = "final", conflicts_with_all = ["dry_run", "snapshot", "patch"])]
     pub final_check: bool,
+    /// Run deterministic static, local, and pinned runtime behavior checks offline without calling
+    /// a model.
+    #[arg(
+        long,
+        visible_alias = "replay",
+        conflicts_with_all = ["dry_run", "final_check", "qualify", "snapshot", "patch"]
+    )]
+    pub offline: bool,
     /// Verify receipts from a trusted external checker runner instead of executing project code.
     #[arg(
         hide_short_help = true,

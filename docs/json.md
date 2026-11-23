@@ -3,22 +3,24 @@
 Every JSON object Tenet prints carries a `version`. JSON goes to stdout, and with JSON requested, progress and
 warnings go to stderr. Each format numbers its versions independently:
 
-| Command                                                     | Output                                                     | Version |
-| ----------------------------------------------------------- | ---------------------------------------------------------- | ------- |
-| `init --json`                                               | One onboarding recommendation or scaffold result           | 1       |
-| `doctor --json`                                             | One environment and repository readiness report            | 1       |
-| `check --json`, `check --reporter jsonl`                    | One [event](./output.md#jsonl) per line                    | 5       |
-| `check --dry-run --json`                                    | One event per line: `selected`, `combined`, then `summary` | 5       |
-| `check --qualify CONTRACT/NAME --json`                      | One checker qualification report                           | 1       |
-| `check --final --json`                                      | One [final check report](./final-checks.md)                | 1       |
-| `status --json`                                             | One object                                                 | 1       |
-| `show NAME --json`, `show --pending --json`                 | One object                                                 | 2       |
-| `record NAME ... --json`                                    | One object with `record`, `replaces`, and `exit_code`      | 1       |
-| `log --json`                                                | One review log entry per line                              | 2       |
-| `export`                                                    | One [evidence packet](./export.md#contents)                | 2       |
-| `contracts list --json`                                     | One object                                                 | 1       |
-| `contracts outdated --json`, `update --json`, `diff --json` | One object                                                 | 1       |
-| `skills outdated --json`, `update --json`, `diff --json`    | One object                                                 | 1       |
+| Command                                                     | Output                                                                        | Version |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------- | ------- |
+| `doctor --json`                                             | One environment and repository readiness report                               | 1       |
+| `scan --json` (aliases: `init --json`, `audit --json`)      | One repository scan, catalog recommendation, scaffold, or module audit report | 1       |
+| `check --json`, `check --reporter jsonl`                    | One [event](./output.md#jsonl) per line                                       | 5       |
+| `check --offline --json` (alias: `check --replay --json`)   | One [event](./output.md#jsonl) per line for offline static and script replay  | 5       |
+| `check --dry-run --json`                                    | One event per line: `selected`, `combined`, then `summary`                    | 5       |
+| `check --qualify CONTRACT/NAME --json`                      | One checker qualification report                                              | 1       |
+| `check --final --json`                                      | One [final check report](./final-checks.md)                                   | 1       |
+| `fix --json`                                                | One native lint and sandboxed runtime repair report                           | 1       |
+| `status --json`                                             | One object (with additive `coverage`)                                         | 1       |
+| `show NAME --json`, `show --pending --json`                 | One object                                                                    | 2       |
+| `record NAME ... --json`                                    | One object with `record`, `replaces`, and `exit_code`                         | 1       |
+| `log --json`                                                | One review log entry per line                                                 | 2       |
+| `export`                                                    | One [evidence packet](./export.md#contents)                                   | 2       |
+| `contracts list --json`                                     | One object                                                                    | 1       |
+| `contracts outdated --json`, `update --json`, `diff --json` | One object                                                                    | 1       |
+| `skills outdated --json`, `update --json`, `diff --json`    | One object                                                                    | 1       |
 
 ## Compatibility
 
@@ -41,7 +43,7 @@ Versions are not aligned across formats. Raising every format to one number woul
 
 ## Errors
 
-When `init`, `doctor`, `check`, `fix`, `status`, `show`, `record`, or `log` fails with JSON output requested, stdout ends with one `check` error event,
+When `scan`, `init`, `audit`, `doctor`, `check`, `fix`, `status`, `show`, `record`, or `log` fails with JSON output requested, stdout ends with one `check` error event,
 stderr repeats its message, and the command exits 2. A `check` that stops partway, such as on rejected credentials,
 prints its earlier events first:
 
@@ -61,9 +63,23 @@ object, which has no `type`. Other commands report errors on stderr only.
 
 Each row in `checks` names the `contract` and `check`. Read `freshness` alongside `observed_outcome`. A stale pass describes an earlier observation. `message` holds the diagnostic and `replay` gives the command to run from the project root. A structured checker can also return a `finding` with its case, expected and actual values, and location. A reused result has `reused: true`. See [Local checks](./local-checks.md) for binding and exit semantics.
 
+## Scan
+
+`tenet scan --json` writes one version 1 object summarizing repository onboarding and module audit results. Depending on
+the selected mode (`--starter`, catalog recommendations, `--apply`, or `--ephemeral`), the document reports recommended
+or installed contracts, scaffolded paths, discovered modules, synthesized contracts and materialized script paths,
+observed findings (with optional `severity`), and `exit_code`. `tenet init --json` and `tenet audit --json` remain
+supported as compatibility aliases.
+
 ## Check
 
-[Output](./output.md#jsonl) describes `check` events. `check --dry-run --json` makes no model request and prints:
+[Output](./output.md#jsonl) describes `check` events. `check --offline --json` (alias `check --replay --json`) emits
+version 5 JSONL events without calling an LLM or requiring provider credentials, replaying static lint checks, declared
+local checks, and locked runtime scripts under `.contracts/<NNN>-<name>/scripts/` (plus legacy `agent-checks.lock.json`
+pins). Findings in `behavior_checks`, `scan`, and `check --offline` output may include an optional `severity` string
+that `tenet fix --severity` filters on; ignore absent or unknown severity values when reading earlier logs.
+
+`check --dry-run --json` makes no model request and prints:
 
 - `selected` for each contract and file: `contract`, `scope`, `path`, a renamed file's `previous_path`,
   `contract_hash`, `input_bytes`, `input_limit_bytes`, `omitted` parts, and a `status` and `reason` for a file that
@@ -120,7 +136,9 @@ listed when its lines took the place of contents left out to fit.
 ## Status
 
 `status --json` prints the `review` label, the `base` commit, the latest `revision`, `unchanged` when the working tree
-matches the base, `contracts`, `deleted_contracts`, and `exit_code`. Each contract has:
+matches the base, additive `coverage`, `contracts`, `deleted_contracts`, and `exit_code`. The additive `coverage` object
+summarizes governed and ungoverned repository scope alongside active contracts and materialized scripts without breaking
+version 1 consumers. Each contract has:
 
 | Field                                      | Meaning                                                                                                                  |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |

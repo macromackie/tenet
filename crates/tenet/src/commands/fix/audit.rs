@@ -7,7 +7,9 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use groups::build_fix_groups;
+pub(super) use groups::select_group_test_files;
 use render::write_fix_report;
+pub(super) use render::write_fix_terminal_outcomes;
 use tenet_checks::{
     behavior::{
         AuditFixGroup,
@@ -46,6 +48,7 @@ pub(super) fn run(root: &Path, state: &Path, args: &Fix) -> Result<ExitStatus, C
         &queue,
         args.contract.as_deref(),
         &filters,
+        args.severity.to_level(),
         &discovered.modules,
         &discovered.runtime_paths,
     );
@@ -76,7 +79,7 @@ pub(super) fn run(root: &Path, state: &Path, args: &Fix) -> Result<ExitStatus, C
     Ok(status)
 }
 
-fn execute_audit_fix(
+pub(super) fn execute_audit_fix(
     root: &Path,
     state: &Path,
     json_mode: bool,
@@ -104,7 +107,7 @@ fn execute_audit_fix(
     Ok((response, changes))
 }
 
-fn read_fix_exit_status(outcomes: &[AuditFixOutcome]) -> ExitStatus {
+pub(super) fn read_fix_exit_status(outcomes: &[AuditFixOutcome]) -> ExitStatus {
     if outcomes
         .iter()
         .any(|row| row.status == AuditFixStatus::Failed)

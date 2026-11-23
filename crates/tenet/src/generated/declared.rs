@@ -46,6 +46,7 @@ fn build_finding(row: Evidence) -> Finding {
         repro: None,
         requested: false,
         reused: true,
+        severity: None,
         subject: None,
     }
 }

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.34.0
+
+- Unified Tenet around `.contracts/<NNN>-<name>/{CONTRACT.md, scripts/ + scripts/.lock.json}` as the single portable source of truth: qualified runtime checks now materialize as standalone runnable `.mjs`/`.py`/`.go`/`.rs` scripts inside `scripts/` beside a compact `scripts/.lock.json` with SHA-256 hand-edit protection, while preserving backwards-compatible reads of catalog `assets/` and legacy `agent-checks.lock.json`.
+- Added `tenet scan` (`--apply`/`--yes`, `--ephemeral`, `--base`, `--deep`, `--starter`, `--library`, `--scope`, `--repros-dir`, `--fresh`, `--max-requests`, `--json`): discovers missing catalog contracts and synthesizes/falsifies module behavioral contracts in one flow, materializing into `.contracts/` (`--apply`) or `.tenet/scan/.contracts/` (`--ephemeral`), while keeping `tenet init` and `tenet audit` as compatible aliases.
+- Added `tenet check --offline` (alias `--replay`) to replay static checks, local project checks, and locked runtime scripts across `.contracts/` and `.tenet/scan/.contracts/` with zero model calls and no provider API key.
+- Unified `tenet fix` to repair both native linter violations and failing runtime checks from `.contracts/`, `.tenet/scan/.contracts/`, or `.tenet/audit.json` without requiring `--from-audit`, and added `--severity <critical|high|medium>` backed by structured `severity` on findings.
+- Upgraded `tenet status` with a repo-wide offline contract coverage map (`governed` vs. `uncovered` source files and folders, plus additive `coverage` in `--json`), and displayed runnable script paths in `tenet show`.
+
 ## v0.33.0
 
 - Fast-failed `unresolved` witness pre-checks in `tenet fix --from-audit` (`audit/fix/fix-group.mts`): witnesses whose sandbox pre-check is `unresolved` (missing host toolchain or external dependency) are reported immediately as `unresolved` with zero LLM repair requests spent instead of entering the retry loop, while live `failed` witnesses in mixed groups still proceed to repair.

@@ -4,6 +4,7 @@
 mod audit;
 mod audit_fix;
 mod environment;
+mod pins;
 mod process;
 mod replay;
 mod request;
@@ -32,6 +33,17 @@ pub use audit_fix::{
     AuditFixWitness,
     run_audit_fix,
 };
+pub use pins::{
+    LEGACY_LOCK_FILE,
+    PinBundleState,
+    PinSummary,
+    PinnedCheck,
+    SCRIPTS_DIR,
+    SCRIPTS_LOCK_FILE,
+    copy_staged_pin_bundle,
+    find_pin_path,
+    read_pin_summary,
+};
 pub use replay::{
     AuditReplayRequest,
     AuditReplayResponse,
@@ -50,6 +62,14 @@ pub enum Outcome {
     Failed,
     Passed,
     Unresolved,
+}
+
+/// Minimum or reported severity threshold for behavior-check findings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SeverityLevel {
+    Critical,
+    High,
+    Medium,
 }
 
 /// One executable behavior-check finding returned by the isolated checker worker.
@@ -72,7 +92,36 @@ pub struct Finding {
     pub repro: Option<WitnessRepro>,
     pub requested: bool,
     pub reused: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
     pub subject: Option<PathBuf>,
+}
+
+impl Finding {
+    /// Return the structured severity if present, or parse a leading `[critical]`, `[high]`,
+    /// or `[medium]` tag from `message`.
+    #[inline]
+    #[must_use]
+    pub fn read_effective_severity(&self) -> Option<&str> {
+        if let Some(explicit) = self.severity.as_deref().map(str::trim)
+            && !explicit.is_empty()
+        {
+            return Some(explicit);
+        }
+        parse_message_severity(&self.message)
+    }
+}
+
+/// Return whether an optional finding severity meets or exceeds `min`.
+#[inline]
+#[must_use]
+pub fn is_severity_at_least(severity: Option<&str>, min: SeverityLevel) -> bool {
+    let min_rank = match min {
+        SeverityLevel::Critical => 3_u8,
+        SeverityLevel::High => 2_u8,
+        SeverityLevel::Medium => 1_u8,
+    };
+    rank_severity(severity) >= min_rank
 }
 
 /// Minimal executable reproducer metadata captured from a live failing behavior probe.
@@ -187,12 +236,41 @@ fn select_scopes<'plan>(
     }
     if matches!(operation, Operation::Inspect { .. }) && !state.join("agent-checks").exists() {
         scopes.retain(|_, contract| {
-            plan.root
-                .join(contract.path.with_file_name("agent-checks.lock.json"))
-                .exists()
+            let contract_dir = contract
+                .path
+                .parent()
+                .map_or_else(|| plan.root.clone(), |parent| plan.root.join(parent));
+            find_pin_path(&contract_dir).is_some()
         });
     }
     scopes
+}
+
+fn parse_message_severity(message: &str) -> Option<&'static str> {
+    let trimmed = message.trim_start();
+    let (tag, _rest) = trimmed.split_once(' ')?;
+    if tag.eq_ignore_ascii_case("[critical]") {
+        Some("critical")
+    } else if tag.eq_ignore_ascii_case("[high]") {
+        Some("high")
+    } else if tag.eq_ignore_ascii_case("[medium]") {
+        Some("medium")
+    } else {
+        None
+    }
+}
+
+fn rank_severity(severity: Option<&str>) -> u8 {
+    let Some(raw) = severity.map(str::trim) else {
+        return 1_u8;
+    };
+    if raw.eq_ignore_ascii_case("critical") {
+        3_u8
+    } else if raw.eq_ignore_ascii_case("high") {
+        2_u8
+    } else {
+        1_u8
+    }
 }
 
 fn run(
@@ -225,6 +303,7 @@ fn run(
                         repro: None,
                         requested: false,
                         reused: false,
+                        severity: None,
                         subject: None,
                     }
                 })

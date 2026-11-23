@@ -1,6 +1,6 @@
 # Tenet
 
-Check code against requirements written in Markdown.
+Tenet checks code against requirements written in Markdown under `.contracts/`.
 
 ## Install
 
@@ -8,68 +8,72 @@ Check code against requirements written in Markdown.
 curl -fsSL https://tenet-contracts.com/install.sh | bash
 ```
 
-Binaries support macOS and Linux on ARM64 and x86-64. Local checks run with the tools installed in your project. For model review, set `OPENROUTER_API_KEY` or configure TypeSafe. See [Provider setup](docs/installation.md).
+Binaries support macOS and Linux on ARM64 and x86-64. Local checks run with tools installed in your project. For model review, set `OPENROUTER_API_KEY` or configure TypeSafe. See [Provider setup](docs/installation.md).
 
-## Check code
+## Quickstart
 
-Initialize a repository with recommended catalog contracts or a starter [contract](docs/contracts.md) under `.contracts/`, verify your environment, and run a check:
+Verify your environment, scan the repository into `.contracts/`, inspect coverage, repair findings, and replay checks offline or against a diff:
 
 ```sh
-tenet doctor                  # Verify credentials, sandbox tooling, and repository setup
-tenet init                    # Preview recommended catalog contracts (or --starter / --yes)
-tenet check                   # Review the repo or the current GitHub pull request
-tenet show timeouts           # Inspect a finding and its evidence
-tenet fix                     # Apply supported safe native lint fixes
-tenet check --contract timeouts
+tenet doctor                       # Verify credentials, sandbox tooling, and repository setup
+tenet scan                         # Preview recommended catalog contracts and per-module checks
+tenet scan --apply                 # Write contracts and runnable scripts into .contracts/
+tenet scan --ephemeral             # Run a trial scan without modifying tracked files
+tenet status                       # Show repository coverage and contract health offline
+tenet fix                          # Apply native lint fixes and sandboxed runtime repairs
+tenet fix --severity high          # Limit repairs to findings at or above one severity level
+tenet check --offline              # Replay static checks and locked runtime scripts without an LLM
+tenet check --base origin/main     # Review a pull request diff against the base branch
+tenet show timeouts                # Inspect the rule, diff, evidence, and runnable script path
 ```
 
-With OpenRouter configured, a supported macOS or Linux checkout builds qualified behavior checks, streams live progress phases in interactive terminals, explains failed and unresolved behavior findings through `fx` in plain English, and saves frozen checks to `agent-checks.lock.json` for fast local and CI replay. `tenet check` always requires a model; use `tenet status`, `tenet show`, `tenet export`, and `tenet check --dry-run` offline. See [behavior checks and caching](docs/behavior-checks.md), [local checks](docs/local-checks.md), and [final checks](docs/final-checks.md).
+With `OPENROUTER_API_KEY` set on macOS or Linux, Tenet builds qualified behavior checks in an OS sandbox, streams live progress phases in interactive terminals, and explains failed or unresolved findings through `fx`. Use `tenet check --offline` (alias `--replay`) to replay static and locked runtime checks with zero model calls. `tenet init` and `tenet audit` remain supported as backwards-compatible aliases for `tenet scan`. See [behavior checks](docs/behavior-checks.md), [local checks](docs/local-checks.md), and [final checks](docs/final-checks.md).
 
-For example, a contract can require database failures to reach the caller rather than become empty results.
-Tenet checks relevant files and their combined context, then reports one conclusion per contract.
-Each model conclusion preserves raw confidence separately from routing. A model's failed or unresolved conclusion stays pending, with exit 4, until a reviewer records one.
-Selected-path checks assess their combined evidence and can report `clear` without claiming full contract verification.
+## Contracts
+
+Store each contract as a self-contained folder under `.contracts/`:
+
+```text
+.contracts/
+  001-database-failures/
+    CONTRACT.md
+    scripts/
+      preserve-errors.mjs
+      .lock.json
+```
+
+- **Portable specification:** `CONTRACT.md` holds the human- and agent-readable rule, scope, and examples.
+- **Runnable verification:** `scripts/` stores materialized behavior-check scripts (`<check>.<ext>`) beside `scripts/.lock.json`.
+- **Hand-edit safety:** `scripts/.lock.json` tracks SHA-256 digests so manual edits to any script are preserved and never overwritten during regeneration.
+- **Format compatibility:** Catalog contracts store tool configurations under `assets/`, and Tenet continues to read legacy `agent-checks.lock.json` files beside `CONTRACT.md`.
 
 Install shared contracts from the public [tenet-contracts](https://github.com/macromackie/tenet-contracts) library:
 
 ```sh
-tenet contracts recommend           # See suitable contracts before installing them
+tenet contracts recommend
 tenet contracts add tenet/data-and-apis --scope packages/api
-tenet contracts update             # Take releases up to the next major, keeping local edits
+tenet contracts update
 ```
 
-See [Guidance](docs/guidance.md) for local adaptations and conflicts.
-
-Read every applicable contract during a review. Tenet helps choose where to investigate first; the outer reviewer owns the final judgment. See [Reviews](docs/reviews.md).
+See [Contracts](docs/contracts.md) and [Guidance](docs/guidance.md) for scope patterns, local adaptations, and updates.
 
 ## Review changes
 
 ```sh
-tenet check --base origin/main     # Assess the change and append a revision to .tenet/
-tenet status                       # Settled and pending contracts, without a model
-tenet show database-failures       # The model's answer, history, and the record command
+tenet check --base origin/main
+tenet status
+tenet show database-failures
 tenet record database-failures --conclusion failed --evidence src/query.ts:40-52 -m "returns [] on failure"
 ```
 
-A reviewer investigates pending contracts with ordinary repository tools and records a conclusion for each. A record
-is bound to the exact code it judged; editing a scoped file makes it outdated. Model judgments can be wrong; a
-successful exit does not mean every contract was verified.
-Selected code and contract rules go to the configured provider, using your API key.
+Tenet checks relevant files and their combined context, then reports one conclusion per contract. A model's `failed` or `unresolved` conclusion stays pending, with exit 4, until a reviewer records a conclusion bound to the exact code it judged. Editing a scoped file marks earlier records outdated. Selected code and contract rules go to your configured provider.
 
-Use [`tenet export`](docs/export.md) to export selected contracts and source offline for a review or a focused question.
+- **[Reviews](docs/reviews.md):** Settle pending contracts with repository evidence and adopt requirements incrementally.
+- **[Export](docs/export.md):** Export selected contracts and source offline for a review or focused question.
+- **[Commands](docs/cli.md):** Inspect all flags, including `--contract-batch-size`, `--context-profile long`, and `--dry-run --json`.
+- **[Output](docs/output.md) and [Limits](docs/limits.md):** Read exit codes, coverage blocks, JSONL schemas, and byte bounds.
 
-For a larger review, `check --contract-batch-size 4` can ask about several contracts together while supplying a
-file's source once per request. The default remains one contract per request. `--context-profile long` raises the
-input byte limits for a check or export; it does not establish that a model can admit or accurately review that input.
-Preview the selected work with `check --dry-run --json`. See [request options](docs/cli.md#assessment-inputs) and
-[limits](docs/limits.md).
-
-Add requirements one at a time and run a full check of each new contract. Repeated checks reuse unchanged file/contract
-answers; a changed file or new contract adds work without requiring every pair to be asked again. Combined assessments
-also depend on the other files in their scope. See [incremental adoption](docs/reviews.md#adopt-requirements-incrementally).
-
-Read [commands](docs/cli.md), [output](docs/output.md), and [reviewing with an agent](docs/reviews.md).
-The same docs are at [tenet-contracts.com/docs](https://tenet-contracts.com/docs).
+Browse the full documentation at [tenet-contracts.com/docs](https://tenet-contracts.com/docs).
 
 ## Build
 
@@ -78,7 +82,7 @@ cargo build --release --locked -p tenet
 cargo install --path crates/tenet --locked
 ```
 
-The Rust binary embeds the checker worker. To change it, use Node 22.23.2 and regenerate the bundle before building.
+The Rust binary embeds the checker worker. To change the worker, use Node 22.23.2 and regenerate the bundle before building:
 
 ```sh
 cd checker
@@ -88,13 +92,13 @@ npm test
 npm run bundle
 ```
 
-CI rebuilds the worker and checks it against the committed copy. A fresh checkout can replay a frozen check with Node and the sandbox tools for its language. The first model-generated check also installs the pinned fx library in the user cache.
+CI rebuilds the worker and compares it with the committed copy. A fresh checkout replays locked scripts using Node and the OS sandbox tools for the target language. The first model-generated check installs the pinned `fx` library in the user cache.
 
-Package ownership and allowed crate dependencies are declared in [package-boundaries.json](package-boundaries.json).
-CI verifies that declaration against Cargo and source imports, alongside the source-copy and advisory checks.
+## Package boundaries
 
-The package check requires Cargo, Python 3.14 or later, and uv. From the source checkout, verify the released checker
-and run it against the Cargo policy:
+[package-boundaries.json](package-boundaries.json) declares package ownership and allowed crate dependencies. CI verifies that declaration against Cargo and source imports alongside source-copy and advisory checks.
+
+Run the package check from a source checkout with Cargo, Python 3.14 or later, and `uv`:
 
 ```sh
 shasum -a 256 --check .checks/package-boundaries/SHA256SUMS

@@ -1,7 +1,7 @@
 import { CheckerError } from '../checker-error.mts';
 import { readInventory } from '../discovery/index.mts';
 import { reportProgress } from '../progress-log.mts';
-import { replacePin, writeAtomic } from '../storage/index.mts';
+import { replacePin, writeAtomic, writePinScripts } from '../storage/index.mts';
 import type { Pin } from '../types.d.mts';
 import { type Context, evaluate } from './receipt/index.mts';
 import { type Checked, type Preparation, selectPin } from './select-pin.mts';
@@ -20,17 +20,51 @@ function readPublishRoot(ctx: Context): string {
   return ctx.job.request.root;
 }
 
-async function publish({ ctx, pin }: PublishInput): Promise<void> {
-  const root = readPublishRoot(ctx);
-  const input = { path: ctx.lock, root, value: pin };
+type WritePublishedLockInput = Readonly<{
+  ctx: Context;
+  diskPin: Pin;
+  root: string;
+}>;
 
-  if (ctx.pin === undefined) {
-    await writeAtomic({ ...input, first: true });
+async function writePublishedLock({ ctx, diskPin, root }: WritePublishedLockInput): Promise<void> {
+  const input = { path: ctx.lock, root, value: diskPin };
+
+  if (ctx.pin === undefined || ctx.legacyLock) {
+    await writeAtomic({ ...input, first: !ctx.legacyLock });
 
     return;
   }
 
   await replacePin({ ...input, prior: ctx.prior });
+}
+
+async function publish({ ctx, pin }: PublishInput): Promise<Pin> {
+  const root = readPublishRoot(ctx);
+
+  const materialized = await writePinScripts({
+    lockPath: ctx.lock,
+    pin,
+    priorPin: ctx.pin,
+    root,
+  });
+
+  await writePublishedLock({ ctx, diskPin: materialized.diskPin, root });
+
+  return materialized.hydratedPin;
+}
+
+type ResolvePublishedPinInput = Readonly<{
+  cache: boolean;
+  ctx: Context;
+  pin: Pin;
+}>;
+
+async function resolvePublishedPin({ cache, ctx, pin }: ResolvePublishedPinInput): Promise<Pin> {
+  if (cache && !ctx.matching) {
+    return await publish({ ctx, pin });
+  }
+
+  return pin;
 }
 
 async function assertStableSource(ctx: Context): Promise<void> {
@@ -60,10 +94,7 @@ export async function verify({ ctx, onRequest }: VerifyInput): Promise<Checked> 
 
   const rows = [...observed, ...extraUnresolved];
   const cache = ctx.matching || pin.bundle.checks.length > 0;
+  const publishedPin = await resolvePublishedPin({ cache, ctx, pin });
 
-  if (cache && !ctx.matching) {
-    await publish({ ctx, pin });
-  }
-
-  return { cache, pin, rows };
+  return { cache, pin: publishedPin, rows };
 }

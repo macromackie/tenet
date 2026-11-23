@@ -1,7 +1,7 @@
 use alloc::collections::BTreeMap;
 use std::{
     io,
-    path::{Path, absolute},
+    path::{Path, PathBuf, absolute},
 };
 
 use serde_json::{Value, json};
@@ -42,6 +42,24 @@ pub(super) fn dispatch(
 
     super::process::execute(&input, &plan.root, max_generations > 0, on_progress)
 }
+fn collect_contract_hints<'plan>(plan: &'plan Plan, contract: &Contract) -> Vec<&'plan PathBuf> {
+    let folder = contract.path.parent().unwrap_or_else(|| Path::new("."));
+    let sections =
+        ["assets", "checks", "resources", super::pins::SCRIPTS_DIR].map(|name| folder.join(name));
+    let lock_file = folder.join(super::pins::SCRIPTS_LOCK_FILE);
+    // The full inventory honors ignore rules, separate projects and protected paths.
+    // The semantic export exposes only governed sources, so it cannot supply reference material.
+    plan.inventory
+        .iter()
+        .filter(|path| {
+            path.as_path() != lock_file.as_path()
+                && path.file_name().is_none_or(|name| name != ".lock.json")
+                && sections.iter().any(|section| path.starts_with(section))
+        })
+        .take(128)
+        .collect()
+}
+
 pub(super) fn build_contract_input(
     plan: &Plan,
     contract: &Contract,
@@ -54,16 +72,7 @@ pub(super) fn build_contract_input(
         .iter()
         .filter(|path| contract.is_governing(path))
         .collect();
-    let folder = contract.path.parent().unwrap_or_else(|| Path::new("."));
-    let sections = ["assets", "checks", "resources"].map(|name| folder.join(name));
-    // The full inventory honors ignore rules, separate projects and protected paths.
-    // The semantic export exposes only governed sources, so it cannot supply reference material.
-    let hints: Vec<_> = plan
-        .inventory
-        .iter()
-        .filter(|path| sections.iter().any(|section| path.starts_with(section)))
-        .take(128)
-        .collect();
+    let hints = collect_contract_hints(plan, contract);
     let decisions = checked
         .and_then(|report| {
             report

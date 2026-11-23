@@ -8,8 +8,8 @@ opens a vertically separated block with a clickable `╭─[path]` header, word-
 errors render with styled source snippets when stderr supports color. Diagnostic text is cleaned for terminal display
 without backslash-escaped quotes. In interactive terminals, live progress streams both semantic file progress and
 intermediate behavior-check phases (`discovering source`, `generating checks`, `qualifying controls`, `repairing
-checks`, `replaying checks`, and `explaining findings`). All status labels and plain-text diagnostics work cleanly in
-non-TTY CI logs. Inspect any pending item with `tenet show NAME`.
+checks`, `replaying checks`, and `explaining findings`). All status labels and plain-text diagnostics render without ANSI escapes in
+non-TTY CI logs. Run `tenet status` to view the repository `Coverage` block and contract health offline, or run `tenet show NAME` to inspect the rule, diff, model answer, history, and direct paths to runnable scripts under `.contracts/<NNN>-<name>/scripts/`.
 
 Use `--reporter verbose` for individual file judgments, model details and request counts. JSONL retains all
 intermediate evidence, including uncertainty that a later repository assessment resolves.
@@ -211,6 +211,10 @@ failed requests, plus any whose input changed; `check --dry-run` predicts them. 
 so a rerun sends every request again.
 
 ## Coverage
+
+`tenet status` prints a `Coverage` block before listing settled and pending contracts. The block summarizes governed
+and ungoverned scope across the repository alongside active contracts and runnable script counts, without calling a
+model. In `tenet status --json`, the same summary appears under the additive `coverage` field.
 
 In a diff check, the summary's `coverage` reports how much of the selected change any contract governs, whichever
 contracts the check runs:

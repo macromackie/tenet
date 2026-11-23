@@ -1,7 +1,7 @@
 /** Wire schemas for the `tenet audit --fix` worker mode. */
 import { Schema } from 'effect';
 import type { Finding } from '../../types.d.mts';
-import { ReplayRepro } from '../replay-wire.mts';
+import { OptionalPinRoot, ReplayRepro } from '../replay-wire.mts';
 
 const StringList = Schema.Array(Schema.String);
 const OptionalStringList = Schema.OptionFromOptionalKey(StringList);
@@ -25,6 +25,7 @@ const AuditFixGuardFields = Schema.Struct({
   check: Schema.String,
   contract: Schema.String,
   lockPath: OptionalText,
+  pinRoot: OptionalPinRoot,
   repro: OptionalReplayRepro,
   subject: OptionalText,
 });
@@ -37,6 +38,7 @@ const AuditFixWitnessFields = Schema.Struct({
   contract: Schema.String,
   lockPath: OptionalText,
   message: Schema.String,
+  pinRoot: OptionalPinRoot,
   repro: OptionalReplayRepro,
   subject: OptionalText,
 });

@@ -41,6 +41,7 @@ fn is_json_command(command: &Command) -> bool {
         Command::Fix(fix) => fix.json,
         Command::Init(init) => init.json,
         Command::Record(record) => record.json,
+        Command::Scan(scan) => scan.json,
         Command::Status { json, .. } | Command::Show { json, .. } | Command::Log { json, .. } => {
             *json
         },

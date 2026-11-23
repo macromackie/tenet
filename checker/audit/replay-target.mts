@@ -241,7 +241,7 @@ export async function replayTarget({
   state,
   target,
 }: ReplayTargetInput): Promise<AuditReplayResult> {
-  const resolved = await resolveReplayCheck({ state, target });
+  const resolved = await resolveReplayCheck({ root, state, target });
 
   if (Result.isFailure(resolved)) {
     return buildUnresolvedResult({ message: resolved.failure, subject: target.subject, target });

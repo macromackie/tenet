@@ -1,3 +1,4 @@
+use alloc::collections::BTreeSet;
 use std::{
     collections::HashSet,
     io::{BufWriter, Write},
@@ -5,7 +6,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use tenet_checks::behavior::Finding;
+use tenet_checks::behavior::{Finding, SCRIPTS_DIR, find_pin_path, read_pin_summary};
 use tenet_engine::{
     Change,
     Review,
@@ -35,9 +36,11 @@ pub(crate) async fn show(
     let current = review::resolve_current(root, &review, None, Some(name)).await?;
     let entry = current.select(name, paths)?;
     let generated = generated::inspect(root, state, entry, true)?;
+    let scripts = collect_contract_scripts(root, entry);
     let mut out = BufWriter::new(output::open_stdout().lock());
     if !json {
         write_brief(&mut out, &review, &current, entry)?;
+        write_contract_scripts(&mut out, &scripts)?;
         generated::write_section(&mut out, &generated)?;
         change(&mut out, &entry.changes)?;
         out.flush()?;
@@ -62,6 +65,9 @@ pub(crate) async fn show(
     let mut document = render_contract_json(&review, entry, &files)?;
     if !generated.is_empty() {
         document["behavior_checks"] = json!(generated);
+    }
+    if !scripts.is_empty() {
+        document["scripts"] = json!(scripts);
     }
     output::write_document(&mut out, SHOW_VERSION, document)?;
     out.flush()?;
@@ -154,7 +160,7 @@ pub(crate) async fn show_pending(
     let mut out = BufWriter::new(output::open_stdout().lock());
     if json {
         let contracts = (pending.iter())
-            .map(|(entry, rows)| build_pending_document(&review, entry, rows))
+            .map(|(entry, rows)| build_pending_document(root, &review, entry, rows))
             .collect::<Result<Vec<_>, CommandError>>()?;
         let changes: Vec<_> = (changes.iter())
             .filter(|change| !change.patch.is_empty())
@@ -175,7 +181,9 @@ pub(crate) async fn show_pending(
         if index > 0 {
             writeln!(out, "\n{}\n", "\u{2500}".repeat(72))?;
         }
+        let scripts = collect_contract_scripts(root, entry);
         write_brief(&mut out, &review, &current, entry)?;
+        write_contract_scripts(&mut out, &scripts)?;
         generated::write_section(&mut out, rows)?;
     }
     change(&mut out, &changes)?;
@@ -184,6 +192,7 @@ pub(crate) async fn show_pending(
 }
 
 fn build_pending_document(
+    root: &Path,
     review: &Review,
     entry: &CurrentContract<'_>,
     rows: &[Finding],
@@ -194,12 +203,58 @@ fn build_pending_document(
         .map(serde_json::to_value)
         .collect::<Result<Vec<_>, _>>()?;
     let mut document = render_contract_json(review, entry, &files)?;
-    if let Some(fields) = document.as_object_mut()
-        && !rows.is_empty()
-    {
-        drop(fields.insert("behavior_checks".into(), json!(rows)));
+    let scripts = collect_contract_scripts(root, entry);
+    if let Some(fields) = document.as_object_mut() {
+        if !rows.is_empty() {
+            drop(fields.insert("behavior_checks".into(), json!(rows)));
+        }
+        if !scripts.is_empty() {
+            drop(fields.insert("scripts".into(), json!(scripts)));
+        }
     }
     Ok(document)
+}
+
+fn collect_contract_scripts(root: &Path, entry: &CurrentContract<'_>) -> Vec<PathBuf> {
+    let rel_dir = entry
+        .contract
+        .path
+        .parent()
+        .unwrap_or_else(|| Path::new(""));
+    let Some(pin_path) = find_pin_path(&root.join(rel_dir)) else {
+        return Vec::new();
+    };
+    let Ok(summary) = read_pin_summary(&pin_path) else {
+        return Vec::new();
+    };
+    let mut seen_scripts = BTreeSet::new();
+    let mut scripts = Vec::new();
+    for check in summary.checks {
+        if let Some(script_file) = check.script_file {
+            let path = rel_dir.join(SCRIPTS_DIR).join(script_file);
+            if seen_scripts.insert(path.clone()) {
+                scripts.push(path);
+            }
+        }
+    }
+    scripts
+}
+
+fn write_contract_scripts(out: &mut impl Write, scripts: &[PathBuf]) -> Result<(), CommandError> {
+    if scripts.is_empty() {
+        return Ok(());
+    }
+    let formatted: Vec<String> = scripts
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect();
+    writeln!(
+        out,
+        "\n  {} {}",
+        output::format_styled("Scripts:").bold(),
+        formatted.join(", "),
+    )?;
+    Ok(())
 }
 
 /// Each file's patch, under a Change heading when there is any.

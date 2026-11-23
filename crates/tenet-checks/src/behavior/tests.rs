@@ -13,9 +13,12 @@ use super::{
     AuditFixWitness,
     AuditReplayRequest,
     AuditReplayTarget,
+    Finding,
     Outcome,
+    SeverityLevel,
     WitnessRepro,
     environment,
+    is_severity_at_least,
     process,
     replay_audit,
     request,
@@ -65,17 +68,7 @@ fn selected_source_keeps_its_contract_samples_and_respects_discovery() -> anyhow
     fs::write(folder.join("resources/usage.txt"), "A public reference.")?;
     fs::write(root.join(".ignore"), "private.txt\n")?;
     fs::write(folder.join("resources/private.txt"), "an ignored sample")?;
-    fs::write(root.join("options.ts"), "export const value = 0;")?;
-    let selection = tenet_engine::Selection {
-        paths: vec!["options.ts".into()],
-        ..Default::default()
-    };
-    let plan = tenet_engine::plan(root, &selection)?;
-    let contract = plan
-        .contracts
-        .first()
-        .ok_or_else(|| io::Error::other("missing contract"))?;
-    let input = request::build_contract_input(&plan, contract, None, None, &[]);
+    let input = build_options_contract_input(root)?;
     anyhow::ensure!(
         input.get("paths") == Some(&json!(["options.ts"])),
         "unexpected governed paths: {input:?}"
@@ -89,6 +82,26 @@ fn selected_source_keeps_its_contract_samples_and_respects_discovery() -> anyhow
         "unexpected reference paths: {input:?}"
     );
     Ok(())
+}
+
+fn build_options_contract_input(root: &Path) -> anyhow::Result<serde_json::Value> {
+    fs::write(root.join("options.ts"), "export const value = 0;")?;
+    let selection = tenet_engine::Selection {
+        paths: vec!["options.ts".into()],
+        ..Default::default()
+    };
+    let plan = tenet_engine::plan(root, &selection)?;
+    let contract = plan
+        .contracts
+        .first()
+        .ok_or_else(|| io::Error::other("missing contract"))?;
+    Ok(request::build_contract_input(
+        &plan,
+        contract,
+        None,
+        None,
+        &[],
+    ))
 }
 
 #[cfg(unix)]
@@ -140,6 +153,7 @@ fn replay_audit_resolves_relative_root_against_caller_cwd() -> anyhow::Result<()
             check: "relative-root".into(),
             contract: "relative-root".into(),
             lock_path: None,
+            pin_root: None,
             repro: Some(build_cargo_toml_repro()),
             subject: Some("Cargo.toml".into()),
         }],
@@ -174,6 +188,7 @@ fn run_audit_fix_decodes_host_payload_and_prechecks_passing_witness() -> anyhow:
                 contract: "already-green".into(),
                 lock_path: None,
                 message: "already passing".into(),
+                pin_root: None,
                 repro: Some(build_cargo_toml_repro()),
                 subject: Some("Cargo.toml".into()),
             }],
@@ -225,5 +240,117 @@ fn audit_fix_group_serializes_test_files_and_omits_when_empty() -> anyhow::Resul
     );
     let roundtrip_populated: AuditFixGroup = serde_json::from_value(populated_value)?;
     anyhow::ensure!(roundtrip_populated.test_files == vec!["tests/lib_test.rs"]);
+    Ok(())
+}
+
+fn sample_finding(message: &str, severity: Option<&str>) -> Finding {
+    Finding {
+        check: String::from("check-1"),
+        contract: String::from("contract-1"),
+        cost_usd: None,
+        explanation_cost_usd: None,
+        explanation_requests: None,
+        generation_requests: None,
+        message: message.to_owned(),
+        outcome: Outcome::Failed,
+        pin_reused: None,
+        repro: None,
+        requested: false,
+        reused: false,
+        severity: severity.map(ToOwned::to_owned),
+        subject: None,
+    }
+}
+
+#[test]
+fn finding_effective_severity_and_min_severity_filtering() -> anyhow::Result<()> {
+    let explicit = sample_finding("[medium] downgraded tag", Some("critical"));
+    anyhow::ensure!(explicit.read_effective_severity() == Some("critical"));
+
+    let parsed_critical = sample_finding("[critical] auth bypass", None);
+    anyhow::ensure!(parsed_critical.read_effective_severity() == Some("critical"));
+
+    let parsed_high = sample_finding("[high] missing check", None);
+    anyhow::ensure!(parsed_high.read_effective_severity() == Some("high"));
+
+    let parsed_medium = sample_finding("[medium] stale cache", None);
+    anyhow::ensure!(parsed_medium.read_effective_severity() == Some("medium"));
+
+    let untagged = sample_finding("plain failure message", None);
+    anyhow::ensure!(untagged.read_effective_severity().is_none());
+
+    anyhow::ensure!(is_severity_at_least(
+        Some("critical"),
+        SeverityLevel::Critical
+    ));
+    anyhow::ensure!(!is_severity_at_least(Some("high"), SeverityLevel::Critical));
+    anyhow::ensure!(!is_severity_at_least(
+        Some("medium"),
+        SeverityLevel::Critical
+    ));
+    anyhow::ensure!(!is_severity_at_least(None, SeverityLevel::Critical));
+
+    anyhow::ensure!(is_severity_at_least(Some("critical"), SeverityLevel::High));
+    anyhow::ensure!(is_severity_at_least(Some("high"), SeverityLevel::High));
+    anyhow::ensure!(!is_severity_at_least(Some("medium"), SeverityLevel::High));
+    anyhow::ensure!(!is_severity_at_least(None, SeverityLevel::High));
+
+    anyhow::ensure!(is_severity_at_least(
+        Some("critical"),
+        SeverityLevel::Medium
+    ));
+    anyhow::ensure!(is_severity_at_least(Some("high"), SeverityLevel::Medium));
+    anyhow::ensure!(is_severity_at_least(Some("medium"), SeverityLevel::Medium));
+    anyhow::ensure!(is_severity_at_least(None, SeverityLevel::Medium));
+    anyhow::ensure!(is_severity_at_least(Some("unknown"), SeverityLevel::Medium));
+
+    Ok(())
+}
+
+#[test]
+fn build_contract_input_includes_scripts_and_excludes_lock_json() -> anyhow::Result<()> {
+    let checkout = tempfile::tempdir()?;
+    let root = checkout.path();
+    let folder = root.join(".contracts/001-options");
+    fs::create_dir_all(folder.join("scripts"))?;
+    fs::write(
+        folder.join("CONTRACT.md"),
+        "---\nname: options\nmessage: Preserve explicit values.\npaths: [options.ts]\n---\nUse \
+         the supplied value.\n",
+    )?;
+    fs::write(folder.join("scripts/check-zero.mjs"), "console.log('ok');")?;
+    fs::write(folder.join("scripts/.lock.json"), "{\"protocol\":1}")?;
+    let input = build_options_contract_input(root)?;
+    anyhow::ensure!(
+        input.get("assets") == Some(&json!([".contracts/001-options/scripts/check-zero.mjs"])),
+        "unexpected script hints: {input:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn replay_and_fix_targets_serialize_pin_root_as_camel_case() -> anyhow::Result<()> {
+    let replay_target = AuditReplayTarget {
+        check: String::from("c1"),
+        contract: String::from("mod"),
+        lock_path: Some(String::from("scripts/.lock.json")),
+        pin_root: Some(String::from("/tmp/staged")),
+        repro: None,
+        subject: None,
+    };
+    let replay_json = serde_json::to_value(&replay_target)?;
+    anyhow::ensure!(replay_json.get("pinRoot") == Some(&json!("/tmp/staged")));
+
+    let fix_witness = AuditFixWitness {
+        check: String::from("c1"),
+        contract: String::from("mod"),
+        lock_path: Some(String::from("scripts/.lock.json")),
+        message: String::from("failed"),
+        pin_root: Some(String::from("/tmp/staged")),
+        repro: None,
+        subject: None,
+    };
+    let fix_json = serde_json::to_value(&fix_witness)?;
+    anyhow::ensure!(fix_json.get("pinRoot") == Some(&json!("/tmp/staged")));
     Ok(())
 }

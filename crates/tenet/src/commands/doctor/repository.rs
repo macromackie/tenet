@@ -1,7 +1,7 @@
-use std::{fs, path::Path};
+use std::path::Path;
 
-use serde_json::Value;
 use tenet_adoption as adoption;
+use tenet_checks::behavior::{find_pin_path, read_pin_summary};
 use tenet_engine::{discover_contracts, review::DIRECTORY, run_git};
 
 use super::{CheckStatus, DoctorItem};
@@ -112,19 +112,32 @@ pub(super) fn check_lockfile(root: &Path) -> DoctorItem {
     }
 }
 
-fn count_pin_checks(pin_path: &Path) -> Option<usize> {
-    let text = fs::read_to_string(pin_path).ok()?;
-    let doc: Value = serde_json::from_str(&text).ok()?;
-    (doc.get("protocol").and_then(Value::as_u64) == Some(1))
-        .then(|| doc.pointer("/bundle/checks").and_then(Value::as_array))
-        .flatten()
-        .map(Vec::len)
-}
-
 #[expect(
     clippy::arithmetic_side_effects,
     reason = "Pin and check counts are bounded by the discovered contract documents."
 )]
+fn count_behavior_pins(
+    root: &Path,
+    contracts: &[tenet_contracts::Contract],
+) -> (usize, usize, usize) {
+    let (mut files, mut checks, mut invalid) = (0_usize, 0_usize, 0_usize);
+    for contract in contracts {
+        let contract_dir = contract
+            .path
+            .parent()
+            .map_or_else(|| root.to_path_buf(), |parent| root.join(parent));
+        let Some(pin_path) = find_pin_path(&contract_dir) else {
+            continue;
+        };
+        files += 1;
+        match read_pin_summary(&pin_path) {
+            Ok(summary) => checks += summary.check_count,
+            Err(_) => invalid += 1,
+        }
+    }
+    (files, checks, invalid)
+}
+
 pub(super) fn check_behavior_pins(root: &Path) -> DoctorItem {
     let Ok(contracts) = discover_contracts(root) else {
         return DoctorItem {
@@ -136,23 +149,13 @@ pub(super) fn check_behavior_pins(root: &Path) -> DoctorItem {
             status: CheckStatus::Ok,
         };
     };
-    let (mut files, mut checks, mut invalid) = (0_usize, 0_usize, 0_usize);
-    for contract in contracts {
-        let pin_path = root.join(contract.path.with_file_name("agent-checks.lock.json"));
-        if !pin_path.is_file() {
-            continue;
-        }
-        files += 1;
-        match count_pin_checks(&pin_path) {
-            Some(count) => checks += count,
-            None => invalid += 1,
-        }
-    }
+    let (files, checks, invalid) = count_behavior_pins(root, &contracts);
     if invalid > 0 {
         return DoctorItem {
-            detail: format!("{invalid} of {files} agent-checks.lock.json file(s) are malformed"),
+            detail: format!("{invalid} of {files} behavior pin file(s) are malformed"),
             hint: Some(
-                "Remove or fix the malformed agent-checks.lock.json file and rerun `tenet check`."
+                "Remove or fix the malformed scripts/.lock.json or agent-checks.lock.json file \
+                 and rerun `tenet check`."
                     .into(),
             ),
             label: "Behavior pins",

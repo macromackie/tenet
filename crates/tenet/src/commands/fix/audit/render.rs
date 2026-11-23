@@ -108,14 +108,11 @@ fn write_fix_json(
     Ok(())
 }
 
-fn write_fix_terminal(
+pub(in crate::commands::fix) fn write_fix_terminal_outcomes(
     out: &mut impl Write,
     response: &AuditFixResponse,
-    changes: &[fixes::Change],
+    changes_count: usize,
 ) -> Result<(), CommandError> {
-    for change in changes {
-        writeln!(out, "{}", change.patch)?;
-    }
     let counts = count_fix_outcomes(&response.outcomes);
     if response.outcomes.is_empty() {
         writeln!(
@@ -146,15 +143,25 @@ fn write_fix_terminal(
         .map_or_else(String::new, |cost| format!(" · ${cost:.4}"));
     writeln!(
         out,
-        "  {}  {} fixed · {} already passing · {} failed · {} unresolved · {} files updated · {} \
-         requests{cost_suffix}",
+        "  {}  {} fixed · {} already passing · {} failed · {} unresolved · {changes_count} files \
+         updated · {} requests{cost_suffix}",
         output::format_styled("Summary").bold(),
         counts.fixed,
         counts.already_passing,
         counts.failed,
         counts.unresolved,
-        changes.len(),
         response.requests,
     )?;
     Ok(())
+}
+
+fn write_fix_terminal(
+    out: &mut impl Write,
+    response: &AuditFixResponse,
+    changes: &[fixes::Change],
+) -> Result<(), CommandError> {
+    for change in changes {
+        writeln!(out, "{}", change.patch)?;
+    }
+    write_fix_terminal_outcomes(out, response, changes.len())
 }

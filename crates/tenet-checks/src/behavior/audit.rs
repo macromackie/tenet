@@ -8,22 +8,55 @@ use serde_json::json;
 
 use super::Finding;
 
-macro_rules! define_witness_outcome {
-    ($(#[$meta:meta])* pub struct $name:ident { $field:ident : $status_ty:ty }) => {
+macro_rules! define_witness_struct {
+    (
+        $(#[$meta:meta])*
+        pub struct $name:ident {
+            $($(#[$field_meta:meta])* $field:ident : $field_ty:ty),* $(,)?
+        }
+    ) => {
         $(#[$meta])*
         #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct $name {
             pub check: String,
             pub contract: String,
-            #[serde(default, skip_serializing_if = "Option::is_none")]
-            pub expected: Option<String>,
-            pub message: String,
-            #[serde(default, skip_serializing_if = "Option::is_none")]
-            pub observed: Option<String>,
-            pub $field: $status_ty,
+            $($(#[$field_meta])* pub $field: $field_ty,)*
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub subject: Option<String>,
+        }
+    };
+}
+
+macro_rules! define_witness_outcome {
+    ($(#[$meta:meta])* pub struct $name:ident { $field:ident : $status_ty:ty }) => {
+        define_witness_struct! {
+            $(#[$meta])*
+            pub struct $name {
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                expected: Option<String>,
+                message: String,
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                observed: Option<String>,
+                $field: $status_ty,
+            }
+        }
+    };
+}
+
+macro_rules! define_witness_target {
+    ($(#[$meta:meta])* pub struct $name:ident { $($extra_field:ident : $extra_ty:ty),* $(,)? }) => {
+        define_witness_struct! {
+            $(#[$meta])*
+            pub struct $name {
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                lock_path: Option<String>,
+                $($extra_field: $extra_ty,)*
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pin_root: Option<String>,
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                repro: Option<WitnessRepro>,
+            }
         }
     };
 }

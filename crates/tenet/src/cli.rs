@@ -9,7 +9,7 @@ pub(crate) use adoption::{Contracts, Locked, Skills};
 pub(crate) use checking::{Check, Export, Input, Record, ReporterKind};
 use clap::{Parser, Subcommand};
 pub(crate) use exit_status::ExitStatus;
-pub(crate) use onboarding::{Audit, Fix, Init};
+pub(crate) use onboarding::{Audit, Fix, Init, Scan};
 use tenet_engine::review::DIRECTORY;
 
 use crate::telemetry::Environment;
@@ -80,7 +80,9 @@ impl Cli {
               codes."
 )]
 pub(crate) enum Command {
-    /// Initialize Tenet in this repository with recommended or starter contracts.
+    /// Discover catalog recommendations, synthesize module contracts, and verify behavior checks.
+    Scan(Scan),
+    /// Initialize Tenet with recommended or starter contracts (see also `tenet scan`).
     Init(Init),
     /// Check provider credentials, sandbox tooling, runtimes, and repository setup.
     Doctor {
@@ -88,7 +90,8 @@ pub(crate) enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Synthesize per-module contracts and falsify them with isolated behavior checks.
+    /// Synthesize per-module contracts and falsify them with isolated behavior checks (see also
+    /// `tenet scan`).
     Audit(Audit),
     /// Assess a repository, or whether a change preserves its contracts, and update the review.
     #[command(

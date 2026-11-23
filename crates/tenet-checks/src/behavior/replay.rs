@@ -29,18 +29,9 @@ define_witness_outcome! {
     pub struct AuditReplayResult { outcome: Outcome }
 }
 
-/// Saved audit witness target submitted to the isolated checker worker for zero-model replay.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuditReplayTarget {
-    pub check: String,
-    pub contract: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lock_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repro: Option<WitnessRepro>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subject: Option<String>,
+define_witness_target! {
+    /// Saved audit witness target submitted to the isolated checker worker for zero-model replay.
+    pub struct AuditReplayTarget {}
 }
 
 /// Replay saved audit witnesses against the current checkout without calling a model.

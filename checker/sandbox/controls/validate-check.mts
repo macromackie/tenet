@@ -1,3 +1,4 @@
+import { Option } from 'effect';
 import { CheckerError } from '../../checker-error.mts';
 import type { Check } from '../../types.d.mts';
 import { applyControl } from './apply-control.mts';
@@ -25,9 +26,20 @@ type ControlLimitInput = Readonly<{
 }>;
 
 type NativeInput = Readonly<{
-  base: Omit<Check, 'test' | 'testFile'>;
+  base: Omit<Check, 'scriptFile' | 'scriptHash' | 'test' | 'testFile'>;
   fields: Input['fields'];
   files: Input['files'];
+  fromPin: boolean;
+}>;
+
+type ScriptMetaInput = Readonly<{
+  fields: Input['fields'];
+  fromPin: boolean;
+}>;
+
+type ScriptMeta = Readonly<{
+  scriptFile?: string;
+  scriptHash?: string;
 }>;
 
 type ControlsResult = Pick<Check, 'brownfield' | 'defect' | 'good' | 'refactor'>;
@@ -199,9 +211,53 @@ function readControls({ fields, fromPin, source }: ControlInput): ControlsResult
   });
 }
 
-function attachEntry({ base, fields, files }: NativeInput): Check {
+type BuildScriptMetaInput = Readonly<{
+  scriptFile: Option.Option<string>;
+  scriptHash: Option.Option<string>;
+}>;
+
+function readOptionalPinText(raw: unknown): Option.Option<string> {
+  if (typeof raw !== 'string' || raw.trim().length === 0 || Buffer.byteLength(raw) > MAX_FIELD_BYTES) {
+    return Option.none();
+  }
+
+  return Option.some(raw);
+}
+
+function buildScriptMeta({ scriptFile, scriptHash }: BuildScriptMetaInput): ScriptMeta {
+  if (Option.isSome(scriptFile) && Option.isSome(scriptHash)) {
+    return { scriptFile: scriptFile.value, scriptHash: scriptHash.value };
+  }
+
+  if (Option.isSome(scriptFile)) {
+    return { scriptFile: scriptFile.value };
+  }
+
+  if (Option.isSome(scriptHash)) {
+    return { scriptHash: scriptHash.value };
+  }
+
+  return {};
+}
+
+function readScriptMeta({ fields, fromPin }: ScriptMetaInput): ScriptMeta {
+  if (!fromPin) {
+    return {};
+  }
+
+  const rawScriptFile = fields.get('scriptFile');
+  const rawScriptHash = fields.get('scriptHash');
+  const scriptFile = readOptionalPinText(rawScriptFile);
+  const scriptHash = readOptionalPinText(rawScriptHash);
+
+  return buildScriptMeta({ scriptFile, scriptHash });
+}
+
+function attachEntry({ base, fields, files, fromPin }: NativeInput): Check {
   if (!fields.has('testFile')) {
-    return { ...base, test: readField({ fields, key: 'test' }) };
+    const scriptMeta = readScriptMeta({ fields, fromPin });
+
+    return { ...base, ...scriptMeta, test: readField({ fields, key: 'test' }) };
   }
 
   const testFile = readField({ fields, key: 'testFile' });
@@ -230,5 +286,5 @@ export function validate({ check, files, fromPin = false }: CandidateInput): Che
   const controls = readControls({ fields, fromPin, source });
   const base = { ...target, ...controls };
 
-  return attachEntry({ base, fields, files });
+  return attachEntry({ base, fields, files, fromPin });
 }

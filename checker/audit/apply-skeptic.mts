@@ -106,6 +106,7 @@ function applyUnverifiedReview({ review, row }: FormatFindingInput): Finding {
   return {
     ...row,
     message: formatSeverityMessage({ message: row.message, verdict: review.verdict }),
+    severity: review.verdict,
   };
 }
 
@@ -131,6 +132,7 @@ function applyVerifiedReview({ review, row }: FormatFindingInput): Finding {
   return {
     ...row,
     message: formatSeverityMessage({ message: row.message, verdict: review.verdict }),
+    severity: review.verdict,
   };
 }
 

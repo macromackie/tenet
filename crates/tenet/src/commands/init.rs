@@ -19,7 +19,7 @@ use crate::{
 };
 
 pub(super) const INIT_VERSION: u64 = 1;
-const MAX_INIT_CANDIDATES: usize = 5;
+pub(in crate::commands) const MAX_INIT_CANDIDATES: usize = 5;
 
 pub(super) fn write_credential_hint(out: &mut impl Write) -> Result<(), CommandError> {
     let provider = env::var("TENET_PROVIDER").unwrap_or_default();
@@ -40,7 +40,10 @@ pub(super) fn write_credential_hint(out: &mut impl Write) -> Result<(), CommandE
     Ok(())
 }
 
-pub(super) fn normalize_scope(root: &Path, scope: &Path) -> Result<PathBuf, CommandError> {
+pub(in crate::commands) fn normalize_scope(
+    root: &Path,
+    scope: &Path,
+) -> Result<PathBuf, CommandError> {
     let mut normalized = PathBuf::new();
     for component in scope.components() {
         match component {
@@ -61,12 +64,14 @@ pub(super) fn normalize_scope(root: &Path, scope: &Path) -> Result<PathBuf, Comm
     Ok(normalized)
 }
 
-fn install_candidates(
+/// Install all recommended contracts from `catalog` into `scope`.
+pub(in crate::commands) fn install_catalog_candidates(
     root: &Path,
-    init: &Init,
+    scope: &Path,
+    library: Option<&Path>,
     catalog: &Catalog,
 ) -> Result<Vec<Added>, CommandError> {
-    let (source_alias, sources) = match init.library.as_deref() {
+    let (source_alias, sources) = match library {
         Some(directory) => {
             let canonical = directory
                 .canonicalize()
@@ -87,7 +92,7 @@ fn install_candidates(
                 destination: Destination::Scope {
                     name: None,
                     number: None,
-                    scope: &init.scope,
+                    scope,
                 },
                 sources: &sources,
                 spec: &spec,
@@ -98,6 +103,32 @@ fn install_candidates(
     Ok(installed)
 }
 
+/// Scaffold a local starter contract, shared by `tenet init --starter` and `tenet scan --starter`.
+pub(in crate::commands) fn run_starter_command(
+    root: &Path,
+    scope: &Path,
+    name: &str,
+    json: bool,
+) -> Result<ExitStatus, CommandError> {
+    run_starter(root, scope, name, json)
+}
+
+/// Serialize installed catalog contracts for JSON output in `init` and `scan`.
+pub(in crate::commands) fn serialize_added(installed: &[Added]) -> Vec<serde_json::Value> {
+    installed
+        .iter()
+        .map(|added| {
+            json!({
+                "name": added.name,
+                "path": added.path,
+                "source": added.source,
+                "reference": added.reference,
+                "commit": added.commit,
+            })
+        })
+        .collect()
+}
+
 fn write_installed(
     out: &mut impl Write,
     catalog: &Catalog,
@@ -105,18 +136,7 @@ fn write_installed(
     json: bool,
 ) -> Result<(), CommandError> {
     if json {
-        let entries: Vec<_> = installed
-            .iter()
-            .map(|added| {
-                json!({
-                    "name": added.name,
-                    "path": added.path,
-                    "source": added.source,
-                    "reference": added.reference,
-                    "commit": added.commit,
-                })
-            })
-            .collect();
+        let entries = serialize_added(installed);
         output::write_document(
             out,
             INIT_VERSION,
@@ -219,7 +239,8 @@ pub(super) fn run(root: &Path, init: &Init) -> Result<ExitStatus, CommandError> 
     catalog.candidates.truncate(MAX_INIT_CANDIDATES);
     let mut out = output::open_stdout().lock();
     if init.yes && !catalog.candidates.is_empty() {
-        let installed = install_candidates(root, init, &catalog)?;
+        let installed =
+            install_catalog_candidates(root, &init.scope, init.library.as_deref(), &catalog)?;
         write_installed(&mut out, &catalog, &installed, init.json)?;
         return Ok(ExitStatus::Passed);
     }

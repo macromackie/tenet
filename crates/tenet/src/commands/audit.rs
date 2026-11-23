@@ -8,7 +8,12 @@ mod save;
 mod tests;
 
 use alloc::collections::BTreeMap;
-use std::{env, io::IsTerminal as _, path::Path, time::Instant};
+use std::{
+    env,
+    io::IsTerminal as _,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use anyhow::{Context as _, anyhow};
 use console::Term;
@@ -16,19 +21,28 @@ pub(super) use discover::{
     discover_modules,
     find_related_files,
     format_slash_path,
+    is_matching_filter,
     normalize_filters,
 };
 pub(super) use queue::AuditQueue;
 use render::write_report;
+pub(super) use render::write_witness_header;
 pub(super) use replay::{
     StatusRow,
     build_contract_lock_paths,
     build_replay_target,
     is_matching_finding,
+    write_replay_results,
     write_status_row,
 };
-use repros::write_witness_repros;
+pub(super) use repros::write_witness_repros;
 use save::save_verified_contracts;
+pub(super) use save::{
+    SavedContract,
+    read_global_contract_names,
+    save_contracts_to,
+    strip_saved_path_prefix,
+};
 use tenet_checks::behavior::{
     AuditModuleInput,
     AuditModuleReport,
@@ -46,13 +60,69 @@ use crate::{
 
 const MIN_FOLLOWUP_MODULE_BUDGET: usize = 2;
 
+/// Parameters for running module discovery and synthesis/falsification shared by `audit` and
+/// `scan`.
+pub(super) struct AuditRunParams<'params> {
+    pub base: Option<&'params str>,
+    pub deep: bool,
+    pub fresh: bool,
+    pub json: bool,
+    pub max_requests: usize,
+    pub paths: &'params [PathBuf],
+}
+
+/// Return whether `OPENROUTER_API_KEY` is populated in the current environment.
+pub(super) fn has_openrouter_key() -> bool {
+    env::var_os("OPENROUTER_API_KEY").is_some_and(|value| !value.is_empty())
+}
+
 /// Verify that `OPENROUTER_API_KEY` is populated before running a model-backed `command`.
 pub(super) fn require_openrouter_key(command: &str) -> Result<(), CommandError> {
-    let has_key = env::var_os("OPENROUTER_API_KEY").is_some_and(|value| !value.is_empty());
-    if has_key {
+    if has_openrouter_key() {
         return Ok(());
     }
     Err(anyhow!("set \"OPENROUTER_API_KEY\" to run {command:?}").into())
+}
+
+/// Discover production modules and execute bounded synthesis/falsification, persisting the
+/// resumable queue in `state` when running outside `--base` mode.
+pub(super) fn execute_module_audit(
+    root: &Path,
+    state: &Path,
+    params: &AuditRunParams<'_>,
+) -> Result<(Vec<AuditModuleReport>, bool), CommandError> {
+    let discovered = discover_modules(root, params.paths, params.base)?;
+    if discovered.modules.is_empty() {
+        return Ok((Vec::new(), false));
+    }
+    let persist_queue = params.base.is_none();
+    let mut queue = if persist_queue {
+        AuditQueue::read(state, params.deep, params.fresh)?
+    } else {
+        AuditQueue::new(params.deep)
+    };
+    let pending: Vec<_> = discovered
+        .modules
+        .iter()
+        .filter(|module| !queue.has_module(&module.name))
+        .cloned()
+        .collect();
+    let transient = if !pending.is_empty() && params.max_requests > 0 {
+        run_pending_modules(
+            root,
+            state,
+            params,
+            pending,
+            &discovered.runtime_paths,
+            &mut queue,
+        )?
+    } else {
+        Vec::new()
+    };
+    Ok((
+        select_reports(&discovered.modules, &queue, &transient),
+        true,
+    ))
 }
 
 /// Discover modules, synthesize contracts, falsify them in isolated sandboxes, and report defects.
@@ -62,8 +132,16 @@ pub(super) fn run(root: &Path, state: &Path, args: &Audit) -> Result<ExitStatus,
     }
     require_openrouter_key("tenet audit")?;
     let budget = usize::try_from(args.max_requests).context("convert audit request budget")?;
-    let discovered = discover_modules(root, &args.paths, args.base.as_deref())?;
-    if discovered.modules.is_empty() {
+    let params = AuditRunParams {
+        base: args.base.as_deref(),
+        deep: args.deep,
+        fresh: args.fresh,
+        json: args.json,
+        max_requests: budget,
+        paths: &args.paths,
+    };
+    let (selected_reports, found_modules) = execute_module_audit(root, state, &params)?;
+    if !found_modules {
         if args.base.is_some() {
             let mut out = output::open_stdout().lock();
             write_report(&mut out, args.deep, &[], &[], &BTreeMap::new(), args.json)?;
@@ -71,32 +149,6 @@ pub(super) fn run(root: &Path, state: &Path, args: &Audit) -> Result<ExitStatus,
         }
         return Err(anyhow!("no supported production source files were found to audit").into());
     }
-    let persist_queue = args.base.is_none();
-    let mut queue = if persist_queue {
-        AuditQueue::read(state, args.deep, args.fresh)?
-    } else {
-        AuditQueue::new(args.deep)
-    };
-    let pending: Vec<_> = discovered
-        .modules
-        .iter()
-        .filter(|module| !queue.has_module(&module.name))
-        .cloned()
-        .collect();
-    let transient = if !pending.is_empty() && budget > 0 {
-        run_pending_modules(
-            root,
-            state,
-            args,
-            budget,
-            pending,
-            &discovered.runtime_paths,
-            &mut queue,
-        )?
-    } else {
-        Vec::new()
-    };
-    let selected_reports = select_reports(&discovered.modules, &queue, &transient);
     finish_audit(root, state, args, &selected_reports)
 }
 
@@ -156,7 +208,7 @@ fn is_transient_synthesis_failure(report: &AuditModuleReport) -> bool {
             .any(|row| row.check == "synthesis" && row.outcome == Outcome::Unresolved)
 }
 
-fn read_exit_status(reports: &[AuditModuleReport]) -> ExitStatus {
+pub(super) fn read_exit_status(reports: &[AuditModuleReport]) -> ExitStatus {
     let has_failures = reports.iter().any(|report| {
         report
             .findings
@@ -175,17 +227,16 @@ fn read_exit_status(reports: &[AuditModuleReport]) -> ExitStatus {
 fn run_pending_modules(
     root: &Path,
     state: &Path,
-    args: &Audit,
-    budget: usize,
+    params: &AuditRunParams<'_>,
     pending: Vec<AuditModuleInput>,
     runtime_paths: &[String],
     queue: &mut AuditQueue,
 ) -> Result<Vec<AuditModuleReport>, CommandError> {
-    let persist_queue = args.base.is_none();
-    let mut remaining = budget;
+    let persist_queue = params.base.is_none();
+    let mut remaining = params.max_requests;
     let started = Instant::now();
     let term = Term::stderr();
-    let show_progress = !args.json && output::open_stderr().is_terminal();
+    let show_progress = !params.json && output::open_stderr().is_terminal();
     let mut progress = Progress::default();
     let mut transient = Vec::new();
     for (index, module) in pending.into_iter().enumerate() {
@@ -198,8 +249,8 @@ fn run_pending_modules(
         };
         let callback: Option<&mut dyn FnMut(&str)> = show_progress.then_some(&mut on_progress);
         let request = AuditRequest {
-            deep: args.deep,
-            fresh: args.fresh,
+            deep: params.deep,
+            fresh: params.fresh,
             max_requests: remaining,
             modules: vec![module],
             root: root.to_path_buf(),

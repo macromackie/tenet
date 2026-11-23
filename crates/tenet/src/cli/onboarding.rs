@@ -3,7 +3,8 @@ mod tests;
 
 use std::path::PathBuf;
 
-use clap::Args;
+use clap::{Args, ValueEnum};
+use tenet_checks::behavior::SeverityLevel;
 
 #[derive(Args)]
 #[expect(
@@ -45,6 +46,31 @@ pub(crate) struct Audit {
 }
 
 #[derive(Args)]
+pub(crate) struct Fix {
+    /// Limit fixes to files changed since this commit.
+    #[arg(long)]
+    pub base: Option<String>,
+    /// Apply fixes for one contract by name.
+    #[arg(long)]
+    pub contract: Option<String>,
+    /// Repair failing witnesses strictly from `.tenet/audit.json` in a bounded verify-until-green
+    /// loop.
+    #[arg(long, conflicts_with = "base")]
+    pub from_audit: bool,
+    /// Print applied fixes and re-check results as JSON.
+    #[arg(long)]
+    pub json: bool,
+    /// Maximum model requests when repairing failing runtime behavior checks.
+    #[arg(long, default_value_t = 20)]
+    pub max_requests: u32,
+    /// Files or directories to fix; fixes all governed files when omitted.
+    pub paths: Vec<PathBuf>,
+    /// Minimum severity of failing runtime witnesses to repair (critical, high, or medium).
+    #[arg(long, value_enum, default_value_t = SeverityArg::Medium)]
+    pub severity: SeverityArg,
+}
+
+#[derive(Args)]
 #[expect(
     clippy::arbitrary_source_item_ordering,
     reason = "The declared order is the help and argument order."
@@ -76,23 +102,67 @@ pub(crate) struct Init {
 }
 
 #[derive(Args)]
-pub(crate) struct Fix {
-    /// Limit fixes to files changed since this commit.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "These are independent user-facing CLI flags parsed by clap."
+)]
+pub(crate) struct Scan {
+    /// Materialize recommended and synthesized contracts into `.contracts/`.
+    #[arg(long, visible_alias = "yes", conflicts_with = "ephemeral")]
+    pub apply: bool,
+    /// Limit module scanning to files changed since this Git commit.
     #[arg(long)]
     pub base: Option<String>,
-    /// Apply fixes for one adopted contract.
+    /// Synthesize adversarial edge-case contracts in addition to API and doc guarantees.
     #[arg(long)]
-    pub contract: Option<String>,
-    /// Repair failing witnesses from `.tenet/audit.json` in a bounded sandboxed verify-until-green
-    /// loop.
-    #[arg(long, conflicts_with = "base")]
-    pub from_audit: bool,
-    /// Print applied fixes and re-check results as JSON.
+    pub deep: bool,
+    /// Materialize synthesized contracts into `.tenet/scan/.contracts/` without modifying tracked
+    /// files.
+    #[arg(long, conflicts_with = "apply")]
+    pub ephemeral: bool,
+    /// Re-scan selected modules instead of resuming from `.tenet/audit.json`.
+    #[arg(long)]
+    pub fresh: bool,
+    /// Print the scan report as a JSON document.
     #[arg(long)]
     pub json: bool,
-    /// Maximum model requests when running `tenet fix --from-audit`.
-    #[arg(long, default_value_t = 20, requires = "from_audit")]
-    pub max_requests: u32,
-    /// Files or directories to fix; fixes all governed files when omitted.
+    /// Read recommendations from this local catalog checkout instead of fetching the public
+    /// catalog.
+    #[arg(long, value_name = "DIR", env = "TENET_CATALOG_DIR")]
+    pub library: Option<PathBuf>,
+    /// Maximum model requests across synthesis and behavior checks.
+    #[arg(long, default_value_t = 120)]
+    pub max_requests: usize,
+    /// Files or directories to scan; discovers production modules when omitted.
     pub paths: Vec<PathBuf>,
+    /// Write runnable reproducer scripts for failing witnesses into this directory.
+    #[arg(long, value_name = "DIR")]
+    pub repros_dir: Option<PathBuf>,
+    /// Directory whose .contracts receives newly created or installed contracts.
+    #[arg(long, default_value = ".")]
+    pub scope: PathBuf,
+    /// Scaffold a local starter CONTRACT.md instead of scanning (optional kebab-case name).
+    #[arg(long, value_name = "NAME", conflicts_with = "library")]
+    #[expect(
+        clippy::option_option,
+        reason = "Clap distinguishes absent `--starter`, bare `--starter`, and `--starter NAME`."
+    )]
+    pub starter: Option<Option<String>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum SeverityArg {
+    Critical,
+    High,
+    Medium,
+}
+
+impl SeverityArg {
+    pub(crate) const fn to_level(self) -> SeverityLevel {
+        match self {
+            Self::Critical => SeverityLevel::Critical,
+            Self::High => SeverityLevel::High,
+            Self::Medium => SeverityLevel::Medium,
+        }
+    }
 }

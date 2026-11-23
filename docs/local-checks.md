@@ -75,24 +75,20 @@ Set `"cache": true` only for reproducible checks. Include test helpers, rule fil
 
 Local observations live under the review state directory. `tenet status` includes them after the first run. Its exit code continues to describe the review. Run `tenet check --final` (with model credentials configured) to execute semantic review and declared project checks together. A passing example establishes only the claim it exercises. For independently produced evidence, see [mechanical receipts](./cli.md#mechanical-evidence).
 
-## Apply native fixes
+## Apply fixes
 
-Run `tenet fix` to apply the safe fixes a contract's installed Oxlint or Ruff configuration offers.
-Select a contract, a path or the files changed since a Git commit. For example:
+Run `tenet fix` to repair both native lint violations and failing runtime behavior checks in one command:
 
 ```sh
+tenet fix
 tenet fix --contract cleanup src/
+tenet fix --severity high --max-requests 20
 tenet fix --base HEAD --json
 ```
 
-Install the native tool on your command path. Tenet reads the adopted configuration recorded in
-`.tenet.lock` at `assets/oxlint/oxlintrc.json` or `assets/ruff/ruff.toml`. Oxlint assets can name
-built-in plugins and rules. Configurations that extend another Oxlint configuration, use custom
-plugins or define overrides require a project-owned check. A local edit to the contract, including
-a written exception, leaves that contract for ordinary review because the installed native rules
-describe the upstream contract.
+`tenet fix` combines two repair paths without requiring `--from-audit`:
 
-Tenet applies fixes to copies of the selected source files and reruns the selected linters on the
-result. It prints the patch, replaces changed files in the working tree and lists findings that
-still need a person or agent. A setup or execution problem leaves the patch unapplied. Contracts
-without a supported native fixer appear separately. Run `tenet check` to review the resulting code.
+- **Native lint fixes:** When an adopted contract ships an Oxlint or Ruff configuration recorded in `.tenet.lock` (`assets/oxlint/oxlintrc.json` or `assets/ruff/ruff.toml`), Tenet runs the installed tool on copies of the selected files, verifies the edits with the linter, prints the patch, and writes changed files back to the working tree. Oxlint assets can name built-in plugins and rules; configurations that extend another Oxlint config, use custom plugins, or define overrides require a project-owned check. A local edit to the contract, including a written exception, leaves that contract for ordinary review because the installed native rules describe the upstream release.
+- **Sandboxed runtime repairs:** When locked runtime scripts under `.contracts/<NNN>-<name>/scripts/` or recorded audit witnesses fail, Tenet runs a bounded patch-and-reverify loop inside the local OS sandbox until the failing scripts pass or the request budget runs out. Use `--severity` to restrict runtime repairs to findings at or above one severity level, and `--max-requests N` to bound model calls. `--from-audit` remains supported as a compatibility flag.
+
+A setup or execution error leaves the working tree untouched. Findings that still require a person or reviewing agent appear in the output. Run `tenet check --offline` to replay static and locked runtime scripts without model calls, or `tenet check` for a full review.

@@ -48,6 +48,7 @@ fn build_sample_report() -> AuditModuleReport {
             }),
             requested: true,
             reused: false,
+            severity: None,
             subject: Some("src/app.py".into()),
         }],
         name: String::from("src"),
@@ -188,7 +189,8 @@ fn queue_round_trip_and_save_verified_contracts() -> Result<()> {
     fs::create_dir_all(state.join("audit-pins/demo-rule"))?;
     fs::write(
         state.join("audit-pins/demo-rule/agent-checks.lock.json"),
-        "{\"protocol\":1}\n",
+        "{\"protocol\":1,\"bundle\":{\"checks\":[{\"id\":\"demo-check\",\"promise\":\"Keep demo \
+         valid.\",\"runtime\":\"python\",\"subject\":\"src/app.py\",\"test\":\"print(1)\\n\"}]}}\n",
     )?;
     let report = build_sample_report();
     let mut queue = AuditQueue::new(true);
@@ -215,7 +217,11 @@ fn queue_round_trip_and_save_verified_contracts() -> Result<()> {
     anyhow::ensure!(first.pin_saved, "expected staged pin to be copied");
     anyhow::ensure!(root.join(".contracts/001-demo-rule/CONTRACT.md").is_file());
     anyhow::ensure!(
-        root.join(".contracts/001-demo-rule/agent-checks.lock.json")
+        root.join(".contracts/001-demo-rule/scripts/.lock.json")
+            .is_file()
+    );
+    anyhow::ensure!(
+        root.join(".contracts/001-demo-rule/scripts/demo-check.py")
             .is_file()
     );
     let written = write_witness_repros(&root.join("repros"), &[report])?;

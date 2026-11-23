@@ -1,6 +1,6 @@
 import { Option, Result, Schema } from 'effect';
 import { classifyResult } from '../classify-result.mts';
-import { readRecord } from '../storage/index.mts';
+import { readPinScripts, readRecord } from '../storage/index.mts';
 import type { Check } from '../types.d.mts';
 import { Pin } from '../wire.mts';
 import type { ReplayRepro, ReplayTarget } from './replay-wire.mts';
@@ -12,6 +12,7 @@ const ExpectedJson = Schema.fromJsonString(Schema.Unknown);
 const decodeExpectedJson = Schema.decodeUnknownOption(ExpectedJson, { onExcessProperty: 'error' });
 
 type ResolveReplayCheckInput = Readonly<{
+  root: string;
   state: string;
   target: ReplayTarget;
 }>;
@@ -19,13 +20,13 @@ type ResolveReplayCheckInput = Readonly<{
 type ReadPinnedCheckInput = Readonly<{
   checkId: string;
   lockPath?: string;
-  state: string;
+  pinRoot: string;
 }>;
 
 type ReadLockCheckInput = Readonly<{
   checkId: string;
   lockPath: string;
-  state: string;
+  pinRoot: string;
 }>;
 
 type BuildFallbackInput = Readonly<{
@@ -33,12 +34,46 @@ type BuildFallbackInput = Readonly<{
   target: ReplayTarget;
 }>;
 
+function selectPinRoot({ root, state, target }: ResolveReplayCheckInput): string {
+  if (target.pinRoot === 'root') {
+    return root;
+  }
+
+  return state;
+}
+
+type ReadMatchedInput = Readonly<{
+  checkId: string;
+  lockPath: string;
+  pin: Pin;
+  pinRoot: string;
+}>;
+
+async function readMatchedCheck({
+  checkId,
+  lockPath,
+  pin,
+  pinRoot,
+}: ReadMatchedInput): Promise<Option.Option<Check>> {
+  const matched = pin.bundle.checks.find((item) => item.id === checkId);
+
+  if (matched === undefined) {
+    return Option.none();
+  }
+
+  const singlePin: Pin = { ...pin, bundle: { checks: [matched], open: [] } };
+  const hydrated = await readPinScripts({ lockPath, pin: singlePin, root: pinRoot });
+  const firstCheck = hydrated.pin.bundle.checks.at(0);
+
+  return Option.fromNullishOr(firstCheck);
+}
+
 async function readLockCheck({
   checkId,
   lockPath,
-  state,
+  pinRoot,
 }: ReadLockCheckInput): Promise<Option.Option<Check>> {
-  const record = await readRecord({ path: lockPath, root: state });
+  const record = await readRecord({ path: lockPath, root: pinRoot });
 
   if (Option.isNone(record)) {
     return Option.none();
@@ -50,15 +85,13 @@ async function readLockCheck({
     return Option.none();
   }
 
-  const matched = decoded.value.bundle.checks.find((item) => item.id === checkId);
-
-  return Option.fromNullishOr(matched);
+  return await readMatchedCheck({ checkId, lockPath, pin: decoded.value, pinRoot });
 }
 
 async function readPinnedCheck({
   checkId,
   lockPath,
-  state,
+  pinRoot,
 }: ReadPinnedCheckInput): Promise<Option.Option<Check>> {
   if (lockPath === undefined || lockPath.length === 0) {
     return Option.none();
@@ -67,7 +100,7 @@ async function readPinnedCheck({
   const resolvedLockPath = lockPath;
 
   async function runRead(): Promise<Option.Option<Check>> {
-    return await readLockCheck({ checkId, lockPath: resolvedLockPath, state });
+    return await readLockCheck({ checkId, lockPath: resolvedLockPath, pinRoot });
   }
 
   const outcome = await classifyResult({ message: 'pin load failed', run: runRead });
@@ -112,13 +145,16 @@ function buildFallbackCheck({
 
 /** Resolve one replay target from its staged pin lockfile or fallback witness repro. */
 export async function resolveReplayCheck({
+  root,
   state,
   target,
 }: ResolveReplayCheckInput): Promise<Result.Result<Check, string>> {
+  const pinRoot = selectPinRoot({ root, state, target });
+
   const pinned = await readPinnedCheck({
     checkId: target.check,
     lockPath: target.lockPath,
-    state,
+    pinRoot,
   });
 
   if (Option.isSome(pinned)) {

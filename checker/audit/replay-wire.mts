@@ -4,6 +4,8 @@ import { Schema } from 'effect';
 const StringList = Schema.Array(Schema.String);
 const OptionalStringList = Schema.OptionFromOptionalKey(StringList);
 const OptionalText = Schema.OptionFromOptionalKey(Schema.String);
+const PinRoot = Schema.Literals(['root', 'state']);
+export const OptionalPinRoot = Schema.OptionFromOptionalKey(PinRoot);
 const ReplayMode = Schema.Literal('replay');
 
 const ReplayReproFields = Schema.Struct({
@@ -22,6 +24,7 @@ const ReplayTargetFields = Schema.Struct({
   check: Schema.String,
   contract: Schema.String,
   lockPath: OptionalText,
+  pinRoot: OptionalPinRoot,
   repro: OptionalReplayRepro,
   subject: OptionalText,
 });

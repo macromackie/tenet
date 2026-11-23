@@ -31,11 +31,14 @@ pub(crate) fn inspect(
     include_local: bool,
 ) -> Result<Vec<Finding>, CommandError> {
     let mut rows = native::read(root, state, &entry.contract, &entry.input)?;
+    let contract_dir = entry
+        .contract
+        .path
+        .parent()
+        .map_or_else(|| root.to_path_buf(), |parent| root.join(parent));
     if entry.contract.obligations.is_empty()
         && !state.join("agent-checks").is_dir()
-        && !root
-            .join(entry.contract.path.with_file_name("agent-checks.lock.json"))
-            .is_file()
+        && agent_checks::find_pin_path(&contract_dir).is_none()
     {
         return Ok(rows);
     }

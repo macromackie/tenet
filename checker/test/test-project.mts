@@ -5,7 +5,7 @@ import type { TestContext } from 'node:test';
 
 const DOCUMENT = 'An explicit value takes precedence over the default.';
 export const FOLDER = '.contracts/001-options';
-export const lock = join(FOLDER, 'agent-checks.lock.json');
+export const lock = join(FOLDER, 'scripts', '.lock.json');
 export const SOURCE = 'choose.mjs';
 export const GOOD = 'export const choose = (value) => value ?? 7;';
 const DEFECT = 'export const choose = (value) => value || 7;';

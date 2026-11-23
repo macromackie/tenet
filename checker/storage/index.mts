@@ -1,7 +1,13 @@
 export { hashSource } from './hash-source.mts';
 export { readExisting } from './read-existing.mts';
+export { readPinScripts } from './read-pin-scripts.mts';
 export { readRecord, type RecordData } from './read-record.mts';
 export { readRegular } from './read-regular.mts';
 export { replacePin } from './replace-pin.mts';
+export { resolveLegacyLockPath } from './resolve-legacy-lock-path.mts';
+export { resolvePrimaryLockPath } from './resolve-primary-lock-path.mts';
 export { resolveRoot } from './resolve-root.mts';
-export { writeAtomic } from './write-atomic.mts';
+export { resolveScriptExtension } from './resolve-script-extension.mts';
+export { writeAtomic, type WriteInput } from './write-atomic.mts';
+export { writePinScripts } from './write-pin-scripts.mts';
+export { writeTextAtomic } from './write-text-atomic.mts';

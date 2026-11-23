@@ -4583,7 +4583,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   let expiresAt = 0;
   let exit3;
   let current;
-  const join16 = (fiber3, run3) => {
+  const join20 = (fiber3, run3) => {
     run3.awaiters++;
     onExitUnsafe(fiber3, () => {
       if (--run3.awaiters > 0 || current !== run3) return;
@@ -4594,7 +4594,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   };
   return [withFiber((fiber3) => {
     if (current !== void 0) {
-      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join16(fiber3, current);
+      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join20(fiber3, current);
     }
     if (exit3 !== void 0 && (expiresAt === Infinity || fiber3.getRef(ClockRef).currentTimeMillisUnsafe() < expiresAt)) {
       return exit3;
@@ -4606,7 +4606,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
       awaiters: 0
     };
     current = run3;
-    const joined = join16(fiber3, run3);
+    const joined = join20(fiber3, run3);
     run3.fiber.evaluate(onExitPrimitive(self, (exit_) => {
       if (current !== run3) return;
       current = void 0;
@@ -20864,7 +20864,8 @@ function applyUnverifiedReview({ review, row }) {
   }
   return {
     ...row,
-    message: formatSeverityMessage({ message: row.message, verdict: review.verdict })
+    message: formatSeverityMessage({ message: row.message, verdict: review.verdict }),
+    severity: review.verdict
   };
 }
 function applyVerifiedReview({ review, row }) {
@@ -20884,7 +20885,8 @@ function applyVerifiedReview({ review, row }) {
   }
   return {
     ...row,
-    message: formatSeverityMessage({ message: row.message, verdict: review.verdict })
+    message: formatSeverityMessage({ message: row.message, verdict: review.verdict }),
+    severity: review.verdict
   };
 }
 function applyReview({ review, row }) {
@@ -21991,9 +21993,38 @@ function readControls({ fields, fromPin, source }) {
     source
   });
 }
-function attachEntry({ base, fields, files }) {
+function readOptionalPinText(raw) {
+  if (typeof raw !== "string" || raw.trim().length === 0 || Buffer.byteLength(raw) > MAX_FIELD_BYTES) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(raw);
+}
+function buildScriptMeta({ scriptFile, scriptHash }) {
+  if (Option_exports.isSome(scriptFile) && Option_exports.isSome(scriptHash)) {
+    return { scriptFile: scriptFile.value, scriptHash: scriptHash.value };
+  }
+  if (Option_exports.isSome(scriptFile)) {
+    return { scriptFile: scriptFile.value };
+  }
+  if (Option_exports.isSome(scriptHash)) {
+    return { scriptHash: scriptHash.value };
+  }
+  return {};
+}
+function readScriptMeta({ fields, fromPin }) {
+  if (!fromPin) {
+    return {};
+  }
+  const rawScriptFile = fields.get("scriptFile");
+  const rawScriptHash = fields.get("scriptHash");
+  const scriptFile = readOptionalPinText(rawScriptFile);
+  const scriptHash = readOptionalPinText(rawScriptHash);
+  return buildScriptMeta({ scriptFile, scriptHash });
+}
+function attachEntry({ base, fields, files, fromPin }) {
   if (!fields.has("testFile")) {
-    return { ...base, test: readField({ fields, key: "test" }) };
+    const scriptMeta = readScriptMeta({ fields, fromPin });
+    return { ...base, ...scriptMeta, test: readField({ fields, key: "test" }) };
   }
   const testFile = readField({ fields, key: "testFile" });
   const isNative = NATIVE_TEST_RUNTIMES.has(base.runtime) && base.expected === true;
@@ -22014,7 +22045,7 @@ function validate3({ check: check2, files, fromPin = false }) {
   }
   const controls = readControls({ fields, fromPin, source });
   const base = { ...target, ...controls };
-  return attachEntry({ base, fields, files });
+  return attachEntry({ base, fields, files, fromPin });
 }
 
 // sandbox/os/linux-sandbox.mts
@@ -23567,12 +23598,12 @@ async function assertSandboxAvailable() {
 // sandbox/project-deps.mts
 import { access as access5, readdir as readdir3, readFile as readFile5, realpath as realpath10, stat as stat4 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { delimiter as delimiter2, join as join10, sep as sep4 } from "node:path";
+import { delimiter as delimiter2, join as join14, sep as sep4 } from "node:path";
 import { env as hostEnvironment4 } from "node:process";
 
 // sandbox/rust-build.mts
 import { readdir, readFile as readFile3, realpath as realpath9, stat as stat2 } from "node:fs/promises";
-import { join as join8, relative as relative2, sep as sep3 } from "node:path";
+import { join as join12, relative as relative2, sep as sep3 } from "node:path";
 
 // storage/hash-source.mts
 import { createHash } from "node:crypto";
@@ -23781,14 +23812,111 @@ async function readExisting(location) {
   }
 }
 
+// storage/read-pin-scripts.mts
+import { dirname as dirname6, join as join7 } from "node:path";
+
+// storage/build-check-entry.mts
+function readCheckTarget(check2) {
+  return {
+    expected: check2.expected,
+    id: check2.id,
+    promise: check2.promise,
+    runtime: check2.runtime,
+    subject: check2.subject
+  };
+}
+function readCheckControls(check2) {
+  if (check2.brownfield !== void 0) {
+    return {
+      brownfield: check2.brownfield,
+      defect: check2.defect,
+      good: check2.good,
+      refactor: check2.refactor
+    };
+  }
+  return { defect: check2.defect, good: check2.good, refactor: check2.refactor };
+}
+function attachScriptMeta({ base, scriptFile, scriptHash }) {
+  if (scriptHash !== void 0) {
+    return { ...base, scriptFile, scriptHash };
+  }
+  return { ...base, scriptFile };
+}
+function buildCheckEntry({
+  check: check2,
+  scriptFile,
+  scriptHash,
+  test
+}) {
+  const target = readCheckTarget(check2);
+  const controls = readCheckControls(check2);
+  const entry = attachScriptMeta({ base: { ...target, ...controls }, scriptFile, scriptHash });
+  if (test !== void 0) {
+    return { ...entry, test };
+  }
+  return entry;
+}
+
+// storage/is-safe-script-file.mts
+var SAFE_SCRIPT_FILE = new RegExp("^[a-zA-Z0-9][a-zA-Z0-9._\\-]{0,127}$", "v");
+var LOCK_FILE_NAME = ".lock.json";
+function isSafeScriptFile(name) {
+  if (!SAFE_SCRIPT_FILE.test(name)) {
+    return false;
+  }
+  return !name.includes("..") && name !== LOCK_FILE_NAME;
+}
+
+// storage/read-pin-scripts.mts
+var MAX_SCRIPT_BYTES = 262144;
+async function readOneCheck({
+  check: check2,
+  lockDir,
+  root
+}) {
+  if (check2.scriptFile === void 0) {
+    return { check: check2, handEdited: false };
+  }
+  if (!isSafeScriptFile(check2.scriptFile)) {
+    throw new CheckerError({ message: "the saved checker references an invalid script file." });
+  }
+  const scriptPath = join7(lockDir, check2.scriptFile);
+  const diskCode = await readRegular({ limit: MAX_SCRIPT_BYTES, path: scriptPath, root });
+  const handEdited = check2.scriptHash !== void 0 && hashSource(diskCode) !== check2.scriptHash;
+  const hydrated = buildCheckEntry({
+    check: check2,
+    scriptFile: check2.scriptFile,
+    scriptHash: check2.scriptHash,
+    test: diskCode
+  });
+  return { check: hydrated, handEdited };
+}
+async function readPinScripts({
+  lockPath,
+  pin,
+  root
+}) {
+  const lockDir = dirname6(lockPath);
+  const handEditedIds = /* @__PURE__ */ new Set();
+  const checks = [];
+  for (const check2 of pin.bundle.checks) {
+    const result3 = await readOneCheck({ check: check2, lockDir, root });
+    if (result3.handEdited) {
+      handEditedIds.add(check2.id);
+    }
+    checks.push(result3.check);
+  }
+  return { handEditedIds, pin: { ...pin, bundle: { checks, open: pin.bundle.open } } };
+}
+
 // storage/replace-pin.mts
 import { open as open3, realpath as realpath8, rm as rm2 } from "node:fs/promises";
-import { dirname as dirname7 } from "node:path";
+import { dirname as dirname8 } from "node:path";
 
-// storage/write-atomic.mts
+// storage/write-text-atomic.mts
 import { randomUUID } from "node:crypto";
 import { link as link2, mkdir, open as open2, realpath as realpath7, rename, rm } from "node:fs/promises";
-import { dirname as dirname6, join as join7, relative, sep as sep2 } from "node:path";
+import { dirname as dirname7, join as join8, relative, sep as sep2 } from "node:path";
 var PRIVATE_FILE = 384;
 var PRIVATE_DIR = 448;
 async function ensureSegment(path) {
@@ -23805,7 +23933,7 @@ async function ensureDirectory({ directory, root }) {
   }
   let current = root;
   for (const part of nested.split(sep2)) {
-    current = join7(current, part);
+    current = join8(current, part);
     await ensureSegment(current);
   }
 }
@@ -23816,32 +23944,42 @@ async function installRecord({ first, target, temp }) {
   }
   await rename(temp, target);
 }
-async function storeRecord({ handle, record: record2 }) {
+async function storeText({ handle, text: text2 }) {
   try {
-    const content = JSON.stringify(record2);
-    await handle.writeFile(`${content}
-`);
+    await handle.writeFile(text2, "utf-8");
   } finally {
     await handle.close();
   }
 }
-async function writeTempRecord({ first, parent, target, value: value3 }) {
+async function writeTempText({ first, parent, target, text: text2 }) {
   const nonce = randomUUID();
-  const temp = join7(parent, `.tenet-${nonce}.tmp`);
+  const temp = join8(parent, `.tenet-${nonce}.tmp`);
   const handle = await open2(temp, "wx", PRIVATE_FILE);
   try {
-    await storeRecord({ handle, record: value3 });
+    await storeText({ handle, text: text2 });
     await installRecord({ first, target, temp });
   } finally {
     await rm(temp, { force: true });
   }
 }
-async function writeAtomic(input) {
+async function writeTextAtomic(input) {
   const root = await resolveRoot(input.root);
   const target = resolveInside({ path: input.path, root });
-  const parent = dirname6(target);
+  const parent = dirname7(target);
   await ensureDirectory({ directory: parent, root });
-  await writeTempRecord({ first: input.first === true, parent, target, value: input.value });
+  await writeTempText({ first: input.first === true, parent, target, text: input.text });
+}
+
+// storage/write-atomic.mts
+async function writeAtomic(input) {
+  const content = JSON.stringify(input.value);
+  await writeTextAtomic({
+    first: input.first,
+    path: input.path,
+    root: input.root,
+    text: `${content}
+`
+  });
 }
 
 // storage/replace-pin.mts
@@ -23849,7 +23987,7 @@ var PRIVATE_FILE2 = 384;
 async function resolvePinLock(input) {
   const root = await resolveRoot(input.root);
   const lock = resolveInside({ path: `${input.path}.lock`, root });
-  const parent = dirname7(lock);
+  const parent = dirname8(lock);
   if (await realpath8(parent) !== parent) {
     throw new CheckerError({ message: "output directory is a symbolic link." });
   }
@@ -23868,6 +24006,237 @@ async function replacePin(input) {
     await claim.close();
     await rm2(lock, { force: true });
   }
+}
+
+// storage/resolve-legacy-lock-path.mts
+import { dirname as dirname9, join as join9 } from "node:path";
+var LEGACY_LOCK_NAME = "agent-checks.lock.json";
+function resolveLegacyLockPath(contractPath) {
+  const contractDir = dirname9(contractPath);
+  return join9(contractDir, LEGACY_LOCK_NAME);
+}
+
+// storage/resolve-primary-lock-path.mts
+import { dirname as dirname10, join as join10 } from "node:path";
+var SCRIPTS_DIR_NAME = "scripts";
+var LOCK_FILE_NAME2 = ".lock.json";
+function resolvePrimaryLockPath(contractPath) {
+  const contractDir = dirname10(contractPath);
+  return join10(contractDir, SCRIPTS_DIR_NAME, LOCK_FILE_NAME2);
+}
+
+// storage/resolve-script-extension.mts
+function resolveScriptExtension(runtime) {
+  switch (runtime) {
+    case "node": {
+      return "mjs";
+    }
+    case "python": {
+      return "py";
+    }
+    case "go": {
+      return "go";
+    }
+    case "rust": {
+      return "rs";
+    }
+  }
+}
+
+// storage/write-pin-scripts.mts
+import { dirname as dirname11, join as join11 } from "node:path";
+
+// storage/allocate-script-file.mts
+var FIRST_COLLISION_SUFFIX = 2;
+var MAX_SLUG_CHARS = 64;
+var SLUG_CLEAN_PATTERN = new RegExp("[^a-z0-9]+", "gv");
+var TRIM_DASH_PATTERN = new RegExp("^-+|-+$", "gv");
+function formatCheckSlug(id2) {
+  const lowered = id2.trim().toLowerCase();
+  const dashed = lowered.replaceAll(SLUG_CLEAN_PATTERN, "-").replaceAll(TRIM_DASH_PATTERN, "");
+  const bounded = dashed.slice(0, MAX_SLUG_CHARS).replaceAll(TRIM_DASH_PATTERN, "");
+  if (bounded.length > 0) {
+    return bounded;
+  }
+  return "check";
+}
+function canReuseScriptFile({ candidate, extension, usedNames }) {
+  if (candidate === void 0 || !isSafeScriptFile(candidate)) {
+    return false;
+  }
+  return candidate.endsWith(`.${extension}`) && !usedNames.has(candidate);
+}
+function formatCollisionName({ base, extension, suffix }) {
+  const suffixText = String(suffix);
+  return `${base}-${suffixText}.${extension}`;
+}
+function allocateUniqueSlug({ base, extension, usedNames }) {
+  const first = `${base}.${extension}`;
+  if (!usedNames.has(first)) {
+    return first;
+  }
+  let suffix = FIRST_COLLISION_SUFFIX;
+  let candidate = formatCollisionName({ base, extension, suffix });
+  while (usedNames.has(candidate)) {
+    suffix += 1;
+    candidate = formatCollisionName({ base, extension, suffix });
+  }
+  return candidate;
+}
+function allocateScriptFile({ check: check2, priorCheck, usedNames }) {
+  const extension = resolveScriptExtension(check2.runtime);
+  if (priorCheck?.scriptFile !== void 0 && canReuseScriptFile({ candidate: priorCheck.scriptFile, extension, usedNames })) {
+    return priorCheck.scriptFile;
+  }
+  if (check2.scriptFile !== void 0 && canReuseScriptFile({ candidate: check2.scriptFile, extension, usedNames })) {
+    return check2.scriptFile;
+  }
+  const base = formatCheckSlug(check2.id);
+  return allocateUniqueSlug({ base, extension, usedNames });
+}
+
+// storage/write-pin-scripts.mts
+var MAX_SCRIPT_BYTES2 = 262144;
+async function readOptionalScript({
+  path,
+  root
+}) {
+  async function runRead() {
+    return await readRegular({ limit: MAX_SCRIPT_BYTES2, path, root });
+  }
+  const outcome = await classifyResult({ message: "could not read existing script", run: runRead });
+  if (Result_exports.isSuccess(outcome)) {
+    return Option_exports.some(outcome.success);
+  }
+  const { cause } = outcome.failure;
+  if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
+    return Option_exports.none();
+  }
+  throw outcome.failure;
+}
+function indexPriorChecks(priorPin) {
+  const priorIdChecks = /* @__PURE__ */ new Map();
+  const priorFileChecks = /* @__PURE__ */ new Map();
+  if (priorPin === void 0) {
+    return { priorFileChecks, priorIdChecks };
+  }
+  for (const item of priorPin.bundle.checks) {
+    priorIdChecks.set(item.id, item);
+    if (item.scriptFile !== void 0) {
+      priorFileChecks.set(item.scriptFile, item);
+    }
+  }
+  return { priorFileChecks, priorIdChecks };
+}
+async function preserveIfHandEdited({
+  check: check2,
+  priorHash,
+  root,
+  scriptFile,
+  scriptPath
+}) {
+  if (priorHash === void 0) {
+    return Option_exports.none();
+  }
+  const existing = await readOptionalScript({ path: scriptPath, root });
+  if (Option_exports.isNone(existing) || hashSource(existing.value) === priorHash) {
+    return Option_exports.none();
+  }
+  const diskCheck = buildCheckEntry({ check: check2, scriptFile, scriptHash: priorHash });
+  const hydratedCheck = buildCheckEntry({
+    check: check2,
+    scriptFile,
+    scriptHash: priorHash,
+    test: existing.value
+  });
+  return Option_exports.some({ diskCheck, handEdited: true, hydratedCheck, scriptFile });
+}
+async function writeFreshScript({
+  check: check2,
+  root,
+  scriptFile,
+  scriptPath,
+  text: text2
+}) {
+  await writeTextAtomic({ path: scriptPath, root, text: text2 });
+  const scriptHash = hashSource(text2);
+  const diskCheck = buildCheckEntry({ check: check2, scriptFile, scriptHash });
+  const hydratedCheck = buildCheckEntry({ check: check2, scriptFile, scriptHash, test: text2 });
+  return { diskCheck, handEdited: false, hydratedCheck, scriptFile };
+}
+async function writeOneCheck({
+  check: check2,
+  lockDir,
+  priorFileChecks,
+  priorIdChecks,
+  root,
+  usedNames
+}) {
+  if (check2.test === void 0 || check2.test.length === 0) {
+    return { diskCheck: check2, handEdited: false, hydratedCheck: check2 };
+  }
+  const priorByCheckId = priorIdChecks.get(check2.id);
+  const scriptFile = allocateScriptFile({ check: check2, priorCheck: priorByCheckId, usedNames });
+  const scriptPath = join11(lockDir, scriptFile);
+  const priorHash = (priorByCheckId ?? priorFileChecks.get(scriptFile))?.scriptHash ?? check2.scriptHash;
+  const preserved = await preserveIfHandEdited({ check: check2, priorHash, root, scriptFile, scriptPath });
+  if (Option_exports.isSome(preserved)) {
+    return preserved.value;
+  }
+  return await writeFreshScript({ check: check2, root, scriptFile, scriptPath, text: check2.test });
+}
+function addIfPresent({ item, items }) {
+  if (item === void 0) {
+    return items;
+  }
+  return /* @__PURE__ */ new Set([...items, item]);
+}
+function recordHandEdit({ checkId, result: result3, state }) {
+  if (!result3.handEdited) {
+    return state.handEditedIds;
+  }
+  return /* @__PURE__ */ new Set([...state.handEditedIds, checkId]);
+}
+function recordWrittenCheck(input) {
+  const { result: result3, state } = input;
+  const usedNames = addIfPresent({ item: result3.scriptFile, items: state.usedNames });
+  const handEditedIds = recordHandEdit(input);
+  return {
+    diskChecks: [...state.diskChecks, result3.diskCheck],
+    handEditedIds,
+    hydratedChecks: [...state.hydratedChecks, result3.hydratedCheck],
+    usedNames
+  };
+}
+async function writePinScripts({
+  lockPath,
+  pin,
+  priorPin,
+  root
+}) {
+  const lockDir = dirname11(lockPath);
+  const priorIndex = indexPriorChecks(priorPin);
+  let state = {
+    diskChecks: [],
+    handEditedIds: /* @__PURE__ */ new Set(),
+    hydratedChecks: [],
+    usedNames: /* @__PURE__ */ new Set()
+  };
+  for (const check2 of pin.bundle.checks) {
+    const result3 = await writeOneCheck({
+      ...priorIndex,
+      check: check2,
+      lockDir,
+      root,
+      usedNames: state.usedNames
+    });
+    state = recordWrittenCheck({ checkId: check2.id, result: result3, state });
+  }
+  return {
+    diskPin: { ...pin, bundle: { checks: state.diskChecks, open: pin.bundle.open } },
+    handEditedIds: state.handEditedIds,
+    hydratedPin: { ...pin, bundle: { checks: state.hydratedChecks, open: pin.bundle.open } }
+  };
 }
 
 // sandbox/rust-build.mts
@@ -23919,7 +24288,7 @@ function buildPackageNameVariants(rawName) {
   return /* @__PURE__ */ new Set([rawName, underscored, hyphenated]);
 }
 async function readPackageNameVariants(projectRoot) {
-  const manifestPath = join8(projectRoot, "Cargo.toml");
+  const manifestPath = join12(projectRoot, "Cargo.toml");
   const manifest = await runOptional(async () => await readFile3(manifestPath, "utf-8"));
   if (Option_exports.isNone(manifest)) {
     return /* @__PURE__ */ new Set();
@@ -23943,8 +24312,8 @@ async function readCandidateDirectory(dirPath) {
   if (Option_exports.isNone(dirStat) || !dirStat.value.isDirectory()) {
     return Option_exports.none();
   }
-  const outputPath = join8(dirPath, "output");
-  const outPath = join8(dirPath, "out");
+  const outputPath = join12(dirPath, "output");
+  const outPath = join12(dirPath, "out");
   const hasOutputFile = await hasRegularFile(outputPath);
   const hasOutDir = await hasDirectory(outPath);
   if (!hasOutputFile && !hasOutDir) {
@@ -23962,14 +24331,14 @@ async function inspectBuildCandidate({
   if (pkg === void 0 || !packageNames.has(pkg)) {
     return Option_exports.none();
   }
-  const dirPath = join8(buildRoot, entry);
+  const dirPath = join12(buildRoot, entry);
   return await readCandidateDirectory(dirPath);
 }
 async function selectNewestBuildDir({
   canonicalRoot,
   packageNames
 }) {
-  const buildRoot = join8(canonicalRoot, "target", "debug", "build");
+  const buildRoot = join12(canonicalRoot, "target", "debug", "build");
   const listed = await runOptional(async () => await readdir(buildRoot));
   if (Option_exports.isNone(listed)) {
     return Option_exports.none();
@@ -23996,7 +24365,7 @@ function parseSafeRustCfgs(outputText) {
   return [...foundCfgs].toSorted().slice(0, MAX_BUILD_CFGS);
 }
 async function readBuildCfgs({ canonicalRoot, dirPath }) {
-  const outputPath = join8(dirPath, "output");
+  const outputPath = join12(dirPath, "output");
   const relativePath = relative2(canonicalRoot, outputPath);
   const text2 = await runOptional(
     async () => await readRegular({ limit: MAX_OUTPUT_BYTES, path: relativePath, root: canonicalRoot, truncate: true })
@@ -24010,7 +24379,7 @@ async function resolveSafeOutDir({
   canonicalRoot,
   dirPath
 }) {
-  const outPath = join8(dirPath, "out");
+  const outPath = join12(dirPath, "out");
   const canonicalOut = await runOptional(async () => await realpath9(outPath));
   if (Option_exports.isNone(canonicalOut)) {
     return Option_exports.none();
@@ -24064,12 +24433,12 @@ async function collectRustBuildArtifacts({
 
 // sandbox/rust-deps.mts
 import { readdir as readdir2, readFile as readFile4, stat as stat3 } from "node:fs/promises";
-import { join as join9 } from "node:path";
+import { join as join13 } from "node:path";
 var MAX_RUST_EXTERNS = 64;
 var RUST_CRATE_PATTERN = new RegExp("^lib(?<name>[A-Za-z0-9_]+)-[0-9a-f]{16}\\.(?<ext>rlib|dylib|so)$", "v");
 var CARGO_NAME_PATTERN = new RegExp('^\\s*name\\s*=\\s*"(?<name>[^"]+)"', "mv");
 async function readCargoPackageName(projectRoot) {
-  const manifestPath = join9(projectRoot, "Cargo.toml");
+  const manifestPath = join13(projectRoot, "Cargo.toml");
   const manifest = await runOptional(async () => await readFile4(manifestPath, "utf-8"));
   if (Option_exports.isNone(manifest)) {
     return Option_exports.none();
@@ -24100,7 +24469,7 @@ async function readRustArtifact({
   if (name === void 0 || name === selfName) {
     return Option_exports.none();
   }
-  const artifactPath = join9(depsDir, entry);
+  const artifactPath = join13(depsDir, entry);
   const mtimeMs = await readRustFileMtime(artifactPath);
   if (Option_exports.isNone(mtimeMs)) {
     return Option_exports.none();
@@ -24178,7 +24547,7 @@ async function resolveDirectory(candidate) {
   return await runOptional(async () => await readCanonicalDirectory(candidate));
 }
 async function resolveNodeDeps(projectRoot) {
-  const candidate = join10(projectRoot, "node_modules");
+  const candidate = join14(projectRoot, "node_modules");
   const nodeModules = await resolveDirectory(candidate);
   if (Option_exports.isNone(nodeModules)) {
     return EMPTY_DEPS;
@@ -24192,7 +24561,7 @@ async function findSitePackagesInLib(libDir) {
   }
   const pythonDirs = listed.value.filter((entry) => entry.startsWith("python")).toSorted();
   for (const entry of pythonDirs) {
-    const candidate = join10(libDir, entry, "site-packages");
+    const candidate = join14(libDir, entry, "site-packages");
     const sitePackages = await resolveDirectory(candidate);
     if (Option_exports.isSome(sitePackages)) {
       return sitePackages;
@@ -24201,17 +24570,17 @@ async function findSitePackagesInLib(libDir) {
   return Option_exports.none();
 }
 async function resolvePythonSitePackages(venvDir) {
-  const libCandidate = join10(venvDir, "lib");
+  const libCandidate = join14(venvDir, "lib");
   const libDir = await resolveDirectory(libCandidate);
   if (Option_exports.isSome(libDir)) {
     return await findSitePackagesInLib(libDir.value);
   }
-  const winCandidate = join10(venvDir, "Lib", "site-packages");
+  const winCandidate = join14(venvDir, "Lib", "site-packages");
   return await resolveDirectory(winCandidate);
 }
 async function resolvePythonDeps(projectRoot) {
   for (const name of [".venv", "venv"]) {
-    const venvDir = join10(projectRoot, name);
+    const venvDir = join14(projectRoot, name);
     const pythonSitePackages = await resolvePythonSitePackages(venvDir);
     if (Option_exports.isSome(pythonSitePackages)) {
       return { pythonSitePackages: pythonSitePackages.value, rustBuildCfgs: [], rustExterns: [] };
@@ -24220,7 +24589,7 @@ async function resolvePythonDeps(projectRoot) {
   return EMPTY_DEPS;
 }
 async function resolveRustDeps(projectRoot) {
-  const candidate = join10(projectRoot, "target", "debug", "deps");
+  const candidate = join14(projectRoot, "target", "debug", "deps");
   const rustDepsDir = await resolveDirectory(candidate);
   const build = await collectRustBuildArtifacts({ projectRoot });
   if (Option_exports.isNone(rustDepsDir)) {
@@ -24233,7 +24602,7 @@ async function readProjectFile({
   name,
   projectRoot
 }) {
-  const candidate = join10(projectRoot, name);
+  const candidate = join14(projectRoot, name);
   return await runOptional(async () => await readFile5(candidate, "utf-8"));
 }
 function readGoPathModCache() {
@@ -24241,13 +24610,13 @@ function readGoPathModCache() {
   if (goPath.length === 0) {
     return "";
   }
-  return join10(goPath, "pkg", "mod");
+  return join14(goPath, "pkg", "mod");
 }
 function readGoModCacheCandidates() {
   const userHome = homedir3();
   const configured = hostEnvironment4.GOMODCACHE?.trim() ?? "";
   const goPathCache = readGoPathModCache();
-  const defaultCache = join10(userHome, "go", "pkg", "mod");
+  const defaultCache = join14(userHome, "go", "pkg", "mod");
   return [configured, goPathCache, defaultCache].filter((entry) => entry.length > 0);
 }
 async function resolveGoModCache(projectRoot) {
@@ -24263,7 +24632,7 @@ async function resolveGoModCache(projectRoot) {
   return Option_exports.none();
 }
 async function resolveGoDeps(projectRoot) {
-  const vendorCandidate = join10(projectRoot, "vendor");
+  const vendorCandidate = join14(projectRoot, "vendor");
   const vendorOption = await resolveDirectory(vendorCandidate);
   const modOption = await readProjectFile({ name: "go.mod", projectRoot });
   const sumOption = await readProjectFile({ name: "go.sum", projectRoot });
@@ -24351,7 +24720,7 @@ async function resolveProjectDeps({
 }
 
 // sandbox/resolve-probe-file.mts
-import { dirname as dirname8 } from "node:path";
+import { dirname as dirname12 } from "node:path";
 var GO_TEST_PROBE_MARKER = "func TestTenetObserve(";
 var GO_TEST_PROBE_FILE = "tenet_observe_test.go";
 var PROBE_FILES = {
@@ -24364,7 +24733,7 @@ function readGoSubjectDir(subject) {
   if (subject.length === 0) {
     return ".";
   }
-  return dirname8(subject).replaceAll("\\", "/");
+  return dirname12(subject).replaceAll("\\", "/");
 }
 function resolveGoProbeEntry(check2) {
   if (!(check2.test?.includes(GO_TEST_PROBE_MARKER) ?? false)) {
@@ -24389,12 +24758,12 @@ function resolveProbeFile(check2) {
 // sandbox/runner.mts
 import { mkdir as mkdir3, mkdtemp, rm as rm3, writeFile as writeFile3 } from "node:fs/promises";
 import { tmpdir as tmpdir4 } from "node:os";
-import { dirname as dirname10, join as join12, resolve as resolve6, sep as sep6 } from "node:path";
+import { dirname as dirname14, join as join16, resolve as resolve6, sep as sep6 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 // sandbox/runner-sandbox.mts
 import { mkdir as mkdir2, symlink, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname9, join as join11, resolve as resolve5, sep as sep5 } from "node:path";
+import { dirname as dirname13, join as join15, resolve as resolve5, sep as sep5 } from "node:path";
 var PROBE_TIMEOUT_MS = 15e3;
 var COMPILED_PROBE_TIMEOUT_MS = 3e4;
 var OUTPUT_BYTES5 = 65536;
@@ -24426,11 +24795,11 @@ async function createDepLink({ source, target }) {
   await mkdir2(target, { recursive: true });
 }
 async function prepareDepLinks({ deps, files, work }) {
-  const nodeTarget = join11(work, "node_modules");
+  const nodeTarget = join15(work, "node_modules");
   await createDepLink({ source: deps.nodeModules, target: nodeTarget });
   const hasStagedVendor = [...files.keys()].some((path) => path.startsWith("vendor/"));
   if (!hasStagedVendor) {
-    const vendorTarget = join11(work, "vendor");
+    const vendorTarget = join15(work, "vendor");
     await createDepLink({ source: deps.goVendor, target: vendorTarget });
   }
 }
@@ -24548,12 +24917,12 @@ async function createGoModFallback({
     return;
   }
   if (!files.has("go.mod")) {
-    const goModPath = join11(work, "go.mod");
+    const goModPath = join15(work, "go.mod");
     const goModContent = deps.goMod ?? "module tenet_check\n\ngo 1.21\n";
     await writeFile2(goModPath, goModContent, { flag: "wx" });
   }
   if (!files.has("go.sum") && deps.goSum !== void 0) {
-    const goSumPath = join11(work, "go.sum");
+    const goSumPath = join15(work, "go.sum");
     await writeFile2(goSumPath, deps.goSum, { flag: "wx" });
   }
 }
@@ -24567,7 +24936,7 @@ async function writeProbeFile({ check: check2, work }) {
   if (!targetPath.startsWith(workPrefix)) {
     throw new CheckerError({ message: "probe path falls outside the checkout" });
   }
-  const parentDir = dirname9(targetPath);
+  const parentDir = dirname13(targetPath);
   await mkdir2(parentDir, { recursive: true });
   await writeFile2(targetPath, check2.test, { flag: "wx" });
 }
@@ -24586,11 +24955,11 @@ async function createSandbox(input) {
 // sandbox/runner.mts
 async function copySource({ path, source, work }) {
   const file = resolve6(work, path);
-  const prefix = join12(work, sep6);
+  const prefix = join16(work, sep6);
   if (!file.startsWith(prefix)) {
     throw new CheckerError({ message: "a staged source path falls outside the checkout" });
   }
-  const parent = dirname10(file);
+  const parent = dirname14(file);
   await mkdir3(parent, { recursive: true });
   await writeFile3(file, source, { flag: "wx" });
 }
@@ -24620,7 +24989,7 @@ async function restoreSubject({ project, variant }) {
   if (source === void 0) {
     throw new CheckerError({ message: "the checker subject disappeared" });
   }
-  const targetPath = join12(work, check2.subject);
+  const targetPath = join16(work, check2.subject);
   await writeFile3(targetPath, source);
 }
 function readObservationHint(variant) {
@@ -24696,8 +25065,8 @@ async function observe({
   skipActual = false
 }) {
   const temporary = tmpdir4();
-  const workPrefix = join12(temporary, "tenet-observe-");
-  const tmpPrefix = join12(temporary, "tenet-probe-tmp-");
+  const workPrefix = join16(temporary, "tenet-observe-");
+  const tmpPrefix = join16(temporary, "tenet-probe-tmp-");
   const work = await mkdtemp(workPrefix);
   const probeTmp = await mkdtemp(tmpPrefix);
   try {
@@ -24932,6 +25301,8 @@ var OptionalNullableCost = Schema_exports.OptionFromOptionalKey(NullableCost);
 var OptionalCount = Schema_exports.OptionFromOptionalKey(Schema_exports.Int);
 var OptionalFlag = Schema_exports.OptionFromOptionalKey(Schema_exports.Boolean);
 var Runtime = Schema_exports.Literals(["node", "python", "rust", "go"]);
+var Severity = Schema_exports.Literals(["critical", "high", "medium"]);
+var OptionalSeverity = Schema_exports.OptionFromOptionalKey(Severity);
 var WitnessReproFields = Schema_exports.Struct({
   code: Schema_exports.String,
   expected: Schema_exports.String,
@@ -24954,6 +25325,7 @@ var FindingFields = Schema_exports.Struct({
   repro: OptionalRepro,
   requested: Schema_exports.Boolean,
   reused: Schema_exports.Boolean,
+  severity: OptionalSeverity,
   subject: NullableText
 });
 var Finding = Schema_exports.toEncoded(FindingFields);
@@ -25007,6 +25379,8 @@ var CheckFields = Schema_exports.Struct({
   promise: Schema_exports.String,
   refactor: Schema_exports.String,
   runtime: Runtime,
+  scriptFile: OptionalText,
+  scriptHash: OptionalText,
   subject: Schema_exports.String,
   test: OptionalText,
   testFile: OptionalText
@@ -25029,12 +25403,33 @@ var CheckRuntime = Schema_exports.Literals(["node", "python", "rust", "go"]);
 var decodeRuntime = Schema_exports.decodeUnknownOption(CheckRuntime, { onExcessProperty: "error" });
 var ExpectedJson = Schema_exports.fromJsonString(Schema_exports.Unknown);
 var decodeExpectedJson = Schema_exports.decodeUnknownOption(ExpectedJson, { onExcessProperty: "error" });
+function selectPinRoot({ root, state, target }) {
+  if (target.pinRoot === "root") {
+    return root;
+  }
+  return state;
+}
+async function readMatchedCheck({
+  checkId,
+  lockPath,
+  pin,
+  pinRoot
+}) {
+  const matched = pin.bundle.checks.find((item) => item.id === checkId);
+  if (matched === void 0) {
+    return Option_exports.none();
+  }
+  const singlePin = { ...pin, bundle: { checks: [matched], open: [] } };
+  const hydrated = await readPinScripts({ lockPath, pin: singlePin, root: pinRoot });
+  const firstCheck = hydrated.pin.bundle.checks.at(0);
+  return Option_exports.fromNullishOr(firstCheck);
+}
 async function readLockCheck({
   checkId,
   lockPath,
-  state
+  pinRoot
 }) {
-  const record2 = await readRecord({ path: lockPath, root: state });
+  const record2 = await readRecord({ path: lockPath, root: pinRoot });
   if (Option_exports.isNone(record2)) {
     return Option_exports.none();
   }
@@ -25042,20 +25437,19 @@ async function readLockCheck({
   if (Option_exports.isNone(decoded)) {
     return Option_exports.none();
   }
-  const matched = decoded.value.bundle.checks.find((item) => item.id === checkId);
-  return Option_exports.fromNullishOr(matched);
+  return await readMatchedCheck({ checkId, lockPath, pin: decoded.value, pinRoot });
 }
 async function readPinnedCheck({
   checkId,
   lockPath,
-  state
+  pinRoot
 }) {
   if (lockPath === void 0 || lockPath.length === 0) {
     return Option_exports.none();
   }
   const resolvedLockPath = lockPath;
   async function runRead() {
-    return await readLockCheck({ checkId, lockPath: resolvedLockPath, state });
+    return await readLockCheck({ checkId, lockPath: resolvedLockPath, pinRoot });
   }
   const outcome = await classifyResult({ message: "pin load failed", run: runRead });
   if (Result_exports.isFailure(outcome)) {
@@ -25089,13 +25483,15 @@ function buildFallbackCheck({
   });
 }
 async function resolveReplayCheck({
+  root,
   state,
   target
 }) {
+  const pinRoot = selectPinRoot({ root, state, target });
   const pinned = await readPinnedCheck({
     checkId: target.check,
     lockPath: target.lockPath,
-    state
+    pinRoot
   });
   if (Option_exports.isSome(pinned)) {
     return Result_exports.succeed(pinned.value);
@@ -25253,7 +25649,7 @@ async function replayTarget({
   state,
   target
 }) {
-  const resolved = await resolveReplayCheck({ state, target });
+  const resolved = await resolveReplayCheck({ root, state, target });
   if (Result_exports.isFailure(resolved)) {
     return buildUnresolvedResult({ message: resolved.failure, subject: target.subject, target });
   }
@@ -25388,14 +25784,14 @@ import { pathToFileURL } from "node:url";
 // fx/fx-cache.mts
 import { access as access7, mkdir as mkdir4, mkdtemp as mkdtemp2, realpath as realpath11, rename as rename2, rm as rm4 } from "node:fs/promises";
 import { homedir as homedir4 } from "node:os";
-import { isAbsolute as isAbsolute2, join as join14, relative as relative3, sep as sep7 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join18, relative as relative3, sep as sep7 } from "node:path";
 import { cwd, env as env2 } from "node:process";
 
 // fx/install-fx.mts
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { cp } from "node:fs/promises";
-import { join as join13 } from "node:path";
+import { join as join17 } from "node:path";
 import { env } from "node:process";
 
 // fx/resolve-asset.mts
@@ -25416,7 +25812,7 @@ async function resolveWorkerAsset(name) {
 var INSTALL_TIMEOUT_MS = 9e4;
 async function copyManifest(input) {
   const source = await resolveWorkerAsset(input.directory);
-  const target = join13(input.destination, input.directory);
+  const target = join17(input.destination, input.directory);
   await cp(source, target);
 }
 async function installFxRuntime(directory) {
@@ -25479,7 +25875,7 @@ async function publish({ directory, destination }) {
 }
 async function ensureInstallation({ cache: cache2, destination }) {
   await mkdir4(cache2, { mode: 448, recursive: true });
-  const prefix = join14(cache2, "install-");
+  const prefix = join18(cache2, "install-");
   const temporary = await mkdtemp2(prefix);
   try {
     await installFxRuntime(temporary);
@@ -25490,11 +25886,11 @@ async function ensureInstallation({ cache: cache2, destination }) {
 }
 async function resolveInstallation() {
   const userHome = homedir4();
-  const home = env2.XDG_CACHE_HOME ?? join14(userHome, ".cache");
-  const directory = join14(home, "tenet", "libfx");
+  const home = env2.XDG_CACHE_HOME ?? join18(userHome, ".cache");
+  const directory = join18(home, "tenet", "libfx");
   const cache2 = await resolveTrustedPath(directory);
-  const destination = join14(cache2, LIBFX_VERSION);
-  const entry = join14(destination, "node_modules", "libfx", "node.js");
+  const destination = join18(cache2, LIBFX_VERSION);
+  const entry = join18(destination, "node_modules", "libfx", "node.js");
   return { cache: cache2, destination, entry };
 }
 async function isCached(trusted) {
@@ -26555,6 +26951,8 @@ async function runAuditFix({
 var StringList = Schema_exports.Array(Schema_exports.String);
 var OptionalStringList = Schema_exports.OptionFromOptionalKey(StringList);
 var OptionalText2 = Schema_exports.OptionFromOptionalKey(Schema_exports.String);
+var PinRoot = Schema_exports.Literals(["root", "state"]);
+var OptionalPinRoot = Schema_exports.OptionFromOptionalKey(PinRoot);
 var ReplayMode = Schema_exports.Literal("replay");
 var ReplayReproFields = Schema_exports.Struct({
   code: Schema_exports.String,
@@ -26568,6 +26966,7 @@ var ReplayTargetFields = Schema_exports.Struct({
   check: Schema_exports.String,
   contract: Schema_exports.String,
   lockPath: OptionalText2,
+  pinRoot: OptionalPinRoot,
   repro: OptionalReplayRepro,
   subject: OptionalText2
 });
@@ -26603,6 +27002,7 @@ var AuditFixGuardFields = Schema_exports.Struct({
   check: Schema_exports.String,
   contract: Schema_exports.String,
   lockPath: OptionalText3,
+  pinRoot: OptionalPinRoot,
   repro: OptionalReplayRepro2,
   subject: OptionalText3
 });
@@ -26613,6 +27013,7 @@ var AuditFixWitnessFields = Schema_exports.Struct({
   contract: Schema_exports.String,
   lockPath: OptionalText3,
   message: Schema_exports.String,
+  pinRoot: OptionalPinRoot,
   repro: OptionalReplayRepro2,
   subject: OptionalText3
 });
@@ -26791,10 +27192,10 @@ async function readModulePacket({
 
 // audit/parse-candidates.mts
 var MAX_CANDIDATES = 5;
-var MAX_SLUG_CHARS = 64;
+var MAX_SLUG_CHARS2 = 64;
 var MAX_MESSAGE_CHARS2 = 240;
-var SLUG_CLEAN_PATTERN = new RegExp("[^a-z0-9]+", "gv");
-var TRIM_DASH_PATTERN = new RegExp("^-+|-+$", "gv");
+var SLUG_CLEAN_PATTERN2 = new RegExp("[^a-z0-9]+", "gv");
+var TRIM_DASH_PATTERN2 = new RegExp("^-+|-+$", "gv");
 var StringPaths = Schema_exports.Array(Schema_exports.String);
 var OptionalPaths2 = Schema_exports.OptionFromOptionalKey(StringPaths);
 var RawCandidate = Schema_exports.Struct({
@@ -26808,8 +27209,8 @@ var RawResponse = Schema_exports.Struct({ contracts: RawCandidateList });
 var decodeRawResponse = Schema_exports.decodeUnknownOption(RawResponse, { onExcessProperty: "error" });
 function formatKebabSlug(value3) {
   const lowered = value3.trim().toLowerCase();
-  const dashed = lowered.replaceAll(SLUG_CLEAN_PATTERN, "-").replaceAll(TRIM_DASH_PATTERN, "");
-  return dashed.slice(0, MAX_SLUG_CHARS).replaceAll(TRIM_DASH_PATTERN, "");
+  const dashed = lowered.replaceAll(SLUG_CLEAN_PATTERN2, "-").replaceAll(TRIM_DASH_PATTERN2, "");
+  return dashed.slice(0, MAX_SLUG_CHARS2).replaceAll(TRIM_DASH_PATTERN2, "");
 }
 function escapeYamlSingle(value3) {
   return value3.replaceAll("'", "''");
@@ -26859,13 +27260,13 @@ function buildUniqueName({ moduleSlug, rawName, seenNames }) {
   if (!seenNames.has(candidate)) {
     return candidate;
   }
-  return `${moduleSlug}-${candidate}`.slice(0, MAX_SLUG_CHARS).replaceAll(TRIM_DASH_PATTERN, "");
+  return `${moduleSlug}-${candidate}`.slice(0, MAX_SLUG_CHARS2).replaceAll(TRIM_DASH_PATTERN2, "");
 }
 function createCandidate({ message, name, paths, rules }) {
   const document = formatContractDocument({ message, name, paths, rules });
   const hash2 = hashSource(document);
   const contractPath = `audit-pins/${name}/CONTRACT.md`;
-  const lockPath = `audit-pins/${name}/agent-checks.lock.json`;
+  const lockPath = `audit-pins/${name}/scripts/.lock.json`;
   const contract = { document, hash: hash2, name, path: contractPath, paths };
   return { contract, document, lockPath, message, name, paths };
 }
@@ -27658,9 +28059,12 @@ async function qualifyBundle({
 }
 
 // review/pin/update-pin.mts
-function canKeep({ check: check2, next, files }) {
+function canKeep({ check: check2, next, files, handEditedIds }) {
   if (!hasCheckInputs({ check: check2, files })) {
     return false;
+  }
+  if (handEditedIds?.has(check2.id) === true) {
+    return true;
   }
   const assigned = next.bundle.checks.find((item) => item.id === check2.id);
   if (assigned === void 0) {
@@ -27669,17 +28073,55 @@ function canKeep({ check: check2, next, files }) {
   const sameEntry = assigned.subject === check2.subject && assigned.testFile === check2.testFile;
   return sameEntry && assigned.runtime === check2.runtime && assigned.promise === check2.promise;
 }
-function updatePin({ prior, next, files }) {
-  if (next.contractHash === void 0 || prior.contractHash !== next.contractHash) {
+function preserveHandEditedChecks({
+  files,
+  handEditedIds,
+  next,
+  prior
+}) {
+  const priorChecks = /* @__PURE__ */ new Map();
+  for (const item of prior.bundle.checks) {
+    if (handEditedIds.has(item.id) && item.test !== void 0) {
+      priorChecks.set(item.id, item);
+    }
+  }
+  if (priorChecks.size === 0) {
     return next;
   }
-  const kept = prior.bundle.checks.filter((check2) => canKeep({ check: check2, files, next }));
+  const checks = next.bundle.checks.map((item) => {
+    const edited = priorChecks.get(item.id);
+    if (edited === void 0 || edited.runtime !== item.runtime || edited.test === void 0) {
+      return item;
+    }
+    return {
+      ...item,
+      scriptFile: edited.scriptFile,
+      scriptHash: edited.scriptHash,
+      test: edited.test
+    };
+  });
+  const bundle = parseBundle({ files, value: { checks, open: next.bundle.open } });
+  return { ...next, bundle };
+}
+function mergeSameContractPin({ prior, next, files, handEditedIds }) {
+  const kept = prior.bundle.checks.filter(
+    (check2) => canKeep({ check: check2, files, handEditedIds, next })
+  );
   const previous = kept.map((check2) => check2.id);
   const ids = new Set(previous);
   const additions = next.bundle.checks.filter((check2) => !ids.has(check2.id));
   const value3 = { checks: [...kept, ...additions], open: next.bundle.open };
   const bundle = parseBundle({ files, value: value3 });
   return { ...next, bundle };
+}
+function updatePin({ prior, next, files, handEditedIds }) {
+  if (next.contractHash === void 0 || prior.contractHash !== next.contractHash) {
+    if (handEditedIds !== void 0 && handEditedIds.size > 0) {
+      return preserveHandEditedChecks({ files, handEditedIds, next, prior });
+    }
+    return next;
+  }
+  return mergeSameContractPin({ files, handEditedIds, next, prior });
 }
 
 // review/review.mts
@@ -27737,7 +28179,7 @@ async function readBaseInputs({
 }
 
 // discovery/discovery.mts
-import { basename as basename8, dirname as dirname11, extname as extname3 } from "node:path";
+import { basename as basename8, dirname as dirname15, extname as extname3 } from "node:path";
 
 // discovery/hash-surface.mts
 import { basename as basename5 } from "node:path";
@@ -28168,7 +28610,7 @@ function listPackageRoots(input) {
   const packageModules = input.contract.paths.filter(
     (path) => path.endsWith("/__init__.py") && !isHiddenDirectoryPath(path)
   );
-  return packageModules.map((path) => dirname11(path));
+  return packageModules.map((path) => dirname15(path));
 }
 function hasProductionCode(paths) {
   return paths.some((path) => {
@@ -28432,14 +28874,15 @@ function readCached(ctx) {
 }
 
 // review/receipt/receipt.mts
-import { dirname as dirname12, join as join15 } from "node:path";
+import { join as join19 } from "node:path";
+var decodePin3 = Schema_exports.decodeUnknownOption(Pin, { onExcessProperty: "error" });
 var decodeReceipt = Schema_exports.decodeUnknownOption(Receipt, { onExcessProperty: "error" });
 function resolvePaths(contract) {
   const identity2 = hashSource(contract.path);
-  const receipt = join15("agent-checks", `${identity2}.json`);
-  const directory = dirname12(contract.path);
-  const lock = join15(directory, "agent-checks.lock.json");
-  return { lock, receipt };
+  const receipt = join19("agent-checks", `${identity2}.json`);
+  const lock = resolvePrimaryLockPath(contract.path);
+  const legacyLock = resolveLegacyLockPath(contract.path);
+  return { legacyLock, lock, receipt };
 }
 async function readReceipt({
   request: request3,
@@ -28457,14 +28900,49 @@ function readPinRoot(request3) {
   }
   return request3.root;
 }
+async function readPriorRecord({ legacyLock, lock, pinRoot }) {
+  const primary = await readRecord({ path: lock, root: pinRoot });
+  if (Option_exports.isSome(primary)) {
+    return { legacyLock: false, lockPath: lock, prior: primary };
+  }
+  const legacy = await readRecord({ path: legacyLock, root: pinRoot });
+  return { legacyLock: Option_exports.isSome(legacy), lockPath: legacyLock, prior: legacy };
+}
+async function readPriorScripts({
+  lockPath,
+  pinRoot,
+  prior
+}) {
+  if (Option_exports.isNone(prior)) {
+    return { handEditedIds: /* @__PURE__ */ new Set(), hydrated: prior };
+  }
+  const decoded = decodePin3(prior.value.json);
+  if (Option_exports.isNone(decoded)) {
+    return { handEditedIds: /* @__PURE__ */ new Set(), hydrated: prior };
+  }
+  const { handEditedIds, pin } = await readPinScripts({
+    lockPath,
+    pin: decoded.value,
+    root: pinRoot
+  });
+  return {
+    handEditedIds,
+    hydrated: Option_exports.some({ json: pin, text: prior.value.text })
+  };
+}
 async function readContext(job) {
   const { contract, request: request3 } = job;
   const current = await readInventory({ contract, root: request3.root });
-  const { receipt, lock } = resolvePaths(contract);
+  const { legacyLock: legacyLockPath, lock, receipt } = resolvePaths(contract);
   const saved = await readReceipt({ receipt, request: request3 });
   const pinRoot = readPinRoot(request3);
-  const prior = await readRecord({ path: lock, root: pinRoot });
-  const candidate = parsePin({ contractHash: contract.hash, current, value: prior });
+  const priorRecord = await readPriorRecord({ legacyLock: legacyLockPath, lock, pinRoot });
+  const { handEditedIds, hydrated } = await readPriorScripts({
+    lockPath: priorRecord.lockPath,
+    pinRoot,
+    prior: priorRecord.prior
+  });
+  const candidate = parsePin({ contractHash: contract.hash, current, value: hydrated });
   const evaluation = {
     base: request3.base ?? null,
     contract: contract.name,
@@ -28473,7 +28951,16 @@ async function readContext(job) {
     saved: Option_exports.getOrUndefined(saved),
     tools: job.tools
   };
-  return { evaluation, job, lock, ...candidate, prior, receipt };
+  return {
+    evaluation,
+    handEditedIds,
+    job,
+    legacyLock: priorRecord.legacyLock,
+    lock,
+    ...candidate,
+    prior: priorRecord.prior,
+    receipt
+  };
 }
 
 // review/receipt/save-receipt.mts
@@ -28614,6 +29101,7 @@ function mergePriorPin({ ctx, generated }) {
   }
   const pin = updatePin({
     files: ctx.evaluation.current.runtimeFiles,
+    handEditedIds: ctx.handEditedIds,
     next: generated.pin,
     prior: ctx.pin
   });
@@ -28639,14 +29127,30 @@ function readPublishRoot(ctx) {
   }
   return ctx.job.request.root;
 }
-async function publish2({ ctx, pin }) {
-  const root = readPublishRoot(ctx);
-  const input = { path: ctx.lock, root, value: pin };
-  if (ctx.pin === void 0) {
-    await writeAtomic({ ...input, first: true });
+async function writePublishedLock({ ctx, diskPin, root }) {
+  const input = { path: ctx.lock, root, value: diskPin };
+  if (ctx.pin === void 0 || ctx.legacyLock) {
+    await writeAtomic({ ...input, first: !ctx.legacyLock });
     return;
   }
   await replacePin({ ...input, prior: ctx.prior });
+}
+async function publish2({ ctx, pin }) {
+  const root = readPublishRoot(ctx);
+  const materialized = await writePinScripts({
+    lockPath: ctx.lock,
+    pin,
+    priorPin: ctx.pin,
+    root
+  });
+  await writePublishedLock({ ctx, diskPin: materialized.diskPin, root });
+  return materialized.hydratedPin;
+}
+async function resolvePublishedPin({ cache: cache2, ctx, pin }) {
+  if (cache2 && !ctx.matching) {
+    return await publish2({ ctx, pin });
+  }
+  return pin;
 }
 async function assertStableSource(ctx) {
   const after = await readInventory({ contract: ctx.job.contract, root: ctx.job.request.root });
@@ -28665,10 +29169,8 @@ async function verify({ ctx, onRequest }) {
   await assertStableSource(ctx);
   const rows = [...observed, ...extraUnresolved];
   const cache2 = ctx.matching || pin.bundle.checks.length > 0;
-  if (cache2 && !ctx.matching) {
-    await publish2({ ctx, pin });
-  }
-  return { cache: cache2, pin, rows };
+  const publishedPin = await resolvePublishedPin({ cache: cache2, ctx, pin });
+  return { cache: cache2, pin: publishedPin, rows };
 }
 
 // review/measure.mts

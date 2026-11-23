@@ -156,7 +156,7 @@ function createCandidate({ message, name, paths, rules }: FormatDocumentInput): 
   const document = formatContractDocument({ message, name, paths, rules });
   const hash = hashSource(document);
   const contractPath = `audit-pins/${name}/CONTRACT.md`;
-  const lockPath = `audit-pins/${name}/agent-checks.lock.json`;
+  const lockPath = `audit-pins/${name}/scripts/.lock.json`;
   const contract: Contract = { document, hash, name, path: contractPath, paths };
 
   return { contract, document, lockPath, message, name, paths };

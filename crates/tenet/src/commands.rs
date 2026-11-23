@@ -8,8 +8,10 @@ mod final_review;
 mod finish;
 mod fix;
 mod init;
+mod offline;
 mod prepare;
 mod qualification;
+mod scan;
 
 use administration::{execute_contracts, execute_skills};
 use documents::{export, validate};
@@ -33,6 +35,7 @@ pub(crate) async fn execute(cli: &Cli) -> Result<ExitStatus, CommandError> {
     match &cli.command {
         Command::Audit(args) => audit::run(&cli.root, &cli.resolve_state(), args),
         Command::Init(init_args) => init::run(&cli.root, init_args),
+        Command::Scan(args) => scan::run(&cli.root, &cli.resolve_state(), args),
         Command::Doctor { json } => doctor::run(&cli.root, &cli.resolve_state(), *json),
         Command::Validate { strict_adaptations } => validate(&cli.root, *strict_adaptations),
         Command::Skills { command } => execute_skills(&cli.root, command),

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser as _;
 
+use super::SeverityArg;
 use crate::cli::{Cli, Command};
 
 #[test]
@@ -23,13 +24,32 @@ fn parse_audit_replay_flag_and_conflicts() -> Result<()> {
 }
 
 #[test]
-fn parse_fix_from_audit_flags_and_conflicts() -> Result<()> {
+fn parse_check_offline_and_replay_alias() -> Result<()> {
+    let offline = Cli::try_parse_from(["tenet", "check", "--offline", "--json"])?;
+    let Command::Check(args) = offline.command else {
+        anyhow::bail!("expected check subcommand");
+    };
+    anyhow::ensure!(args.offline, "expected --offline to be set");
+    anyhow::ensure!(args.run.json, "expected --json to be set");
+
+    let replay = Cli::try_parse_from(["tenet", "check", "--replay"])?;
+    let Command::Check(alias_args) = replay.command else {
+        anyhow::bail!("expected check subcommand");
+    };
+    anyhow::ensure!(alias_args.offline, "expected --replay alias to set offline");
+    Ok(())
+}
+
+#[test]
+fn parse_fix_flags_severity_and_conflicts() -> Result<()> {
     let parsed = Cli::try_parse_from([
         "tenet",
         "fix",
         "--from-audit",
         "--max-requests",
         "10",
+        "--severity",
+        "high",
         "--contract",
         "demo-rule",
         "src/app.py",
@@ -39,28 +59,65 @@ fn parse_fix_from_audit_flags_and_conflicts() -> Result<()> {
     };
     anyhow::ensure!(args.from_audit, "expected --from-audit to be set");
     anyhow::ensure!(args.max_requests == 10, "expected max_requests == 10");
+    anyhow::ensure!(args.severity == SeverityArg::High);
     anyhow::ensure!(args.contract.as_deref() == Some("demo-rule"));
     anyhow::ensure!(args.paths.len() == 1);
 
-    let default_budget = Cli::try_parse_from(["tenet", "fix", "--from-audit"])?;
-    let Command::Fix(default_args) = default_budget.command else {
+    let unified = Cli::try_parse_from([
+        "tenet",
+        "fix",
+        "--max-requests",
+        "5",
+        "--severity",
+        "critical",
+    ])?;
+    let Command::Fix(unified_args) = unified.command else {
         anyhow::bail!("expected fix subcommand");
     };
-    anyhow::ensure!(
-        default_args.max_requests == 20,
-        "expected default max_requests 20"
-    );
+    anyhow::ensure!(!unified_args.from_audit);
+    anyhow::ensure!(unified_args.max_requests == 5);
+    anyhow::ensure!(unified_args.severity == SeverityArg::Critical);
+
+    let default_fix = Cli::try_parse_from(["tenet", "fix"])?;
+    let Command::Fix(default_args) = default_fix.command else {
+        anyhow::bail!("expected fix subcommand");
+    };
+    anyhow::ensure!(default_args.max_requests == 20);
+    anyhow::ensure!(default_args.severity == SeverityArg::Medium);
 
     let conflict = Cli::try_parse_from(["tenet", "fix", "--from-audit", "--base", "HEAD"]);
     anyhow::ensure!(
         conflict.is_err(),
         "expected --from-audit to conflict with --base"
     );
+    Ok(())
+}
 
-    let missing_flag = Cli::try_parse_from(["tenet", "fix", "--max-requests", "5"]);
+#[test]
+fn parse_scan_flags_aliases_and_conflicts() -> Result<()> {
+    let applied = Cli::try_parse_from(["tenet", "scan", "--yes", "--json"])?;
+    let Command::Scan(args) = applied.command else {
+        anyhow::bail!("expected scan subcommand");
+    };
+    anyhow::ensure!(args.apply, "expected --yes alias to set apply");
+    anyhow::ensure!(args.json);
+
+    let starter_default = Cli::try_parse_from(["tenet", "scan", "--starter"])?;
+    let Command::Scan(starter_args) = starter_default.command else {
+        anyhow::bail!("expected scan subcommand");
+    };
+    anyhow::ensure!(starter_args.starter == Some(None));
+
+    let starter_named = Cli::try_parse_from(["tenet", "scan", "--starter", "api-guards"])?;
+    let Command::Scan(named_args) = starter_named.command else {
+        anyhow::bail!("expected scan subcommand");
+    };
+    anyhow::ensure!(named_args.starter == Some(Some(String::from("api-guards"))));
+
+    let conflict = Cli::try_parse_from(["tenet", "scan", "--apply", "--ephemeral"]);
     anyhow::ensure!(
-        missing_flag.is_err(),
-        "expected --max-requests to require --from-audit"
+        conflict.is_err(),
+        "expected --apply to conflict with --ephemeral"
     );
     Ok(())
 }

@@ -67,19 +67,9 @@ pub struct AuditFixResponse {
     pub requests: usize,
 }
 
-/// One failing saved witness submitted for bounded repair.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuditFixWitness {
-    pub check: String,
-    pub contract: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lock_path: Option<String>,
-    pub message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repro: Option<WitnessRepro>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subject: Option<String>,
+define_witness_target! {
+    /// One failing saved witness submitted for bounded repair.
+    pub struct AuditFixWitness { message: String }
 }
 
 /// Repair failing saved audit witnesses in a bounded sandboxed verify-until-green loop.
