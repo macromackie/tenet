@@ -16,6 +16,7 @@ export type PendingWitness = Readonly<{
 export type PrecheckResult = Readonly<{
   alreadyPassing: readonly AuditFixOutcome[];
   pending: readonly PendingWitness[];
+  precheckUnresolved: readonly AuditFixOutcome[];
 }>;
 
 type PatchVerification =

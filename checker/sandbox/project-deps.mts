@@ -32,15 +32,8 @@ type SelectRuntimeDepsInput = Readonly<{
   runtime: Check['runtime'];
 }>;
 
-type WithinRootInput = Readonly<{
-  candidate?: string;
-  root: string;
-}>;
-
-type SelectSafeRustInput = Readonly<{
-  deps: ProjectDeps;
-  rustDepsDir?: string;
-}>;
+type WithinRootInput = Readonly<{ candidate?: string; root: string }>;
+type SelectSafeRustInput = Readonly<{ deps: ProjectDeps; rustDepsDir?: string }>;
 
 type FilterRootInput = Readonly<{ deps: ProjectDeps; root: string }>;
 
@@ -121,14 +114,18 @@ async function resolvePythonSitePackages(venvDir: string): Promise<Option.Option
 }
 
 async function resolvePythonDeps(projectRoot: string): Promise<ProjectDeps> {
-  const venvDir = join(projectRoot, '.venv');
-  const pythonSitePackages = await resolvePythonSitePackages(venvDir);
+  for (const name of ['.venv', 'venv']) {
+    const venvDir = join(projectRoot, name);
+    // Check standard virtualenv directory names sequentially in precedence order.
+    // oxlint-disable-next-line no-await-in-loop
+    const pythonSitePackages = await resolvePythonSitePackages(venvDir);
 
-  if (Option.isNone(pythonSitePackages)) {
-    return EMPTY_DEPS;
+    if (Option.isSome(pythonSitePackages)) {
+      return { pythonSitePackages: pythonSitePackages.value, rustBuildCfgs: [], rustExterns: [] };
+    }
   }
 
-  return { pythonSitePackages: pythonSitePackages.value, rustBuildCfgs: [], rustExterns: [] };
+  return EMPTY_DEPS;
 }
 
 async function resolveRustDeps(projectRoot: string): Promise<ProjectDeps> {

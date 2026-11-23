@@ -14,7 +14,7 @@
   "scripts": {
     "bundle": "bash bundle.sh",
     "check:bundle": "bash bundle.sh --check",
-    "test": "node --test test/runtime.test.mts test/generation.test.mts test/pin-changes.test.mts test/record-cas.test.mts test/sandbox-and-controls.test.mts test/sandbox-isolation-and-bundle.test.mts test/sandbox-deps.test.mts test/ranking-and-receipts.test.mts test/rust-crate-and-go.test.mts test/ceilings-and-runtimes.test.mts test/audit-candidates.test.mts test/v029-controls-and-discovery.test.mts test/v029-brownfield-and-skeptic.test.mts test/v030-replay-and-fix.test.mts test/v031-runtimes-and-fix.test.mts test/v032-incrate-and-seams.test.mts",
+    "test": "node --test test/runtime.test.mts test/generation.test.mts test/pin-changes.test.mts test/record-cas.test.mts test/sandbox-and-controls.test.mts test/sandbox-isolation-and-bundle.test.mts test/sandbox-deps.test.mts test/ranking-and-receipts.test.mts test/rust-crate-and-go.test.mts test/ceilings-and-runtimes.test.mts test/audit-candidates.test.mts test/v029-controls-and-discovery.test.mts test/v029-brownfield-and-skeptic.test.mts test/v030-replay-and-fix.test.mts test/v031-runtimes-and-fix.test.mts test/v032-incrate-and-seams.test.mts test/v033-fix-fastfail-and-go.test.mts",
     "typecheck": "tsc -p tsconfig.json"
   }
 }

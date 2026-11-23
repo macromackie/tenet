@@ -53,14 +53,14 @@ type AttemptState = Readonly<{
 type SelectPartialInput = Readonly<{ current?: PartialFix; result: AttemptOutcome }>;
 
 type AdvanceAttemptInput = Readonly<{
-  alreadyPassing: readonly AuditFixOutcome[];
   baseContext: Omit<AttemptContext, 'priorAttemptError'>;
   budget: BudgetTracker;
+  precheckOutcomes: readonly AuditFixOutcome[];
   state: AttemptState;
 }>;
 
 type BuildStateInput = Readonly<{
-  alreadyPassing: readonly AuditFixOutcome[];
+  precheckOutcomes: readonly AuditFixOutcome[];
   result: AttemptOutcome;
   state: AttemptState;
 }>;
@@ -74,6 +74,7 @@ type BuildPartialStateInput = Readonly<{
 
 type PromptWitnessInput = PendingWitness;
 type BuildResultInput = Readonly<{ input: RetryLoopInput; state: AttemptState }>;
+type AppendPrecheckInput = Readonly<{ item: PendingWitness; precheck: PrecheckResult }>;
 
 function combineCost({ base, delta }: CostPairInput): Finding['cost_usd'] {
   if (base === null || delta === null) {
@@ -103,30 +104,36 @@ function buildPromptWitness({ initial, witness }: PromptWitnessInput): FixPrompt
   };
 }
 
-async function checkInitialWitnesses({
-  currentFiles,
-  group,
-  root,
-  state,
-}: PrecheckInput): Promise<PrecheckResult> {
-  const alreadyPassing: AuditFixOutcome[] = [];
-  const pending: PendingWitness[] = [];
+function appendPrecheckWitness({ item, precheck }: AppendPrecheckInput): PrecheckResult {
+  switch (item.initial.outcome) {
+    case 'passed': {
+      const outcome = buildFixOutcome({ result: item.initial, status: 'already_passing' });
+
+      return { ...precheck, alreadyPassing: [...precheck.alreadyPassing, outcome] };
+    }
+    case 'unresolved': {
+      const outcome = buildFixOutcome({ result: item.initial, status: 'unresolved' });
+
+      return { ...precheck, precheckUnresolved: [...precheck.precheckUnresolved, outcome] };
+    }
+    case 'failed': {
+      return { ...precheck, pending: [...precheck.pending, item] };
+    }
+  }
+}
+
+async function checkInitialWitnesses({ currentFiles, group, root, state }: PrecheckInput): Promise<PrecheckResult> {
+  let precheck: PrecheckResult = { alreadyPassing: [], pending: [], precheckUnresolved: [] };
 
   for (const witness of group.witnesses) {
     // Sequential pre-check avoids unnecessary sandbox contention before LLM calls.
     // oxlint-disable-next-line no-await-in-loop
-    const result = await replayTarget({ files: currentFiles, root, state, target: witness });
+    const initial = await replayTarget({ files: currentFiles, root, state, target: witness });
 
-    if (result.outcome === 'passed') {
-      const outcome = buildFixOutcome({ result, status: 'already_passing' });
-
-      alreadyPassing.push(outcome);
-    } else {
-      pending.push({ initial: result, witness });
-    }
+    precheck = appendPrecheckWitness({ item: { initial, witness }, precheck });
   }
 
-  return { alreadyPassing, pending };
+  return precheck;
 }
 
 function buildFailedOutcomes(pending: readonly PendingWitness[]): readonly AuditFixOutcome[] {
@@ -202,12 +209,12 @@ function buildPartialAttemptState({
   return { bestPartial, costUsd, priorAttemptError: result.error, requests };
 }
 
-function buildAttemptState({ alreadyPassing, result, state }: BuildStateInput): AttemptState {
+function buildAttemptState({ precheckOutcomes, result, state }: BuildStateInput): AttemptState {
   const costUsd = combineCost({ base: state.costUsd, delta: result.costUsd });
   const requests = state.requests + result.requests;
 
   if (result.error === undefined && result.files !== undefined && result.outcomes !== undefined) {
-    const outcomes = [...alreadyPassing, ...result.outcomes];
+    const outcomes = [...precheckOutcomes, ...result.outcomes];
     const resolved: RepairGroupResult = { changedPaths: result.changedPaths, costUsd, files: result.files, outcomes, requests };
 
     return { costUsd, requests, resolved };
@@ -217,9 +224,9 @@ function buildAttemptState({ alreadyPassing, result, state }: BuildStateInput): 
 }
 
 async function advanceRepairAttempt({
-  alreadyPassing,
   baseContext,
   budget,
+  precheckOutcomes,
   state,
 }: AdvanceAttemptInput): Promise<AttemptState> {
   const result = await runFixAttempt({
@@ -229,7 +236,7 @@ async function advanceRepairAttempt({
 
   budget.consume(result.requests);
 
-  return buildAttemptState({ alreadyPassing, result, state });
+  return buildAttemptState({ precheckOutcomes, result, state });
 }
 
 function buildRepairResult({ input, state }: BuildResultInput): RepairGroupResult {
@@ -237,20 +244,23 @@ function buildRepairResult({ input, state }: BuildResultInput): RepairGroupResul
     return state.resolved;
   }
 
+  const precheckOutcomes = [...input.precheck.alreadyPassing, ...input.precheck.precheckUnresolved];
+
   if (state.bestPartial !== undefined) {
-    const partialOutcomes = [...input.precheck.alreadyPassing, ...state.bestPartial.outcomes];
+    const partialOutcomes = [...precheckOutcomes, ...state.bestPartial.outcomes];
 
     return { changedPaths: state.bestPartial.changedPaths, costUsd: state.costUsd, files: state.bestPartial.files, outcomes: partialOutcomes, requests: state.requests };
   }
 
   const failedOutcomes = buildFailedOutcomes(input.precheck.pending);
-  const outcomes = [...input.precheck.alreadyPassing, ...failedOutcomes];
+  const outcomes = [...precheckOutcomes, ...failedOutcomes];
 
   return { changedPaths: [], costUsd: state.costUsd, files: input.currentFiles, outcomes, requests: state.requests };
 }
 
 async function runRepairLoop(input: RetryLoopInput): Promise<RepairGroupResult> {
   const baseContext = await buildAttemptContext(input);
+  const precheckOutcomes = [...input.precheck.alreadyPassing, ...input.precheck.precheckUnresolved];
   let state: AttemptState = { costUsd: 0, requests: 0 };
 
   for (let attempt = 0; attempt < MAX_FIX_ATTEMPTS; attempt += 1) {
@@ -260,12 +270,7 @@ async function runRepairLoop(input: RetryLoopInput): Promise<RepairGroupResult> 
 
     // Sequential retry attempts depend on prior patch and sandbox verification feedback.
     // oxlint-disable-next-line no-await-in-loop
-    state = await advanceRepairAttempt({
-      alreadyPassing: input.precheck.alreadyPassing,
-      baseContext,
-      budget: input.budget,
-      state,
-    });
+    state = await advanceRepairAttempt({ baseContext, budget: input.budget, precheckOutcomes, state });
   }
 
   return buildRepairResult({ input, state });
@@ -281,13 +286,9 @@ export async function repairAuditGroup(input: RepairGroupInput): Promise<RepairG
   });
 
   if (precheck.pending.length === 0) {
-    return {
-      changedPaths: [],
-      costUsd: 0,
-      files: input.currentFiles,
-      outcomes: precheck.alreadyPassing,
-      requests: 0,
-    };
+    const outcomes = [...precheck.alreadyPassing, ...precheck.precheckUnresolved];
+
+    return { changedPaths: [], costUsd: 0, files: input.currentFiles, outcomes, requests: 0 };
   }
 
   return await runRepairLoop({ ...input, precheck });

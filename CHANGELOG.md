@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.33.0
+
+- Fast-failed `unresolved` witness pre-checks in `tenet fix --from-audit` (`audit/fix/fix-group.mts`): witnesses whose sandbox pre-check is `unresolved` (missing host toolchain or external dependency) are reported immediately as `unresolved` with zero LLM repair requests spent instead of entering the retry loop, while live `failed` witnesses in mixed groups still proceed to repair.
+- Added shim-proof host Go toolchain resolution (`sandbox/runtimes/read-go-tool.mts`): validates candidate `go` binaries via `realpath()` so version-manager shims (`mise`, `asdf`, `rtx`) are skipped in favor of real `go` installations on `GOROOT`, `PATH`, `/usr/local/go/bin`, `/opt/homebrew/bin`, or `mise/installs/go/latest/bin`.
+- Extended in-root Python dependency discovery (`sandbox/project-deps.mts`) to check `venv/` alongside `.venv/` while preserving strict canonical in-root confinement.
+
 ## v0.32.0
 
 - Added Rust in-crate (`#[cfg(test)]`) probe execution (`sandbox/runtimes/is-rust-in-crate-probe.mts`, `write-rust-lib.mts`, `build-rust-command.mts`, `RUNNER_REVISION = 9`): probes declaring `#[test] fn tenet_observe()` compile against an ephemeral `src/__tenet_lib.rs` wrapper via `rustc --test` inside macOS Seatbelt and Linux `bubblewrap` (never mutating `src/lib.rs`), unlocking direct testing of `pub(crate)` and private internal Rust modules with full `build.rs` cfg and `OUT_DIR` support.
