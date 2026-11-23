@@ -1,3 +1,5 @@
+mod audit;
+
 use std::{
     io::{self, Write as _},
     path::Path,
@@ -13,7 +15,10 @@ use crate::{
     output,
 };
 
-pub(super) async fn run(root: &Path, args: &Fix) -> Result<ExitStatus, CommandError> {
+pub(super) async fn run(root: &Path, state: &Path, args: &Fix) -> Result<ExitStatus, CommandError> {
+    if args.from_audit {
+        return audit::run(root, state, args);
+    }
     let base = args.base.as_deref();
     let contract = args.contract.as_deref();
     let json = args.json;

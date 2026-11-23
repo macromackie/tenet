@@ -72,6 +72,11 @@ async function prepareProject(project: Project): Promise<Staged> {
 
 async function restoreSubject({ project, variant }: SampleInput): Promise<void> {
   const { check, files, work } = project;
+
+  if (variant === 'actual' && check.subject.length === 0) {
+    return;
+  }
+
   const sources = { ...check, actual: files.get(check.subject) };
   const source = sources[variant];
 

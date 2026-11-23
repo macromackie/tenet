@@ -1,6 +1,13 @@
 import { text } from 'node:stream/consumers';
 import { Option, Schema } from 'effect';
-import { AuditRequest, runAudit } from './audit/index.mts';
+import {
+  AuditFixRequest,
+  AuditReplayRequest,
+  AuditRequest,
+  runAudit,
+  runAuditFix,
+  runAuditReplay,
+} from './audit/index.mts';
 import { CheckerError } from './checker-error.mts';
 import { run } from './review/index.mts';
 import { Request } from './wire.mts';
@@ -8,25 +15,57 @@ import { Request } from './wire.mts';
 const decodeRequest = Schema.decodeUnknownOption(Request, { onExcessProperty: 'error' });
 const decodeAuditRequest = Schema.decodeUnknownOption(AuditRequest, { onExcessProperty: 'error' });
 
-function isAuditMode(input: unknown): boolean {
-  if (input === null || typeof input !== 'object') {
-    return false;
+const decodeReplayRequest = Schema.decodeUnknownOption(AuditReplayRequest, {
+  onExcessProperty: 'error',
+});
+
+const decodeFixRequest = Schema.decodeUnknownOption(AuditFixRequest, {
+  onExcessProperty: 'error',
+});
+
+function readMode(input: unknown): Option.Option<string> {
+  if (input === null || typeof input !== 'object' || !('mode' in input)) {
+    return Option.none();
   }
 
-  return 'mode' in input && input.mode === 'audit';
+  if (typeof input.mode === 'string') {
+    return Option.some(input.mode);
+  }
+
+  return Option.none();
 }
 
-async function handleInput(input: unknown): Promise<unknown> {
-  if (isAuditMode(input)) {
-    const auditRequest = decodeAuditRequest(input);
+async function handleAuditMode(input: unknown): Promise<unknown> {
+  const auditRequest = decodeAuditRequest(input);
 
-    if (Option.isNone(auditRequest)) {
-      throw new CheckerError({ message: 'invalid audit request' });
-    }
-
-    return await runAudit(auditRequest.value);
+  if (Option.isNone(auditRequest)) {
+    throw new CheckerError({ message: 'invalid audit request' });
   }
 
+  return await runAudit(auditRequest.value);
+}
+
+async function handleReplayMode(input: unknown): Promise<unknown> {
+  const replayRequest = decodeReplayRequest(input);
+
+  if (Option.isNone(replayRequest)) {
+    throw new CheckerError({ message: 'invalid replay request' });
+  }
+
+  return await runAuditReplay(replayRequest.value);
+}
+
+async function handleFixMode(input: unknown): Promise<unknown> {
+  const fixRequest = decodeFixRequest(input);
+
+  if (Option.isNone(fixRequest)) {
+    throw new CheckerError({ message: 'invalid audit-fix request' });
+  }
+
+  return await runAuditFix(fixRequest.value);
+}
+
+async function handleReviewMode(input: unknown): Promise<unknown> {
   const request = decodeRequest(input);
 
   if (Option.isNone(request)) {
@@ -34,6 +73,25 @@ async function handleInput(input: unknown): Promise<unknown> {
   }
 
   return await run(request.value);
+}
+
+async function handleInput(input: unknown): Promise<unknown> {
+  const modeOption = readMode(input);
+  const mode = Option.getOrUndefined(modeOption);
+
+  if (mode === 'audit') {
+    return await handleAuditMode(input);
+  }
+
+  if (mode === 'replay') {
+    return await handleReplayMode(input);
+  }
+
+  if (mode === 'audit-fix') {
+    return await handleFixMode(input);
+  }
+
+  return await handleReviewMode(input);
 }
 
 async function main(): Promise<void> {

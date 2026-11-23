@@ -155,7 +155,7 @@ pub(super) fn collect_manifests(paths: &[PathBuf]) -> Vec<String> {
 }
 
 /// Format a relative repository path using forward slashes across platforms.
-pub(super) fn format_slash_path(path: &Path) -> String {
+pub(in crate::commands) fn format_slash_path(path: &Path) -> String {
     path.components()
         .filter_map(|component| {
             match component {

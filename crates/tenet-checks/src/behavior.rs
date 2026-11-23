@@ -1,8 +1,11 @@
 //! Turn an unbound English contract into a frozen, independently replayable observation.
 
+#[macro_use]
 mod audit;
+mod audit_fix;
 mod environment;
 mod process;
+mod replay;
 mod request;
 #[cfg(test)]
 mod tests;
@@ -18,6 +21,23 @@ pub use audit::{
     AuditRequest,
     AuditResponse,
     run_audit,
+};
+pub use audit_fix::{
+    AuditFixGroup,
+    AuditFixOutcome,
+    AuditFixPatch,
+    AuditFixRequest,
+    AuditFixResponse,
+    AuditFixStatus,
+    AuditFixWitness,
+    run_audit_fix,
+};
+pub use replay::{
+    AuditReplayRequest,
+    AuditReplayResponse,
+    AuditReplayResult,
+    AuditReplayTarget,
+    replay_audit,
 };
 use serde::{Deserialize, Serialize};
 use tenet_contracts::Contract;
@@ -74,6 +94,10 @@ const FILES: &[(&str, &str)] = &[
     (
         "checker-prompt.md",
         include_str!("../../../checker/checker-prompt.md"),
+    ),
+    (
+        "fix-prompt.md",
+        include_str!("../../../checker/fix-prompt.md"),
     ),
     (
         "package.json",

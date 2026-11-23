@@ -23,7 +23,36 @@ pub(super) struct Staging<'root> {
     tree: PathBuf,
 }
 
-fn read_source(root: &Path, path: &Path) -> io::Result<String> {
+pub(super) fn prepare_atomic_write(
+    root: &Path,
+    path: &Path,
+    original: &str,
+    updated: &str,
+) -> io::Result<(NamedTempFile, Change)> {
+    let path_name = path.to_string_lossy();
+    let unified_diff = TextDiff::from_lines(original, updated)
+        .unified_diff()
+        .header(&format!("a/{path_name}"), &format!("b/{path_name}"))
+        .to_string();
+    let destination = root.join(path);
+    let parent = destination
+        .parent()
+        .ok_or_else(|| io::Error::other("missing source directory"))?;
+    let mut ready = NamedTempFile::new_in(parent)?;
+    ready.write_all(updated.as_bytes())?;
+    ready
+        .as_file()
+        .set_permissions(destination.metadata()?.permissions())?;
+    Ok((
+        ready,
+        Change {
+            patch: unified_diff,
+            path: path.to_path_buf(),
+        },
+    ))
+}
+
+pub(super) fn read_source(root: &Path, path: &Path) -> io::Result<String> {
     let file = root.join(path);
     if file.canonicalize()? != file || !file.symlink_metadata()?.is_file() {
         return Err(io::Error::other(format!(
@@ -44,6 +73,25 @@ fn read_source(root: &Path, path: &Path) -> io::Result<String> {
     Ok(text)
 }
 
+pub(super) fn replace_staged_file(
+    root: &Path,
+    path: &Path,
+    ready: NamedTempFile,
+    updated_count: usize,
+) -> io::Result<()> {
+    let _written = ready.persist(root.join(path)).map_err(|error| {
+        io::Error::new(
+            error.error.kind(),
+            format!(
+                "cannot replace {:?} ({updated_count:?} files already updated): {:#}",
+                path.display(),
+                error.error
+            ),
+        )
+    })?;
+    Ok(())
+}
+
 impl<'root> Staging<'root> {
     pub(super) fn apply(self) -> io::Result<Vec<Change>> {
         let mut changes = Vec::new();
@@ -55,25 +103,9 @@ impl<'root> Staging<'root> {
             if updated == *original {
                 continue;
             }
-            let path_name = path.to_string_lossy();
-            let patch = TextDiff::from_lines(original.as_str(), &updated)
-                .unified_diff()
-                .header(&format!("a/{path_name}"), &format!("b/{path_name}"))
-                .to_string();
-            let destination = self.root.join(path);
-            let parent = destination
-                .parent()
-                .ok_or_else(|| io::Error::other("missing source directory"))?;
-            let mut ready = NamedTempFile::new_in(parent)?;
-            ready.write_all(updated.as_bytes())?;
-            ready
-                .as_file()
-                .set_permissions(destination.metadata()?.permissions())?;
+            let (ready, change) = prepare_atomic_write(self.root, path, original, &updated)?;
             pending.push((path, original, ready));
-            changes.push(Change {
-                patch,
-                path: path.clone(),
-            });
+            changes.push(change);
         }
         for (index, (path, original, ready)) in pending.into_iter().enumerate() {
             if &read_source(self.root, path)? != original {
@@ -82,16 +114,7 @@ impl<'root> Staging<'root> {
                     path.display()
                 )));
             }
-            let _written = ready.persist(self.root.join(path)).map_err(|error| {
-                io::Error::new(
-                    error.error.kind(),
-                    format!(
-                        "cannot replace {:?} ({index:?} files already updated): {:#}",
-                        path.display(),
-                        error.error
-                    ),
-                )
-            })?;
+            replace_staged_file(self.root, path, ready, index)?;
         }
         Ok(changes)
     }

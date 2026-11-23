@@ -5,21 +5,10 @@ mod shard;
 use alloc::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
-use context::{
-    TestIndex,
-    collect_all_docs,
-    collect_manifests,
-    format_slash_path,
-    select_module_docs,
-};
-use seams::{
-    HeaderIndex,
-    collect_shard_changes,
-    find_related_files,
-    has_executable_logic,
-    list_changed_files,
-    normalize_filters,
-};
+pub(in crate::commands) use context::format_slash_path;
+use context::{TestIndex, collect_all_docs, collect_manifests, select_module_docs};
+use seams::{HeaderIndex, collect_shard_changes, has_executable_logic, list_changed_files};
+pub(in crate::commands) use seams::{find_related_files, normalize_filters};
 use shard::{merge_tiny_siblings, split_into_shards};
 use tenet_checks::behavior::AuditModuleInput;
 
@@ -82,14 +71,14 @@ struct ShardInputs<'input> {
 }
 
 /// Discovered module shards plus the repository runtime source closure for sandbox imports.
-pub(super) struct DiscoveredAudit {
+pub(in crate::commands) struct DiscoveredAudit {
     pub modules: Vec<AuditModuleInput>,
     pub runtime_paths: Vec<String>,
 }
 
 /// Discover bounded production source modules under `root`, optionally filtered by `requested` or
 /// `base_ref`.
-pub(super) fn discover_modules(
+pub(in crate::commands) fn discover_modules(
     root: &Path,
     requested: &[PathBuf],
     base_ref: Option<&str>,
@@ -230,7 +219,7 @@ fn is_auditable_source(path: &Path) -> bool {
     !has_segment(path, AUDIT_ONLY_SKIP_SEGMENTS)
 }
 
-fn is_matching_filter(path: &Path, filters: &[PathBuf]) -> bool {
+pub(in crate::commands) fn is_matching_filter(path: &Path, filters: &[PathBuf]) -> bool {
     filters.is_empty()
         || filters.iter().any(|filter| {
             filter.as_os_str().is_empty() || path == filter || path.starts_with(filter)

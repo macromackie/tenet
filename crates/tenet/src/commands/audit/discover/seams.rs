@@ -87,7 +87,7 @@ pub(super) fn has_executable_logic(root: &Path, shard_files: &[String]) -> bool 
 
 /// Find up to four external production files referenced by or sharing a Go package with
 /// `shard_files`.
-pub(super) fn find_related_files(
+pub(in crate::commands) fn find_related_files(
     root: &Path,
     shard_files: &[String],
     runtime_paths: &[String],
@@ -125,7 +125,9 @@ pub(super) fn collect_shard_changes(
 }
 
 /// Normalize user-provided filter paths and reject paths escaping the repository root.
-pub(super) fn normalize_filters(requested: &[PathBuf]) -> Result<Vec<PathBuf>, CommandError> {
+pub(in crate::commands) fn normalize_filters(
+    requested: &[PathBuf],
+) -> Result<Vec<PathBuf>, CommandError> {
     requested
         .iter()
         .map(|raw| {

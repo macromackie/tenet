@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.30.0
+
+- Added zero-LLM witness regression replay (`tenet audit --replay [--json]`): re-executes every persisted failing witness reproducer from `.tenet/audit.json` against the current working tree inside the isolated OS sandbox (`mode: "audit-replay"`) with zero LLM requests and no provider API key required, reporting each witness as `FIXED (PASS)`, `STILL FAILING`, or `ERROR` and exiting `0` when all witnesses pass or `1` when any still fail or error.
+- Added closed-loop verified witness repair (`tenet fix --from-audit [--max-requests N] [--severity critical|high|medium] [--dry-run] [--json]`): groups persisted failing witnesses from `.tenet/audit.json` by module and severity, proposes targeted unified edits, verifies inside the isolated sandbox that failing witnesses flip `FAIL -> PASS` while all persisted module guards remain `PASS` (zero regressions), and atomically writes verified edits (or reports a preview in `--dry-run`) while preserving `.tenet/audit.json` so `tenet audit --replay` confirms every fix.
+- Extended the sandboxed Node.js ESM loader hook (`node-resolve-hook.mts`, `RUNNER_REVISION = 7`) to resolve extensionless TypeScript relative and package self-name imports (`.ts`, `.mts`, `.cts`, `.tsx`, plus `/index.*` and `.js -> .ts` / `.mjs -> .mts` / `.cjs -> .cts` fallbacks) strictly within the staged working directory, unlocking Node 22+/24+ type-stripping TypeScript repositories.
+
 ## v0.29.0
 
 - Isolated probe JSON observation from noisy library stdout (`parseProbeStdout` + `RUNNER_REVISION = 6`): supports pure JSON, explicit `__TENET_JSON__:` sentinels, trailing single-line JSON after framework logs (such as `[GIN-debug]`), and trailing multi-line JSON blocks so stdout-logging frameworks no longer drop valid probes as `unresolved`.

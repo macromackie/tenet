@@ -1,7 +1,10 @@
 export { applySkepticOutput } from './apply-skeptic.mts';
+export { applyAuditFix, AuditFixRequest, runAuditFix } from './fix/index.mts';
 export { selectAuditTier } from './model-tier.mts';
 export { readModulePacket } from './packet.mts';
 export { parseAuditCandidates } from './parse-candidates.mts';
 export { rejectUnverifiedWitnesses } from './reject-unverified.mts';
+export { runAuditReplay } from './replay.mts';
+export { AuditReplayRequest } from './replay-wire.mts';
 export { runAudit } from './run-audit.mts';
 export { AuditRequest, type AuditResponse } from './wire.mts';

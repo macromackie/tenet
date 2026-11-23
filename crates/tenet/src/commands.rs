@@ -38,7 +38,7 @@ pub(crate) async fn execute(cli: &Cli) -> Result<ExitStatus, CommandError> {
         Command::Skills { command } => execute_skills(&cli.root, command),
         Command::Contracts { command } => execute_contracts(&cli.root, command).await,
         Command::Check(check) => evaluate(&cli.root, &cli.resolve_state(), check).await,
-        Command::Fix(args) => fix::run(&cli.root, args).await,
+        Command::Fix(args) => fix::run(&cli.root, &cli.resolve_state(), args).await,
         Command::Status {
             base,
             evidence,

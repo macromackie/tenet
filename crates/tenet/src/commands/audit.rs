@@ -1,6 +1,7 @@
 mod discover;
 mod queue;
 mod render;
+mod replay;
 mod repros;
 mod save;
 #[cfg(test)]
@@ -11,9 +12,21 @@ use std::{env, io::IsTerminal as _, path::Path, time::Instant};
 
 use anyhow::{Context as _, anyhow};
 use console::Term;
-use discover::discover_modules;
-use queue::AuditQueue;
+pub(super) use discover::{
+    discover_modules,
+    find_related_files,
+    format_slash_path,
+    normalize_filters,
+};
+pub(super) use queue::AuditQueue;
 use render::write_report;
+pub(super) use replay::{
+    StatusRow,
+    build_contract_lock_paths,
+    build_replay_target,
+    is_matching_finding,
+    write_status_row,
+};
 use repros::write_witness_repros;
 use save::save_verified_contracts;
 use tenet_checks::behavior::{
@@ -33,9 +46,21 @@ use crate::{
 
 const MIN_FOLLOWUP_MODULE_BUDGET: usize = 2;
 
+/// Verify that `OPENROUTER_API_KEY` is populated before running a model-backed `command`.
+pub(super) fn require_openrouter_key(command: &str) -> Result<(), CommandError> {
+    let has_key = env::var_os("OPENROUTER_API_KEY").is_some_and(|value| !value.is_empty());
+    if has_key {
+        return Ok(());
+    }
+    Err(anyhow!("set \"OPENROUTER_API_KEY\" to run {command:?}").into())
+}
+
 /// Discover modules, synthesize contracts, falsify them in isolated sandboxes, and report defects.
 pub(super) fn run(root: &Path, state: &Path, args: &Audit) -> Result<ExitStatus, CommandError> {
-    require_credentials()?;
+    if args.replay {
+        return replay::run(root, state, args);
+    }
+    require_openrouter_key("tenet audit")?;
     let budget = usize::try_from(args.max_requests).context("convert audit request budget")?;
     let discovered = discover_modules(root, &args.paths, args.base.as_deref())?;
     if discovered.modules.is_empty() {
@@ -73,6 +98,27 @@ pub(super) fn run(root: &Path, state: &Path, args: &Audit) -> Result<ExitStatus,
     };
     let selected_reports = select_reports(&discovered.modules, &queue, &transient);
     finish_audit(root, state, args, &selected_reports)
+}
+
+/// Execute one synchronous worker call while drawing live progress on stderr when interactive.
+pub(super) fn run_with_progress<ResultValue>(
+    json_mode: bool,
+    summary: &str,
+    work: impl FnOnce(Option<&mut dyn FnMut(&str)>) -> Result<ResultValue, CommandError>,
+) -> Result<ResultValue, CommandError> {
+    let started = Instant::now();
+    let term = Term::stderr();
+    let show_progress = !json_mode && output::open_stderr().is_terminal();
+    let mut progress = Progress::default();
+    let mut on_progress = |label: &str| {
+        drop(progress.draw(&term, label, summary, started.elapsed()));
+    };
+    let callback: Option<&mut dyn FnMut(&str)> = show_progress.then_some(&mut on_progress);
+    let outcome = work(callback);
+    if show_progress {
+        drop(progress.clear(&term));
+    }
+    outcome
 }
 
 fn finish_audit(
@@ -124,14 +170,6 @@ fn read_exit_status(reports: &[AuditModuleReport]) -> ExitStatus {
         return ExitStatus::Pending;
     }
     ExitStatus::Passed
-}
-
-fn require_credentials() -> Result<(), CommandError> {
-    let has_key = env::var_os("OPENROUTER_API_KEY").is_some_and(|value| !value.is_empty());
-    if has_key {
-        return Ok(());
-    }
-    Err(anyhow!("set \"OPENROUTER_API_KEY\" to run `tenet audit`").into())
 }
 
 fn run_pending_modules(

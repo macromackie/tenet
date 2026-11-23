@@ -8,6 +8,26 @@ use serde_json::json;
 
 use super::Finding;
 
+macro_rules! define_witness_outcome {
+    ($(#[$meta:meta])* pub struct $name:ident { $field:ident : $status_ty:ty }) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct $name {
+            pub check: String,
+            pub contract: String,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub expected: Option<String>,
+            pub message: String,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub observed: Option<String>,
+            pub $field: $status_ty,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub subject: Option<String>,
+        }
+    };
+}
+
 /// Synthesized contract document and staged pin path returned by one module audit.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

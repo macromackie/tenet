@@ -7,7 +7,7 @@ const BWRAP = '/usr/bin/bwrap';
 const PYTHON = '/usr/bin/python3';
 const PRLIMIT = '/usr/bin/prlimit';
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
-const RUNNER_REVISION = 6;
+const RUNNER_REVISION = 7;
 
 function readBinaryIdentity(path: string) {
   const read = Effect.tryPromise(async () => await stat(path));

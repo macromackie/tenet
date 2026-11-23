@@ -1,10 +1,13 @@
+#[cfg(test)]
+mod tests;
+
 use alloc::collections::BTreeMap;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use serde::{Deserialize, Serialize};
 use tenet_checks::behavior::AuditModuleReport;
 
@@ -15,7 +18,7 @@ const QUEUE_VERSION: u64 = 1;
 
 /// Resumable audit queue persisted at `.tenet/audit.json`.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub(super) struct AuditQueue {
+pub(in crate::commands) struct AuditQueue {
     pub deep: bool,
     pub modules: BTreeMap<String, AuditModuleReport>,
     pub version: u64,
@@ -53,6 +56,31 @@ impl AuditQueue {
         };
         if saved.version != QUEUE_VERSION || (deep && !saved.deep) {
             return Ok(Self::new(deep));
+        }
+        Ok(saved)
+    }
+
+    /// Load an existing `.tenet/audit.json` strictly without creating or modifying it.
+    pub(in crate::commands) fn read_existing(state: &Path) -> Result<Self, CommandError> {
+        let path = read_queue_path(state);
+        if !path.is_file() {
+            return Err(anyhow!(
+                "no saved audit state found at {:?}; run `tenet audit` first",
+                path.display()
+            )
+            .into());
+        }
+        let bytes =
+            fs::read(&path).with_context(|| format!("read audit state {:?}", path.display()))?;
+        let saved: Self = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse audit state {:?}", path.display()))?;
+        if saved.version != QUEUE_VERSION {
+            return Err(anyhow!(
+                "unsupported audit state version {:?} in {:?}",
+                saved.version,
+                path.display()
+            )
+            .into());
         }
         Ok(saved)
     }

@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use std::path::PathBuf;
 
 use clap::Args;
@@ -29,6 +32,10 @@ pub(crate) struct Audit {
     /// Re-audit selected modules instead of resuming from `.tenet/audit.json`.
     #[arg(long)]
     pub fresh: bool,
+    /// Re-run saved failing witnesses from `.tenet/audit.json` against the current checkout
+    /// without calling a model.
+    #[arg(long, conflicts_with_all = ["fresh", "deep", "save"])]
+    pub replay: bool,
     /// Maximum model requests across synthesis and behavior checks.
     #[arg(long, default_value_t = 120)]
     pub max_requests: u32,
@@ -76,9 +83,16 @@ pub(crate) struct Fix {
     /// Apply fixes for one adopted contract.
     #[arg(long)]
     pub contract: Option<String>,
+    /// Repair failing witnesses from `.tenet/audit.json` in a bounded sandboxed verify-until-green
+    /// loop.
+    #[arg(long, conflicts_with = "base")]
+    pub from_audit: bool,
     /// Print applied fixes and re-check results as JSON.
     #[arg(long)]
     pub json: bool,
+    /// Maximum model requests when running `tenet fix --from-audit`.
+    #[arg(long, default_value_t = 20, requires = "from_audit")]
+    pub max_requests: u32,
     /// Files or directories to fix; fixes all governed files when omitted.
     pub paths: Vec<PathBuf>,
 }

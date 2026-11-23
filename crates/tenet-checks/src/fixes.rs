@@ -1,5 +1,6 @@
 //! Safe native fixes for adopted contract assets and the selected project sources.
 
+mod audit;
 mod native;
 mod observation;
 mod staging;
@@ -7,6 +8,7 @@ mod staging;
 use alloc::collections::BTreeSet;
 use std::{io, path::PathBuf};
 
+pub use audit::apply_audit_patches;
 use native::{Job, Tool};
 use serde::Serialize;
 use staging::Staging;
