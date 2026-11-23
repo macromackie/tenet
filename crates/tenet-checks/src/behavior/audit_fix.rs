@@ -88,7 +88,7 @@ pub fn run_audit_fix(
 ) -> io::Result<AuditFixResponse> {
     let input = json!({
         "mode": "audit-fix",
-        "root": request.root,
+        "root": absolute(&request.root)?,
         "state": absolute(&request.state)?,
         "runtimePaths": request.runtime_paths,
         "maxRequests": request.max_requests,

@@ -2,7 +2,7 @@ use core::time::Duration;
 use std::{
     fs,
     io,
-    path::Path,
+    path::{Path, absolute},
     process::{Child, ExitStatus},
     thread::sleep,
     time::Instant,
@@ -58,8 +58,10 @@ pub(super) fn execute_bytes(
     let answer = workspace.path().join("answer.json");
     let errors = workspace.path().join("stderr.log");
     let progress = workspace.path().join("progress.txt");
+    let absolute_root = absolute(root)?;
     let mut payload = input.clone();
     if let Some(fields) = payload.as_object_mut() {
+        let _prior_root = fields.insert("root".into(), serde_json::json!(&absolute_root));
         let _prior = fields.insert("progressFile".into(), serde_json::json!(progress));
     }
     fs::write(&request, serde_json::to_vec(&payload)?)?;

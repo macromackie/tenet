@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.30.1
+
+- Fixed relative `--root` resolution (including default `.`) across `tenet audit`, `tenet audit --replay`, `tenet fix --from-audit`, and `tenet check` worker dispatch (`crates/tenet-checks`): canonicalized `root` to an absolute path before passing it to the embedded checker worker running in its isolated temporary directory, preventing default-root invocations from reading the worker directory instead of the user's checkout.
+- Accepted the host-injected `progressFile` field in strict `AuditReplayRequest` and `AuditFixRequest` wire schemas (`replay-wire.mts`, `fix-wire.mts`) so Rust host calls to `tenet audit --replay` and `tenet fix --from-audit` decode cleanly in the embedded worker.
+
 ## v0.30.0
 
 - Added zero-LLM witness regression replay (`tenet audit --replay [--json]`): re-executes every persisted failing witness reproducer from `.tenet/audit.json` against the current working tree inside the isolated OS sandbox (`mode: "audit-replay"`) with zero LLM requests and no provider API key required, reporting each witness as `FIXED (PASS)`, `STILL FAILING`, or `ERROR` and exiting `0` when all witnesses pass or `1` when any still fail or error.

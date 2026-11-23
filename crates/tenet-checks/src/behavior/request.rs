@@ -31,7 +31,7 @@ pub(super) fn dispatch(
         .map(|contract| build_contract_input(plan, contract, checked, stored_decisions, known))
         .collect();
     let input = json!({
-        "root": plan.root,
+        "root": absolute(&plan.root)?,
         "base": plan.base,
         "state": absolute(state)?,
         "contracts": contracts,

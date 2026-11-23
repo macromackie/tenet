@@ -25,6 +25,7 @@ const AuditFixGuardFields = Schema.Struct({
   check: Schema.String,
   contract: Schema.String,
   lockPath: OptionalText,
+  repro: OptionalReplayRepro,
   subject: OptionalText,
 });
 
@@ -64,6 +65,7 @@ const AuditFixRequestFields = Schema.Struct({
   groups: AuditFixGroupList,
   maxRequests: Schema.Int,
   mode: FixMode,
+  progressFile: OptionalText,
   root: Schema.String,
   runtimePaths: OptionalStringList,
   state: Schema.String,

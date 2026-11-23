@@ -111,7 +111,7 @@ pub fn run_audit(
 ) -> io::Result<AuditResponse> {
     let input = json!({
         "mode": "audit",
-        "root": request.root,
+        "root": absolute(&request.root)?,
         "state": absolute(&request.state)?,
         "modules": request.modules,
         "runtimePaths": request.runtime_paths,

@@ -25906,6 +25906,7 @@ var ReplayTarget = Schema_exports.toEncoded(ReplayTargetFields);
 var ReplayTargetList = Schema_exports.Array(ReplayTarget);
 var AuditReplayRequestFields = Schema_exports.Struct({
   mode: ReplayMode,
+  progressFile: OptionalText2,
   root: Schema_exports.String,
   runtimePaths: OptionalStringList,
   state: Schema_exports.String,
@@ -25933,6 +25934,7 @@ var AuditFixGuardFields = Schema_exports.Struct({
   check: Schema_exports.String,
   contract: Schema_exports.String,
   lockPath: OptionalText3,
+  repro: OptionalReplayRepro2,
   subject: OptionalText3
 });
 var AuditFixGuard = Schema_exports.toEncoded(AuditFixGuardFields);
@@ -25962,6 +25964,7 @@ var AuditFixRequestFields = Schema_exports.Struct({
   groups: AuditFixGroupList,
   maxRequests: Schema_exports.Int,
   mode: FixMode,
+  progressFile: OptionalText3,
   root: Schema_exports.String,
   runtimePaths: OptionalStringList2,
   state: Schema_exports.String

@@ -33,6 +33,7 @@ const ReplayTargetList = Schema.Array(ReplayTarget);
 
 const AuditReplayRequestFields = Schema.Struct({
   mode: ReplayMode,
+  progressFile: OptionalText,
   root: Schema.String,
   runtimePaths: OptionalStringList,
   state: Schema.String,

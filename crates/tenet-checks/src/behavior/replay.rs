@@ -51,7 +51,7 @@ pub fn replay_audit(
 ) -> io::Result<AuditReplayResponse> {
     let input = json!({
         "mode": "replay",
-        "root": request.root,
+        "root": absolute(&request.root)?,
         "state": absolute(&request.state)?,
         "runtimePaths": request.runtime_paths,
         "targets": request.targets,
