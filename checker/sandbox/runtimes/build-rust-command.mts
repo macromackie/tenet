@@ -43,8 +43,12 @@ function buildDepFlags({ deps, depsMount, linkerArg }: DepFlagsInput): readonly 
   return [...flags, '-L', `dependency=${depsMount}`, ...externArgs];
 }
 
-function buildCfgFlags(features: readonly string[]): readonly string[] {
+function buildFeatureCfgFlags(features: readonly string[]): readonly string[] {
   return features.flatMap((feature) => ['--cfg', `feature="${feature}"`]);
+}
+
+function buildRustCfgFlags(cfgs: readonly string[]): readonly string[] {
+  return cfgs.flatMap((cfg) => ['--cfg', cfg]);
 }
 
 /** Build a sandboxed rustc compile-and-run command, compiling `src/lib.rs` first when present. */
@@ -58,15 +62,26 @@ export function buildRustCommand({
   rustc,
 }: BuildRustCommandInput): readonly string[] {
   const depFlags = buildDepFlags({ deps, depsMount, linkerArg });
+  const buildCfgs = buildRustCfgFlags(deps.rustBuildCfgs);
   const output = `${probeTmp}/observe`;
 
   if (Option.isNone(rustCrate)) {
-    return ['/bin/sh', '-c', SINGLE_FILE_SCRIPT, 'tenet-rust', rustc, probeFile, output, ...depFlags];
+    return [
+      '/bin/sh',
+      '-c',
+      SINGLE_FILE_SCRIPT,
+      'tenet-rust',
+      rustc,
+      probeFile,
+      output,
+      ...buildCfgs,
+      ...depFlags,
+    ];
   }
 
   const { edition, features, name } = rustCrate.value;
   const libOutput = `${probeTmp}/lib${name}.rlib`;
-  const cfgFlags = buildCfgFlags(features);
+  const cfgFlags = buildFeatureCfgFlags(features);
 
   const head = [
     '/bin/sh',
@@ -81,5 +96,5 @@ export function buildRustCommand({
     edition,
   ];
 
-  return [...head, ...cfgFlags, ...depFlags];
+  return [...head, ...cfgFlags, ...buildCfgs, ...depFlags];
 }

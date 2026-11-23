@@ -48,6 +48,7 @@ type ProposeFixInput = Readonly<{
   reasoningEffort?: ReasoningEffort;
   relatedSources: Readonly<Record<string, string>>;
   sources: Readonly<Record<string, string>>;
+  tests: Readonly<Record<string, string>>;
   witnesses: readonly FixPromptWitness[];
 }>;
 
@@ -72,6 +73,7 @@ function buildFixPayload({
   priorAttemptError,
   relatedSources,
   sources,
+  tests,
   witnesses,
 }: ProposeFixInput): string {
   const base = {
@@ -81,6 +83,7 @@ function buildFixPayload({
     module: moduleName,
     relatedSources,
     sources,
+    tests,
     witnesses,
   };
 

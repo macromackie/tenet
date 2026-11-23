@@ -106,6 +106,14 @@ async function resolvePythonRuntime({ check, probeFile }: ProgramInput): Promise
   return { command, runtimeRoot };
 }
 
+function buildRustExtraEnv(outDir?: string): Readonly<Record<string, string>> {
+  if (outDir === undefined) {
+    return {};
+  }
+
+  return { OUT_DIR: outDir };
+}
+
 async function resolveRustRuntime({
   deps,
   files,
@@ -120,8 +128,9 @@ async function resolveRustRuntime({
   const rustCrate = await readRustCrate({ deps, files, projectRoot });
   const depsMount = deps.rustDepsDir ?? '';
   const command = buildRustCommand({ deps, depsMount, probeFile, probeTmp, rustCrate, rustc });
+  const extraEnv = buildRustExtraEnv(deps.rustBuildOutDir);
 
-  return { command, runtimeRoot };
+  return { command, extraEnv, runtimeRoot };
 }
 
 async function resolveGoRuntime({
@@ -136,7 +145,8 @@ async function resolveGoRuntime({
   const binary = join(runtimeRoot, 'bin', 'go');
   const probeDir = dirname(probeFile);
   const output = join(probeTmp, 'observe');
-  const command = buildGoCommand({ binary, deps, files, output, probeDir });
+  const isTestProbe = probeFile.endsWith('_test.go');
+  const command = buildGoCommand({ binary, deps, files, isTestProbe, output, probeDir });
 
   const extraEnv = buildGoEnv({
     goModCache: deps.goModCache,

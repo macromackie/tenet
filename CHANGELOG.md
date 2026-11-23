@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.31.0
+
+- Upgraded sandboxed TypeScript execution (`node-resolve-hook.mts`, `RUNNER_REVISION = 8`) with a `load` hook that strips types via `module.stripTypeScriptTypes` and automatically elides bundler-style value imports and re-exports of type-only symbols (`export interface` / `export type`, including `export * from` chains), unlocking non-`verbatimModuleSyntax` TypeScript repositories without external compiler binaries.
+- Added prebuilt Rust `build.rs` artifact reuse (`sandbox/rust-build.mts`) without executing untrusted build scripts: parses safe `cargo:rustc-cfg` / `cargo::rustc-cfg` directives from canonical in-root `target/debug/build/<pkg>-*/output` and mounts `out/` read-only as `OUT_DIR` inside macOS Seatbelt and Linux `bubblewrap`, unlocking `build.rs` crates such as `serde_json`.
+- Added Go `package main` same-package probe execution (`sandbox/resolve-probe-file.mts`, `build-go-command.mts`): probes defining `func TestTenetObserve` are staged as `tenet_observe_test.go` inside the subject's package and executed via `go test -run ^TestTenetObserve$ -v`, unlocking `cmd/*` CLI packages alongside library packages.
+- Attached nearest public package/crate entrypoints (`src/lib.rs`, `package.json` `main`/`module`/`name` facades, `src/index.*`, `<pkg>/__init__.py`, root `<mod>.go`) to leaf and plugin shards in `tenet audit` discovery (`discover/seams/entrypoints.rs`), raising `related_files` capacity to 5 so probes always see the public API entrypoint.
+- Upgraded `tenet fix --from-audit` to be test-aware and salvage best zero-regression partial fixes: wires bounded repository `testFiles` into `AuditFixGroup` and `fix-prompt.md` so repairs preserve existing test expectations, and retains the highest-yield zero-regression partial patch when a multi-witness group cannot fix every witness within the retry budget.
+
 ## v0.30.1
 
 - Fixed relative `--root` resolution (including default `.`) across `tenet audit`, `tenet audit --replay`, `tenet fix --from-audit`, and `tenet check` worker dispatch (`crates/tenet-checks`): canonicalized `root` to an absolute path before passing it to the embedded checker worker running in its isolated temporary directory, preventing default-root invocations from reading the worker directory instead of the user's checkout.

@@ -27,6 +27,8 @@ pub struct AuditFixGroup {
     pub guards: Vec<AuditReplayTarget>,
     pub name: String,
     pub related_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub test_files: Vec<String>,
     pub witnesses: Vec<AuditFixWitness>,
 }
 

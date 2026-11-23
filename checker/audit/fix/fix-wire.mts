@@ -52,6 +52,7 @@ const AuditFixGroupFields = Schema.Struct({
   guards: AuditFixGuardList,
   name: Schema.String,
   relatedFiles: OptionalStringList,
+  testFiles: OptionalStringList,
   witnesses: AuditFixWitnessList,
 });
 

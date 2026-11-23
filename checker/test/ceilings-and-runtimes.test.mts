@@ -198,7 +198,10 @@ void test('readRustCrate enables local optional features and skips missing exter
   ]);
 
   const crate = await readRustCrate({
-    deps: { rustExterns: [{ file: 'libquote-0123456789abcdef.rlib', name: 'quote' }] },
+    deps: {
+      rustBuildCfgs: [],
+      rustExterns: [{ file: 'libquote-0123456789abcdef.rlib', name: 'quote' }],
+    },
     files,
   });
 

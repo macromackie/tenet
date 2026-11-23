@@ -1,11 +1,12 @@
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { CheckerError } from '../checker-error.mts';
 import type { Check } from '../types.d.mts';
 import { formatProbeFailure, parseProbeStdout } from './controls/index.mts';
 import { type Execution, runFile } from './host-tool.mts';
 import { createLinuxSandbox, createMacosSandbox, type SandboxCommand } from './os/index.mts';
 import { type ProjectDeps, resolveProjectDeps } from './project-deps.mts';
+import { resolveProbeFile } from './resolve-probe-file.mts';
 
 type SandboxInput = Readonly<{
   check: Check;
@@ -55,13 +56,6 @@ const COMPILED_PROBE_TIMEOUT_MS = 30_000;
 const OUTPUT_BYTES = 65_536;
 const COMPILED_RUNTIMES: ReadonlySet<string> = new Set(['go', 'rust']);
 
-const PROBE_FILES = {
-  go: '.tenet_observe/main.go',
-  node: '.tenet-observe.mjs',
-  python: '.tenet-observe.py',
-  rust: '.tenet-observe.rs',
-} as const;
-
 type Markers = Readonly<{ failed: RegExp; passed: RegExp }>;
 
 const ASSERTION_MARKERS: ReadonlyMap<string, Markers> = new Map([
@@ -80,10 +74,6 @@ const ASSERTION_MARKERS: ReadonlyMap<string, Markers> = new Map([
     },
   ],
 ]);
-
-function probeFile(runtime: Check['runtime']): string {
-  return PROBE_FILES[runtime];
-}
 
 async function createDepLink({ source, target }: StageLinkInput): Promise<void> {
   if (source === undefined) {
@@ -121,7 +111,7 @@ async function buildCommand({
   projectRoot,
   work,
 }: BuildCommandInput): Promise<SandboxCommand> {
-  const entry = probeFile(check.runtime);
+  const entry = resolveProbeFile(check);
 
   if (process.platform === 'darwin') {
     return await createMacosSandbox({
@@ -269,8 +259,14 @@ async function writeProbeFile({ check, work }: WriteProbeInput): Promise<void> {
     return;
   }
 
-  const entry = probeFile(check.runtime);
-  const targetPath = join(work, entry);
+  const entry = resolveProbeFile(check);
+  const targetPath = resolve(work, entry);
+  const workPrefix = `${resolve(work)}${sep}`;
+
+  if (!targetPath.startsWith(workPrefix)) {
+    throw new CheckerError({ message: 'probe path falls outside the checkout' });
+  }
+
   const parentDir = dirname(targetPath);
 
   await mkdir(parentDir, { recursive: true });

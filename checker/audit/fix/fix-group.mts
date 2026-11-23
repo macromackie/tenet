@@ -1,11 +1,11 @@
 import type { FixPromptWitness } from '../../fx/index.mts';
 import type { Finding } from '../../types.d.mts';
 import { replayTarget } from '../replay-target.mts';
-import type { AuditReplayResult } from '../replay-wire.mts';
 import type { BudgetTracker } from '../run-round.mts';
 import { buildBoundedSources } from './bound-fix-sources.mts';
 import { buildFixOutcome } from './build-fix-outcome.mts';
 import type { AuditFixGroup, AuditFixOutcome, AuditFixOutcomeStatus } from './fix-wire.mts';
+import { readBoundedTestFiles } from './read-test-files.mts';
 import { type AttemptContext, type AttemptOutcome, runFixAttempt } from './run-fix-attempt.mts';
 import type { PendingWitness, PrecheckResult } from './verify-fix-patch.mts';
 
@@ -22,11 +22,7 @@ type PrecheckInput = Readonly<{
   state: string;
 }>;
 
-type RepairGroupInput = PrecheckInput &
-  Readonly<{
-    budget: BudgetTracker;
-    deep: boolean;
-  }>;
+type RepairGroupInput = PrecheckInput & Readonly<{ budget: BudgetTracker; deep: boolean }>;
 
 type RepairGroupResult = Readonly<{
   changedPaths: readonly string[];
@@ -36,21 +32,25 @@ type RepairGroupResult = Readonly<{
   requests: number;
 }>;
 
-type PromptWitnessInput = PendingWitness;
-
 type RetryLoopInput = RepairGroupInput & Readonly<{ precheck: PrecheckResult }>;
+type CostPairInput = Readonly<{ base: Finding['cost_usd']; delta: Finding['cost_usd'] }>;
 
-type CostPairInput = Readonly<{
-  base: Finding['cost_usd'];
-  delta: Finding['cost_usd'];
+type PartialFix = Readonly<{
+  changedPaths: readonly string[];
+  files: ReadonlyMap<string, string>;
+  fixedCount: number;
+  outcomes: readonly AuditFixOutcome[];
 }>;
 
 type AttemptState = Readonly<{
+  bestPartial?: PartialFix;
   costUsd: Finding['cost_usd'];
   priorAttemptError?: string;
   requests: number;
   resolved?: RepairGroupResult;
 }>;
+
+type SelectPartialInput = Readonly<{ current?: PartialFix; result: AttemptOutcome }>;
 
 type AdvanceAttemptInput = Readonly<{
   alreadyPassing: readonly AuditFixOutcome[];
@@ -65,6 +65,16 @@ type BuildStateInput = Readonly<{
   state: AttemptState;
 }>;
 
+type BuildPartialStateInput = Readonly<{
+  costUsd: Finding['cost_usd'];
+  requests: number;
+  result: AttemptOutcome;
+  state: AttemptState;
+}>;
+
+type PromptWitnessInput = PendingWitness;
+type BuildResultInput = Readonly<{ input: RetryLoopInput; state: AttemptState }>;
+
 function combineCost({ base, delta }: CostPairInput): Finding['cost_usd'] {
   if (base === null || delta === null) {
     return null;
@@ -73,7 +83,7 @@ function combineCost({ base, delta }: CostPairInput): Finding['cost_usd'] {
   return base + delta;
 }
 
-function mapFailureStatus(result: AuditReplayResult): AuditFixOutcomeStatus {
+function mapFailureStatus(result: PendingWitness['initial']): AuditFixOutcomeStatus {
   if (result.outcome === 'failed') {
     return 'failed';
   }
@@ -127,7 +137,9 @@ function buildFailedOutcomes(pending: readonly PendingWitness[]): readonly Audit
   });
 }
 
-function buildAttemptContext(input: RetryLoopInput): Omit<AttemptContext, 'priorAttemptError'> {
+async function buildAttemptContext(
+  input: RetryLoopInput,
+): Promise<Omit<AttemptContext, 'priorAttemptError'>> {
   const sources = buildBoundedSources({
     files: input.currentFiles,
     paths: input.group.files,
@@ -142,6 +154,11 @@ function buildAttemptContext(input: RetryLoopInput): Omit<AttemptContext, 'prior
     totalBytes: MAX_RELATED_TOTAL_BYTES,
   });
 
+  const tests = await readBoundedTestFiles({
+    paths: input.group.testFiles ?? [],
+    root: input.root,
+  });
+
   const promptWitnesses = input.precheck.pending.map((item) => buildPromptWitness(item));
 
   return {
@@ -154,26 +171,49 @@ function buildAttemptContext(input: RetryLoopInput): Omit<AttemptContext, 'prior
     root: input.root,
     sources,
     state: input.state,
+    tests,
   };
+}
+
+function isBetterPartial({ current, result }: SelectPartialInput): boolean {
+  const currentBest = current?.fixedCount ?? 0;
+
+  return result.guardRegressions === 0 && result.fixedCount > currentBest;
+}
+
+function buildPartialAttemptState({
+  costUsd,
+  requests,
+  result,
+  state,
+}: BuildPartialStateInput): AttemptState {
+  const unchanged = { bestPartial: state.bestPartial, costUsd, priorAttemptError: result.error, requests };
+
+  if (!isBetterPartial({ current: state.bestPartial, result }) || result.changedPaths.length === 0) {
+    return unchanged;
+  }
+
+  if (result.files === undefined || result.outcomes === undefined) {
+    return unchanged;
+  }
+
+  const bestPartial: PartialFix = { changedPaths: result.changedPaths, files: result.files, fixedCount: result.fixedCount, outcomes: result.outcomes };
+
+  return { bestPartial, costUsd, priorAttemptError: result.error, requests };
 }
 
 function buildAttemptState({ alreadyPassing, result, state }: BuildStateInput): AttemptState {
   const costUsd = combineCost({ base: state.costUsd, delta: result.costUsd });
   const requests = state.requests + result.requests;
 
-  if (result.files !== undefined && result.outcomes !== undefined) {
-    const resolved: RepairGroupResult = {
-      changedPaths: result.changedPaths,
-      costUsd,
-      files: result.files,
-      outcomes: [...alreadyPassing, ...result.outcomes],
-      requests,
-    };
+  if (result.error === undefined && result.files !== undefined && result.outcomes !== undefined) {
+    const outcomes = [...alreadyPassing, ...result.outcomes];
+    const resolved: RepairGroupResult = { changedPaths: result.changedPaths, costUsd, files: result.files, outcomes, requests };
 
     return { costUsd, requests, resolved };
   }
 
-  return { costUsd, priorAttemptError: result.error, requests };
+  return buildPartialAttemptState({ costUsd, requests, result, state });
 }
 
 async function advanceRepairAttempt({
@@ -192,8 +232,25 @@ async function advanceRepairAttempt({
   return buildAttemptState({ alreadyPassing, result, state });
 }
 
+function buildRepairResult({ input, state }: BuildResultInput): RepairGroupResult {
+  if (state.resolved !== undefined) {
+    return state.resolved;
+  }
+
+  if (state.bestPartial !== undefined) {
+    const partialOutcomes = [...input.precheck.alreadyPassing, ...state.bestPartial.outcomes];
+
+    return { changedPaths: state.bestPartial.changedPaths, costUsd: state.costUsd, files: state.bestPartial.files, outcomes: partialOutcomes, requests: state.requests };
+  }
+
+  const failedOutcomes = buildFailedOutcomes(input.precheck.pending);
+  const outcomes = [...input.precheck.alreadyPassing, ...failedOutcomes];
+
+  return { changedPaths: [], costUsd: state.costUsd, files: input.currentFiles, outcomes, requests: state.requests };
+}
+
 async function runRepairLoop(input: RetryLoopInput): Promise<RepairGroupResult> {
-  const baseContext = buildAttemptContext(input);
+  const baseContext = await buildAttemptContext(input);
   let state: AttemptState = { costUsd: 0, requests: 0 };
 
   for (let attempt = 0; attempt < MAX_FIX_ATTEMPTS; attempt += 1) {
@@ -211,19 +268,7 @@ async function runRepairLoop(input: RetryLoopInput): Promise<RepairGroupResult> 
     });
   }
 
-  if (state.resolved !== undefined) {
-    return state.resolved;
-  }
-
-  const failedOutcomes = buildFailedOutcomes(input.precheck.pending);
-
-  return {
-    changedPaths: [],
-    costUsd: state.costUsd,
-    files: input.currentFiles,
-    outcomes: [...input.precheck.alreadyPassing, ...failedOutcomes],
-    requests: state.requests,
-  };
+  return buildRepairResult({ input, state });
 }
 
 /** Pre-check one group's witnesses and run bounded sandbox-verified repair attempts if needed. */

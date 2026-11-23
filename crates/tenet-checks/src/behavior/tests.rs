@@ -168,6 +168,7 @@ fn run_audit_fix_decodes_host_payload_and_prechecks_passing_witness() -> anyhow:
             guards: Vec::new(),
             name: "root".into(),
             related_files: Vec::new(),
+            test_files: Vec::new(),
             witnesses: vec![AuditFixWitness {
                 check: "already-green".into(),
                 contract: "already-green".into(),
@@ -191,5 +192,38 @@ fn run_audit_fix_decodes_host_payload_and_prechecks_passing_witness() -> anyhow:
         outcome.status == AuditFixStatus::AlreadyPassing && response.requests == 0,
         "expected already_passing with 0 requests, got {response:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn audit_fix_group_serializes_test_files_and_omits_when_empty() -> anyhow::Result<()> {
+    let empty_group = AuditFixGroup {
+        contracts: Vec::new(),
+        files: vec!["src/lib.rs".into()],
+        guards: Vec::new(),
+        name: "src".into(),
+        related_files: Vec::new(),
+        test_files: Vec::new(),
+        witnesses: Vec::new(),
+    };
+    let empty_value = serde_json::to_value(&empty_group)?;
+    anyhow::ensure!(
+        empty_value.get("testFiles").is_none(),
+        "expected empty test_files to be omitted, got {empty_value:?}"
+    );
+    let roundtrip_empty: AuditFixGroup = serde_json::from_value(empty_value)?;
+    anyhow::ensure!(roundtrip_empty.test_files.is_empty());
+
+    let populated_group = AuditFixGroup {
+        test_files: vec!["tests/lib_test.rs".into()],
+        ..empty_group
+    };
+    let populated_value = serde_json::to_value(&populated_group)?;
+    anyhow::ensure!(
+        populated_value.get("testFiles") == Some(&json!(["tests/lib_test.rs"])),
+        "expected camelCase testFiles field, got {populated_value:?}"
+    );
+    let roundtrip_populated: AuditFixGroup = serde_json::from_value(populated_value)?;
+    anyhow::ensure!(roundtrip_populated.test_files == vec!["tests/lib_test.rs"]);
     Ok(())
 }

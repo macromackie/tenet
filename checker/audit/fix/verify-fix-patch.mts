@@ -1,7 +1,12 @@
 import { replayTarget } from '../replay-target.mts';
 import type { AuditReplayResult, ReplayTarget } from '../replay-wire.mts';
 import { buildFixOutcome } from './build-fix-outcome.mts';
-import type { AuditFixGroup, AuditFixOutcome, AuditFixWitness } from './fix-wire.mts';
+import type {
+  AuditFixGroup,
+  AuditFixOutcome,
+  AuditFixOutcomeStatus,
+  AuditFixWitness,
+} from './fix-wire.mts';
 
 export type PendingWitness = Readonly<{
   initial: AuditReplayResult;
@@ -14,8 +19,19 @@ export type PrecheckResult = Readonly<{
 }>;
 
 type PatchVerification =
-  | Readonly<{ ok: true; outcomes: readonly AuditFixOutcome[] }>
-  | Readonly<{ error: string; ok: false }>;
+  | Readonly<{
+      fixedCount: number;
+      guardRegressions: number;
+      ok: true;
+      outcomes: readonly AuditFixOutcome[];
+    }>
+  | Readonly<{
+      error: string;
+      fixedCount: number;
+      guardRegressions: number;
+      ok: false;
+      outcomes: readonly AuditFixOutcome[];
+    }>;
 
 type ReplayBatchInput = Readonly<{
   files: ReadonlyMap<string, string>;
@@ -79,6 +95,28 @@ function collectDiagnosticLines({
   return lines;
 }
 
+function mapWitnessOutcomeStatus(result: AuditReplayResult): AuditFixOutcomeStatus {
+  if (result.outcome === 'passed') {
+    return 'fixed';
+  }
+
+  if (result.outcome === 'failed') {
+    return 'failed';
+  }
+
+  return 'unresolved';
+}
+
+function buildWitnessOutcomes(
+  witnessResults: readonly AuditReplayResult[],
+): readonly AuditFixOutcome[] {
+  return witnessResults.map((result) => {
+    const status = mapWitnessOutcomeStatus(result);
+
+    return buildFixOutcome({ result, status });
+  });
+}
+
 /** Replay all pending witnesses and guards against a patched in-memory file map inside the sandbox. */
 export async function verifyFixPatch({
   files,
@@ -91,12 +129,19 @@ export async function verifyFixPatch({
   const witnessResults = await replayTargets({ files, root, state, targets: witnessTargets });
   const guardResults = await replayTargets({ files, root, state, targets: group.guards });
   const diagnostics = collectDiagnosticLines({ guardResults, witnessResults });
+  const fixedCount = witnessResults.filter((item) => item.outcome === 'passed').length;
+  const guardRegressions = guardResults.filter((item) => item.outcome !== 'passed').length;
+  const outcomes = buildWitnessOutcomes(witnessResults);
 
   if (diagnostics.length > 0) {
-    return { error: diagnostics.join('\n'), ok: false };
+    return {
+      error: diagnostics.join('\n'),
+      fixedCount,
+      guardRegressions,
+      ok: false,
+      outcomes,
+    };
   }
 
-  const outcomes = witnessResults.map((result) => buildFixOutcome({ result, status: 'fixed' }));
-
-  return { ok: true, outcomes };
+  return { fixedCount, guardRegressions: 0, ok: true, outcomes };
 }

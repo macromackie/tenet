@@ -19,6 +19,7 @@ function collectReadOnlyDepPaths(deps: ProjectDeps): readonly string[] {
     deps.goVendor,
     deps.nodeModules,
     deps.pythonSitePackages,
+    deps.rustBuildOutDir,
     deps.rustDepsDir,
   ];
 

@@ -4583,7 +4583,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   let expiresAt = 0;
   let exit3;
   let current;
-  const join13 = (fiber3, run3) => {
+  const join14 = (fiber3, run3) => {
     run3.awaiters++;
     onExitUnsafe(fiber3, () => {
       if (--run3.awaiters > 0 || current !== run3) return;
@@ -4594,7 +4594,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
   };
   return [withFiber((fiber3) => {
     if (current !== void 0) {
-      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join13(fiber3, current);
+      return fiber3 === current.fiber ? fiberJoin(current.fiber) : join14(fiber3, current);
     }
     if (exit3 !== void 0 && (expiresAt === Infinity || fiber3.getRef(ClockRef).currentTimeMillisUnsafe() < expiresAt)) {
       return exit3;
@@ -4606,7 +4606,7 @@ var makeCachedUnsafe = (self, ttlMillis) => {
       awaiters: 0
     };
     current = run3;
-    const joined = join13(fiber3, run3);
+    const joined = join14(fiber3, run3);
     run3.fiber.evaluate(onExitPrimitive(self, (exit_) => {
       if (current !== run3) return;
       current = void 0;
@@ -5077,8 +5077,8 @@ var runPromiseExitWith = (context3) => {
   const runFork3 = runForkWith(context3);
   return (effect, options) => {
     const fiber3 = runFork3(effect, options);
-    return new Promise((resolve6) => {
-      fiber3.addObserver((exit3) => resolve6(exit3));
+    return new Promise((resolve7) => {
+      fiber3.addObserver((exit3) => resolve7(exit3));
     });
   };
 };
@@ -12973,10 +12973,10 @@ var InterpretedEntry = class {
 var CompilerEntry = class extends InterpretedEntry {
   compiled;
   resolve;
-  constructor(ast, compiled, resolve6) {
+  constructor(ast, compiled, resolve7) {
     super(ast);
     this.compiled = compiled;
-    this.resolve = resolve6;
+    this.resolve = resolve7;
   }
   save(key, value3) {
     Object.defineProperty(this, key, {
@@ -13025,8 +13025,8 @@ function withDecode(fastDecode, decodeEffect3) {
     return (detailed ??= decodeEffect3())(input, options);
   };
 }
-function lazyParser(resolve6, ast, operation) {
-  const entry = resolve6(ast);
+function lazyParser(resolve7, ast, operation) {
+  const entry = resolve7(ast);
   if (entry.compiled === void 0 || Object.hasOwn(entry, operation)) {
     return entry[operation];
   }
@@ -14975,9 +14975,9 @@ function toStandardSchemaV1(self, options) {
     if (exit3) {
       return makeStandardResult(exit3);
     }
-    return new Promise((resolve6) => {
+    return new Promise((resolve7) => {
       fiber3.addObserver((exit4) => {
-        resolve6(makeStandardResult(exit4));
+        resolve7(makeStandardResult(exit4));
       });
     });
   };
@@ -16593,10 +16593,10 @@ var labelPattern = /^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$/;
 var numericLabel = /^(?:\d+|0x[0-9a-f]*)$/;
 var validateDomainName = (name) => {
   if (name === ".") return void 0;
-  const relative3 = name.endsWith(".") ? name.slice(0, -1) : name;
-  if (relative3.length === 0) return "domain name must not be empty";
-  if (relative3.length > 253) return "domain name must be at most 253 characters";
-  const labels = relative3.split(".");
+  const relative4 = name.endsWith(".") ? name.slice(0, -1) : name;
+  if (relative4.length === 0) return "domain name must not be empty";
+  if (relative4.length > 253) return "domain name must be at most 253 characters";
+  const labels = relative4.split(".");
   for (const label of labels) {
     if (label.length === 0) return "domain name labels must not be empty";
     if (label.length > 63) return "domain name labels must be at most 63 characters";
@@ -21240,8 +21240,8 @@ function collectBlockMatches({
 }
 function computeAdjustedIndent({ findIndent, lineIndent, sourceIndent }) {
   if (lineIndent.startsWith(findIndent)) {
-    const relative3 = lineIndent.slice(findIndent.length);
-    return `${sourceIndent}${relative3}`;
+    const relative4 = lineIndent.slice(findIndent.length);
+    return `${sourceIndent}${relative4}`;
   }
   if (findIndent.startsWith(lineIndent)) {
     const dedent = findIndent.length - lineIndent.length;
@@ -22023,20 +22023,32 @@ import { dirname as dirname3 } from "node:path";
 
 // sandbox/runtimes/build-go-command.mts
 var GO_SCRIPT = 'go="$1"; out="$2"; probe="$3"; mode="$4"; "$go" build -mod="$mode" -o "$out" "./$probe" && exec "$out"';
+var GO_TEST_SCRIPT = 'go="$1"; pkg="$2"; mode="$3"; exec "$go" test -mod="$mode" -count=1 -run "^TestTenetObserve$" -v "$pkg"';
 function readGoModMode({ deps, files }) {
   if (deps.goVendor !== void 0 || [...files.keys()].some((path) => path.startsWith("vendor/"))) {
     return "vendor";
   }
   return "readonly";
 }
+function formatGoTestPackage(probeDir) {
+  if (probeDir === "." || probeDir.length === 0) {
+    return ".";
+  }
+  return `./${probeDir}`;
+}
 function buildGoCommand({
   binary,
   deps,
   files,
+  isTestProbe = false,
   output,
   probeDir
 }) {
   const mode = readGoModMode({ deps, files });
+  if (isTestProbe) {
+    const pkg = formatGoTestPackage(probeDir);
+    return ["/bin/sh", "-c", GO_TEST_SCRIPT, "tenet-go-test", binary, pkg, mode];
+  }
   return ["/bin/sh", "-c", GO_SCRIPT, "tenet-go", binary, output, probeDir, mode];
 }
 
@@ -22073,9 +22085,24 @@ var HOOK_LINES = [
   'const TS_SUFFIXES = [".ts", ".mts", ".cts", ".tsx"];',
   'const SUFFIXES = ["", ".ts", ".mts", ".cts", ".tsx", ".js", ".mjs", ".cjs", "/index.ts", "/index.mts", "/index.cts", "/index.tsx", "/index.js", "/index.mjs", "/index.cjs"];',
   String.raw`const JS_EXT_RE = /\.(?:m|c)?js$/;`,
+  String.raw`const SPEC_RE = /^(?:(type)\s+)?([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/;`,
+  String.raw`const LOCAL_TYPE_RE = /(?:^|\n)[ \t]*(?:export[ \t]+)?(?:declare[ \t]+)?(?:interface|type)[ \t]+([A-Za-z_$][\w$]*)/g;`,
+  String.raw`const LOCAL_VALUE_RE = /(?:^|\n)[ \t]*(?:export[ \t]+)?(?:declare[ \t]+)?(?:(?:async[ \t]+)?function\*?|(?:abstract[ \t]+)?class|(?:const[ \t]+)?enum|const|let|var|namespace)[ \t]+([A-Za-z_$][\w$]*)/g;`,
+  String.raw`const EXPORT_TYPE_DECL_RE = /(?:^|\n)[ \t]*export[ \t]+(?:declare[ \t]+)?(?:interface|type)[ \t]+([A-Za-z_$][\w$]*)/g;`,
+  String.raw`const EXPORT_VALUE_DECL_RE = /(?:^|\n)[ \t]*export[ \t]+(?:declare[ \t]+)?(?:(?:async[ \t]+)?function\*?|(?:abstract[ \t]+)?class|(?:const[ \t]+)?enum|const|let|var|namespace)[ \t]+([A-Za-z_$][\w$]*)/g;`,
+  String.raw`const EXPORT_DEFAULT_RE = /(?:^|\n)[ \t]*export[ \t]+default\b/;`,
+  String.raw`const EXPORT_NS_RE = /(?:^|\n)[ \t]*export[ \t]*\*[ \t]*as[ \t]+([A-Za-z_$][\w$]*)[ \t]+from[ \t]+["'][^"']+["']/g;`,
+  String.raw`const EXPORT_TYPE_LIST_RE = /(?:^|[;\n])[ \t]*export\s+type\s*\{([^}]*)\}/g;`,
+  String.raw`const EXPORT_REEXPORT_RE = /(?:^|[;\n])[ \t]*export\s*\{([^}]*)\}\s*from\s*(["'])([^"']+)\2/g;`,
+  String.raw`const EXPORT_LOCAL_RE = /(?:^|[;\n])[ \t]*export\s*\{([^}]*)\}(?!\s*from\b)/g;`,
+  String.raw`const EXPORT_STAR_RE = /(?:^|[;\n])[ \t]*export\s*\*\s*from\s*(["'])([^"']+)\1/g;`,
+  String.raw`const IMPORT_REWRITE_RE = /(^|[;\n])([ \t]*)import\s+(?:([A-Za-z_$][\w$]*)\s*,\s*)?\{([^}]*)\}\s*from\s*(["'])([^"']+)\5/g;`,
+  String.raw`const REEXPORT_REWRITE_RE = /(^|[;\n])([ \t]*)export\s*\{([^}]*)\}\s*from\s*(["'])([^"']+)\4/g;`,
+  String.raw`const LOCAL_EXPORT_REWRITE_RE = /(^|[;\n])([ \t]*)export\s*\{([^}]*)\}(?!\s*from\b)/g;`,
   'if (typeof mod.registerHooks === "function") {',
   "  const root = process.cwd();",
   "  const inside = (p) => p === root || p.startsWith(root + sep);",
+  "  const isTsPath = (p) => TS_SUFFIXES.some((s) => p.endsWith(s));",
   "  const pickFile = (base) => {",
   "    if (!inside(base)) return null;",
   "    for (const suffix of SUFFIXES) {",
@@ -22106,25 +22133,166 @@ var HOOK_LINES = [
   "      }",
   "    }",
   "  } catch {}",
+  "  const resolveLocal = (specifier, fromFile) => {",
+  '    if (specifier.startsWith("./") || specifier.startsWith("../")) {',
+  "      return pickFile(resolvePath(dirname(fromFile), specifier));",
+  "    }",
+  "    if (pkgName !== null && specifier === pkgName && pkgEntry !== null) return pkgEntry;",
+  '    if (pkgName !== null && specifier.startsWith(pkgName + "/")) {',
+  "      const sub = specifier.slice(pkgName.length + 1);",
+  '      return pickFile(resolvePath(root, "src", sub)) ?? pickFile(resolvePath(root, sub));',
+  "    }",
+  "    return null;",
+  "  };",
+  "  const parseSpecifiers = (block) => {",
+  String.raw`    const clean = block.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");`,
+  "    const items = [];",
+  '    for (const part of clean.split(",")) {',
+  "      const trimmed = part.trim();",
+  "      if (!trimmed) continue;",
+  "      const m = SPEC_RE.exec(trimmed);",
+  "      if (m) items.push({ raw: trimmed, isType: Boolean(m[1]), orig: m[2], alias: m[3] ?? m[2] });",
+  "      else items.push({ raw: trimmed, isType: false, orig: null, alias: null });",
+  "    }",
+  "    return items;",
+  "  };",
+  "  const collectLocalDecls = (src) => {",
+  "    const localTypes = new Set();",
+  "    const localValues = new Set();",
+  "    for (const m of src.matchAll(LOCAL_TYPE_RE)) localTypes.add(m[1]);",
+  "    for (const m of src.matchAll(LOCAL_VALUE_RE)) localValues.add(m[1]);",
+  "    return { localTypes, localValues };",
+  "  };",
+  "  const exportCache = new Map();",
+  "  const typeOnlyCache = new Map();",
+  "  const analyzeExports = (targetPath, depth, seen) => {",
+  "    if (exportCache.has(targetPath)) return exportCache.get(targetPath);",
+  "    const empty = { types: new Set(), values: new Set() };",
+  "    if (depth > 4 || seen.has(targetPath) || !inside(targetPath) || !isTsPath(targetPath)) return empty;",
+  "    let raw;",
+  '    try { raw = readFileSync(targetPath, "utf8"); } catch { return empty; }',
+  "    const nextSeen = new Set(seen);",
+  "    nextSeen.add(targetPath);",
+  "    const types = new Set();",
+  "    const values = new Set();",
+  "    const { localTypes, localValues } = collectLocalDecls(raw);",
+  "    for (const m of raw.matchAll(EXPORT_TYPE_DECL_RE)) types.add(m[1]);",
+  "    for (const m of raw.matchAll(EXPORT_VALUE_DECL_RE)) values.add(m[1]);",
+  '    if (EXPORT_DEFAULT_RE.test(raw)) values.add("default");',
+  "    for (const m of raw.matchAll(EXPORT_NS_RE)) values.add(m[1]);",
+  "    for (const m of raw.matchAll(EXPORT_TYPE_LIST_RE)) {",
+  "      for (const item of parseSpecifiers(m[1])) { if (item.alias) types.add(item.alias); }",
+  "    }",
+  "    for (const m of raw.matchAll(EXPORT_REEXPORT_RE)) {",
+  "      const sub = resolveLocal(m[3], targetPath);",
+  "      const subInfo = sub && isTsPath(sub) ? analyzeExports(sub, depth + 1, nextSeen) : null;",
+  "      for (const item of parseSpecifiers(m[1])) {",
+  "        if (!item.orig || !item.alias) continue;",
+  "        if (item.isType) types.add(item.alias);",
+  "        else if (subInfo && subInfo.types.has(item.orig) && !subInfo.values.has(item.orig)) types.add(item.alias);",
+  "        else values.add(item.alias);",
+  "      }",
+  "    }",
+  "    for (const m of raw.matchAll(EXPORT_LOCAL_RE)) {",
+  "      for (const item of parseSpecifiers(m[1])) {",
+  "        if (!item.orig || !item.alias) continue;",
+  "        if (item.isType || (localTypes.has(item.orig) && !localValues.has(item.orig))) types.add(item.alias);",
+  "        else values.add(item.alias);",
+  "      }",
+  "    }",
+  "    for (const m of raw.matchAll(EXPORT_STAR_RE)) {",
+  "      const sub = resolveLocal(m[2], targetPath);",
+  "      if (sub && isTsPath(sub)) {",
+  "        const subInfo = analyzeExports(sub, depth + 1, nextSeen);",
+  "        for (const t of subInfo.types) types.add(t);",
+  "        for (const v of subInfo.values) values.add(v);",
+  "      }",
+  "    }",
+  "    const result = { types, values };",
+  "    if (depth === 0) exportCache.set(targetPath, result);",
+  "    return result;",
+  "  };",
+  "  const getTypeOnlyExports = (targetPath) => {",
+  "    if (typeOnlyCache.has(targetPath)) return typeOnlyCache.get(targetPath);",
+  "    const { types, values } = analyzeExports(targetPath, 0, new Set());",
+  "    const only = new Set();",
+  "    for (const t of types) { if (!values.has(t)) only.add(t); }",
+  "    typeOnlyCache.set(targetPath, only);",
+  "    return only;",
+  "  };",
+  "  const rewriteTsSource = (stripped, raw, filePath) => {",
+  "    const { localTypes, localValues } = collectLocalDecls(raw);",
+  "    const droppedImports = new Set();",
+  "    let out = stripped.replace(IMPORT_REWRITE_RE, (full, lead, indent, defName, block, quote, spec) => {",
+  "      const target = resolveLocal(spec, filePath);",
+  "      if (!target || !isTsPath(target)) return full;",
+  "      const typeOnly = getTypeOnlyExports(target);",
+  "      if (typeOnly.size === 0) return full;",
+  "      const items = parseSpecifiers(block);",
+  "      const kept = [];",
+  "      for (const item of items) {",
+  "        if (item.orig && typeOnly.has(item.orig)) { if (item.alias) droppedImports.add(item.alias); }",
+  "        else kept.push(item);",
+  "      }",
+  "      if (kept.length === items.length) return full;",
+  "      if (kept.length === 0) {",
+  '        return defName ? lead + indent + "import " + defName + " from " + quote + spec + quote : lead + indent + "import " + quote + spec + quote;',
+  "      }",
+  '      const list = kept.map((i) => i.raw).join(", ");',
+  '      return defName ? lead + indent + "import " + defName + ", { " + list + " } from " + quote + spec + quote : lead + indent + "import { " + list + " } from " + quote + spec + quote;',
+  "    });",
+  "    out = out.replace(REEXPORT_REWRITE_RE, (full, lead, indent, block, quote, spec) => {",
+  "      const target = resolveLocal(spec, filePath);",
+  "      if (!target || !isTsPath(target)) return full;",
+  "      const typeOnly = getTypeOnlyExports(target);",
+  "      if (typeOnly.size === 0) return full;",
+  "      const items = parseSpecifiers(block);",
+  "      const kept = items.filter((item) => !item.orig || !typeOnly.has(item.orig));",
+  "      if (kept.length === items.length) return full;",
+  "      if (kept.length === 0) return lead + indent;",
+  '      return lead + indent + "export { " + kept.map((i) => i.raw).join(", ") + " } from " + quote + spec + quote;',
+  "    });",
+  "    out = out.replace(LOCAL_EXPORT_REWRITE_RE, (full, lead, indent, block) => {",
+  "      const items = parseSpecifiers(block);",
+  "      const kept = items.filter((item) => !item.orig || (!droppedImports.has(item.orig) && !(localTypes.has(item.orig) && !localValues.has(item.orig))));",
+  "      if (kept.length === items.length) return full;",
+  "      if (kept.length === 0) return lead + indent;",
+  '      return lead + indent + "export { " + kept.map((i) => i.raw).join(", ") + " }";',
+  "    });",
+  "    return out;",
+  "  };",
   "  mod.registerHooks({",
   "    resolve(specifier, context, nextResolve) {",
   "      try {",
   "        return nextResolve(specifier, context);",
   "      } catch (error) {",
   '        if ((specifier.startsWith("./") || specifier.startsWith("../")) && context.parentURL?.startsWith("file://")) {',
-  "          const found = pickFile(resolvePath(dirname(fileURLToPath(context.parentURL)), specifier));",
+  "          const found = resolveLocal(specifier, fileURLToPath(context.parentURL));",
   "          if (found) return { shortCircuit: true, url: pathToFileURL(found).href };",
   "        }",
-  "        if (pkgName !== null && specifier === pkgName && pkgEntry !== null) {",
-  "          return { shortCircuit: true, url: pathToFileURL(pkgEntry).href };",
-  "        }",
-  '        if (pkgName !== null && specifier.startsWith(pkgName + "/")) {',
-  "          const sub = specifier.slice(pkgName.length + 1);",
-  '          const found = pickFile(resolvePath(root, "src", sub)) ?? pickFile(resolvePath(root, sub));',
+  '        if (pkgName !== null && (specifier === pkgName || specifier.startsWith(pkgName + "/"))) {',
+  "          const found = resolveLocal(specifier, root);",
   "          if (found) return { shortCircuit: true, url: pathToFileURL(found).href };",
   "        }",
   "        throw error;",
   "      }",
+  "    },",
+  "    load(url, context, nextLoad) {",
+  '      if (!url.startsWith("file://") || typeof mod.stripTypeScriptTypes !== "function") {',
+  "        return nextLoad(url, context);",
+  "      }",
+  "      const filePath = fileURLToPath(url);",
+  "      if (!inside(filePath) || !isTsPath(filePath)) return nextLoad(url, context);",
+  "      let raw;",
+  "      let stripped;",
+  "      try {",
+  '        raw = readFileSync(filePath, "utf8");',
+  '        stripped = mod.stripTypeScriptTypes(raw, { mode: "strip" });',
+  "      } catch {",
+  "        return nextLoad(url, context);",
+  "      }",
+  "      const rewritten = rewriteTsSource(stripped, raw, filePath);",
+  '      return { format: "module", shortCircuit: true, source: rewritten };',
   "    },",
   "  });",
   "}"
@@ -22144,11 +22312,11 @@ var NODE_FLAGS = [
 function buildNodeCommand({
   binary,
   check: check2,
-  probeFile: probeFile2
+  probeFile
 }) {
   const hookFlags = buildNodeResolveHookFlags();
   if (check2.testFile === void 0) {
-    return [binary, ...NODE_FLAGS, ...hookFlags, `./${probeFile2}`];
+    return [binary, ...NODE_FLAGS, ...hookFlags, `./${probeFile}`];
   }
   return [
     binary,
@@ -22166,10 +22334,10 @@ import { basename as basename2, dirname } from "node:path";
 function buildPythonCommand({
   binary,
   check: check2,
-  probeFile: probeFile2
+  probeFile
 }) {
   if (check2.testFile === void 0) {
-    return [binary, "-B", `./${probeFile2}`];
+    return [binary, "-B", `./${probeFile}`];
   }
   const testDir = dirname(check2.testFile);
   const testPattern = basename2(check2.testFile);
@@ -22193,39 +22361,53 @@ function buildDepFlags({ deps, depsMount, linkerArg }) {
   ]);
   return [...flags, "-L", `dependency=${depsMount}`, ...externArgs];
 }
-function buildCfgFlags(features) {
+function buildFeatureCfgFlags(features) {
   return features.flatMap((feature) => ["--cfg", `feature="${feature}"`]);
+}
+function buildRustCfgFlags(cfgs) {
+  return cfgs.flatMap((cfg) => ["--cfg", cfg]);
 }
 function buildRustCommand({
   deps,
   depsMount,
   linkerArg,
-  probeFile: probeFile2,
+  probeFile,
   probeTmp,
   rustCrate,
   rustc
 }) {
   const depFlags = buildDepFlags({ deps, depsMount, linkerArg });
+  const buildCfgs = buildRustCfgFlags(deps.rustBuildCfgs);
   const output = `${probeTmp}/observe`;
   if (Option_exports.isNone(rustCrate)) {
-    return ["/bin/sh", "-c", SINGLE_FILE_SCRIPT, "tenet-rust", rustc, probeFile2, output, ...depFlags];
+    return [
+      "/bin/sh",
+      "-c",
+      SINGLE_FILE_SCRIPT,
+      "tenet-rust",
+      rustc,
+      probeFile,
+      output,
+      ...buildCfgs,
+      ...depFlags
+    ];
   }
   const { edition, features, name } = rustCrate.value;
   const libOutput = `${probeTmp}/lib${name}.rlib`;
-  const cfgFlags = buildCfgFlags(features);
+  const cfgFlags = buildFeatureCfgFlags(features);
   const head3 = [
     "/bin/sh",
     "-c",
     LIB_CRATE_SCRIPT,
     "tenet-rust",
     rustc,
-    probeFile2,
+    probeFile,
     output,
     libOutput,
     name,
     edition
   ];
-  return [...head3, ...cfgFlags, ...depFlags];
+  return [...head3, ...cfgFlags, ...buildCfgs, ...depFlags];
 }
 
 // sandbox/runtimes/python-paths.mts
@@ -22737,6 +22919,7 @@ var SYSTEM_PATH = "/usr/bin:/bin";
 var NODE = "/runtime/node";
 var GO_MOD_CACHE_MOUNT = "/deps/gomodcache";
 var GO_ROOT_MOUNT = "/goroot";
+var RUST_OUT_MOUNT = "/deps/rust-out";
 var DEFAULT_TMPFS_BYTES = "67108864";
 var COMPILED_TMPFS_BYTES = "268435456";
 var COMPILED_RUNTIMES = /* @__PURE__ */ new Set(["go", "rust"]);
@@ -22823,6 +23006,7 @@ function buildDepMounts(deps) {
     [deps.goVendor, "/project/vendor"],
     [deps.nodeModules, "/project/node_modules"],
     [deps.pythonSitePackages, "/deps/python"],
+    [deps.rustBuildOutDir, RUST_OUT_MOUNT],
     [deps.rustDepsDir, "/deps/rust"]
   ];
   const mounts = [];
@@ -22833,12 +23017,14 @@ function buildDepMounts(deps) {
   }
   return mounts;
 }
-function buildGoProgram({ deps, files, probeFile: probeFile2 }) {
-  const probeDir = dirname3(probeFile2);
+function buildGoProgram({ deps, files, probeFile }) {
+  const probeDir = dirname3(probeFile);
+  const isTestProbe = probeFile.endsWith("_test.go");
   return buildGoCommand({
     binary: `${GO_ROOT_MOUNT}/bin/go`,
     deps,
     files,
+    isTestProbe,
     output: "/tmp/observe",
     probeDir
   });
@@ -22847,18 +23033,18 @@ async function buildProgram({
   check: check2,
   deps,
   files,
-  probeFile: probeFile2,
+  probeFile,
   projectRoot
 }) {
   switch (check2.runtime) {
     case "go": {
-      return buildGoProgram({ check: check2, deps, files, probeFile: probeFile2, projectRoot });
+      return buildGoProgram({ check: check2, deps, files, probeFile, projectRoot });
     }
     case "node": {
-      return buildNodeCommand({ binary: NODE, check: check2, probeFile: probeFile2 });
+      return buildNodeCommand({ binary: NODE, check: check2, probeFile });
     }
     case "python": {
-      return buildPythonCommand({ binary: PYTHON, check: check2, probeFile: probeFile2 });
+      return buildPythonCommand({ binary: PYTHON, check: check2, probeFile });
     }
     case "rust": {
       const rustCrate = await readRustCrate({ deps, files, projectRoot });
@@ -22866,7 +23052,7 @@ async function buildProgram({
         deps,
         depsMount: "/deps/rust",
         linkerArg: "/usr/bin/gcc",
-        probeFile: probeFile2,
+        probeFile,
         probeTmp: "/tmp",
         rustCrate,
         rustc: "/toolchain/bin/rustc"
@@ -22880,26 +23066,32 @@ function buildGoEnvForLinux(deps) {
   }
   return buildGoEnv({ goModCache: GO_MOD_CACHE_MOUNT, goroot: GO_ROOT_MOUNT, probeTmp: "/tmp" });
 }
-function buildEnvFlags({ deps, files, runtime }) {
-  if (runtime === "go") {
-    const goEnv = buildGoEnvForLinux(deps);
-    const goFlags = Object.entries(goEnv).flatMap(([key, value3]) => ["--setenv", key, value3]);
-    return [...BASE_ENV_FLAGS, ...goFlags];
-  }
-  if (runtime !== "python") {
-    return BASE_ENV_FLAGS;
-  }
+function buildPythonEnvFlags({ deps, files }) {
   const basePath = readPythonPaths({ files, root: "/project" });
   if (deps.pythonSitePackages === void 0) {
     return [...BASE_ENV_FLAGS, "--setenv", "PYTHONPATH", basePath];
   }
   return [...BASE_ENV_FLAGS, "--setenv", "PYTHONPATH", `${basePath}:/deps/python`];
 }
+function buildEnvFlags({ deps, files, runtime }) {
+  if (runtime === "go") {
+    const goEnv = buildGoEnvForLinux(deps);
+    const goFlags = Object.entries(goEnv).flatMap(([key, value3]) => ["--setenv", key, value3]);
+    return [...BASE_ENV_FLAGS, ...goFlags];
+  }
+  if (runtime === "rust" && deps.rustBuildOutDir !== void 0) {
+    return [...BASE_ENV_FLAGS, "--setenv", "OUT_DIR", RUST_OUT_MOUNT];
+  }
+  if (runtime === "python") {
+    return buildPythonEnvFlags({ deps, files });
+  }
+  return BASE_ENV_FLAGS;
+}
 async function createLinuxSandbox({
   check: check2,
   deps,
   files,
-  probeFile: probeFile2,
+  probeFile,
   projectRoot,
   work
 }) {
@@ -22909,7 +23101,7 @@ async function createLinuxSandbox({
   const mounts = await buildRuntimeMount(check2.runtime);
   const depMounts = buildDepMounts(deps);
   const envFlags = buildEnvFlags({ deps, files, runtime: check2.runtime });
-  const program = await buildProgram({ check: check2, deps, files, probeFile: probeFile2, projectRoot });
+  const program = await buildProgram({ check: check2, deps, files, probeFile, projectRoot });
   const limits = buildLimits(check2.runtime);
   return {
     args: [
@@ -22948,6 +23140,7 @@ function collectReadOnlyDepPaths(deps) {
     deps.goVendor,
     deps.nodeModules,
     deps.pythonSitePackages,
+    deps.rustBuildOutDir,
     deps.rustDepsDir
   ];
   for (const entry of candidates) {
@@ -23008,22 +23201,28 @@ function readInstallRoot(binary) {
   const installRoot = dirname4(binDir);
   return assertBoundedRuntimeRoot(installRoot);
 }
-async function resolveNodeRuntime({ check: check2, probeFile: probeFile2 }) {
+async function resolveNodeRuntime({ check: check2, probeFile }) {
   const binary = await realpath3(process.execPath);
   const runtimeRoot = readInstallRoot(binary);
-  const command = buildNodeCommand({ binary, check: check2, probeFile: probeFile2 });
+  const command = buildNodeCommand({ binary, check: check2, probeFile });
   return { command, runtimeRoot };
 }
-async function resolvePythonRuntime({ check: check2, probeFile: probeFile2 }) {
+async function resolvePythonRuntime({ check: check2, probeFile }) {
   const binary = await readPythonTool();
   const runtimeRoot = readInstallRoot(binary);
-  const command = buildPythonCommand({ binary, check: check2, probeFile: probeFile2 });
+  const command = buildPythonCommand({ binary, check: check2, probeFile });
   return { command, runtimeRoot };
+}
+function buildRustExtraEnv(outDir) {
+  if (outDir === void 0) {
+    return {};
+  }
+  return { OUT_DIR: outDir };
 }
 async function resolveRustRuntime({
   deps,
   files,
-  probeFile: probeFile2,
+  probeFile,
   probeTmp,
   projectRoot
 }) {
@@ -23033,22 +23232,24 @@ async function resolveRustRuntime({
   const rustc = join2(runtimeRoot, "bin", "rustc");
   const rustCrate = await readRustCrate({ deps, files, projectRoot });
   const depsMount = deps.rustDepsDir ?? "";
-  const command = buildRustCommand({ deps, depsMount, probeFile: probeFile2, probeTmp, rustCrate, rustc });
-  return { command, runtimeRoot };
+  const command = buildRustCommand({ deps, depsMount, probeFile, probeTmp, rustCrate, rustc });
+  const extraEnv = buildRustExtraEnv(deps.rustBuildOutDir);
+  return { command, extraEnv, runtimeRoot };
 }
 async function resolveGoRuntime({
   deps,
   files,
-  probeFile: probeFile2,
+  probeFile,
   probeTmp
 }) {
   const rawGoroot = await readGoTool(["env", "GOROOT"]);
   const canonicalGoroot = await realpath3(rawGoroot);
   const runtimeRoot = assertBoundedRuntimeRoot(canonicalGoroot);
   const binary = join2(runtimeRoot, "bin", "go");
-  const probeDir = dirname4(probeFile2);
+  const probeDir = dirname4(probeFile);
   const output = join2(probeTmp, "observe");
-  const command = buildGoCommand({ binary, deps, files, output, probeDir });
+  const isTestProbe = probeFile.endsWith("_test.go");
+  const command = buildGoCommand({ binary, deps, files, isTestProbe, output, probeDir });
   const extraEnv = buildGoEnv({
     goModCache: deps.goModCache,
     goroot: runtimeRoot,
@@ -23110,7 +23311,7 @@ async function createMacosSandbox({
   check: check2,
   deps,
   files,
-  probeFile: probeFile2,
+  probeFile,
   probeTmp,
   projectRoot,
   work
@@ -23122,7 +23323,7 @@ async function createMacosSandbox({
     check: check2,
     deps,
     files,
-    probeFile: probeFile2,
+    probeFile,
     probeTmp: canonicalTmp,
     projectRoot
   });
@@ -23249,31 +23450,559 @@ async function assertSandboxAvailable() {
   });
 }
 
+// sandbox/resolve-probe-file.mts
+import { dirname as dirname5 } from "node:path";
+var GO_TEST_PROBE_MARKER = "func TestTenetObserve(";
+var GO_TEST_PROBE_FILE = "tenet_observe_test.go";
+var PROBE_FILES = {
+  go: ".tenet_observe/main.go",
+  node: ".tenet-observe.mjs",
+  python: ".tenet-observe.py",
+  rust: ".tenet-observe.rs"
+};
+function readGoSubjectDir(subject) {
+  if (subject.length === 0) {
+    return ".";
+  }
+  return dirname5(subject).replaceAll("\\", "/");
+}
+function resolveGoProbeEntry(check2) {
+  if (!(check2.test?.includes(GO_TEST_PROBE_MARKER) ?? false)) {
+    return PROBE_FILES.go;
+  }
+  const normalized = readGoSubjectDir(check2.subject);
+  if (normalized === "." || normalized.length === 0) {
+    return GO_TEST_PROBE_FILE;
+  }
+  if (normalized.startsWith("/") || normalized.split("/").includes("..")) {
+    throw new CheckerError({ message: "go test probe subject falls outside the checkout" });
+  }
+  return `${normalized}/${GO_TEST_PROBE_FILE}`;
+}
+function resolveProbeFile(check2) {
+  if (check2.runtime === "go") {
+    return resolveGoProbeEntry(check2);
+  }
+  return PROBE_FILES[check2.runtime];
+}
+
 // sandbox/runner.mts
-import { mkdir as mkdir2, mkdtemp, rm, writeFile as writeFile2 } from "node:fs/promises";
+import { mkdir as mkdir3, mkdtemp, rm as rm3, writeFile as writeFile2 } from "node:fs/promises";
 import { tmpdir as tmpdir4 } from "node:os";
-import { dirname as dirname6, join as join6, resolve as resolve3, sep as sep2 } from "node:path";
+import { dirname as dirname10, join as join10, resolve as resolve6, sep as sep6 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 // sandbox/runner-sandbox.mts
-import { mkdir, symlink, writeFile } from "node:fs/promises";
-import { dirname as dirname5, join as join5 } from "node:path";
+import { mkdir as mkdir2, symlink, writeFile } from "node:fs/promises";
+import { dirname as dirname9, join as join9, resolve as resolve5, sep as sep5 } from "node:path";
 
 // sandbox/project-deps.mts
-import { access as access5, readdir as readdir2, readFile as readFile3, realpath as realpath4, stat as stat2 } from "node:fs/promises";
+import { access as access5, readdir as readdir3, readFile as readFile4, realpath as realpath9, stat as stat3 } from "node:fs/promises";
 import { homedir as homedir2 } from "node:os";
-import { delimiter, join as join4, sep } from "node:path";
+import { delimiter, join as join8, sep as sep4 } from "node:path";
 import { env as hostEnvironment4 } from "node:process";
 
+// sandbox/rust-build.mts
+import { readdir, readFile as readFile2, realpath as realpath8, stat } from "node:fs/promises";
+import { join as join6, relative as relative2, sep as sep3 } from "node:path";
+
+// storage/hash-source.mts
+import { createHash } from "node:crypto";
+function hashSource(data) {
+  const sha = createHash("sha256");
+  sha.update(data);
+  return sha.digest("hex");
+}
+
+// storage/read-regular.mts
+import { constants } from "node:fs";
+import { lstat, open, realpath as realpath5 } from "node:fs/promises";
+
+// storage/resolve-inside.mts
+import { isAbsolute, join as join3, resolve as resolve3, sep } from "node:path";
+function resolveInside({ root, path }) {
+  const target = resolve3(root, path);
+  const prefix = join3(root, sep);
+  const components = path.split(sep);
+  if (isAbsolute(path) || components.includes("..") || !target.startsWith(prefix)) {
+    throw new CheckerError({ message: "input falls outside the checkout." });
+  }
+  return target;
+}
+
+// storage/resolve-root.mts
+import { realpath as realpath4 } from "node:fs/promises";
+import { basename as basename3, dirname as dirname6, join as join4, resolve as resolve4 } from "node:path";
+function readErrorCode(value3) {
+  if (value3 instanceof Error && "code" in value3 && typeof value3.code === "string") {
+    return value3.code;
+  }
+  return "";
+}
+async function readRealPath(path) {
+  async function run3() {
+    return await realpath4(path);
+  }
+  const inspect = tryOperation({ message: "resolve canonical root path", run: run3 });
+  return await inspect.pipe(Effect_exports.result, Effect_exports.runPromise);
+}
+async function resolveRoot(path) {
+  const absolute = resolve4(path);
+  const resolved = await readRealPath(absolute);
+  if (Result_exports.isSuccess(resolved)) {
+    return resolved.success;
+  }
+  const parent = dirname6(absolute);
+  if (readErrorCode(resolved.failure.cause) !== "ENOENT" || parent === absolute) {
+    throw resolved.failure;
+  }
+  const trusted = await resolveRoot(parent);
+  const child = basename3(absolute);
+  return join4(trusted, child);
+}
+
+// storage/read-regular.mts
+var OPEN_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW;
+function readBufferCapacity({ limit, truncate }) {
+  if (truncate) {
+    return limit;
+  }
+  return limit + 1;
+}
+function sliceBeforeLastNewline(text2) {
+  const lastNewline = text2.lastIndexOf("\n");
+  if (lastNewline > 0) {
+    return text2.slice(0, lastNewline);
+  }
+  return text2;
+}
+function trimTruncatedPrefix({ text: text2, totalBytes }) {
+  const sliced = sliceBeforeLastNewline(text2);
+  const shownBytes = Buffer.byteLength(sliced);
+  const shown = String(shownBytes);
+  const total = String(totalBytes);
+  return `${sliced}
+[truncated: showing first ${shown} of ${total} bytes]
+`;
+}
+function isUnavailableFile({
+  file,
+  limit,
+  prior,
+  realPath,
+  truncate
+}) {
+  if (!prior.isFile() || realPath !== file) {
+    return true;
+  }
+  return !truncate && prior.size > limit;
+}
+function decodeText({
+  buffer,
+  limit,
+  preserveBom = false,
+  totalBytes,
+  truncate,
+  used
+}) {
+  const data = buffer.subarray(0, used);
+  if (!truncate && used > limit || data.includes(0)) {
+    throw new CheckerError({ message: "incomplete text input." });
+  }
+  const decoder4 = new TextDecoder("utf-8", { fatal: !truncate, ignoreBOM: preserveBom });
+  const text2 = decoder4.decode(data);
+  if (truncate && totalBytes > used) {
+    return trimTruncatedPrefix({ text: text2, totalBytes });
+  }
+  return text2;
+}
+async function readText2({
+  handle,
+  limit,
+  preserveBom,
+  totalBytes,
+  truncate
+}) {
+  const capacity = readBufferCapacity({ limit, truncate });
+  const buffer = Buffer.alloc(capacity);
+  let used = 0;
+  while (used < buffer.length) {
+    const result3 = await handle.read(buffer, used, buffer.length - used);
+    if (result3.bytesRead === 0) {
+      break;
+    }
+    used += result3.bytesRead;
+  }
+  return decodeText({ buffer, limit, preserveBom, totalBytes, truncate, used });
+}
+async function readOpened(input) {
+  const { handle, prior, file } = input;
+  const stat5 = await handle.stat();
+  if (stat5.dev !== prior.dev || stat5.ino !== prior.ino || await realpath5(file) !== file) {
+    throw new CheckerError({ message: "input changed while opening it." });
+  }
+  return await readText2(input);
+}
+async function resolveCheckedFile({
+  limit,
+  path,
+  root: rawRoot,
+  truncate
+}) {
+  const root = await resolveRoot(rawRoot);
+  const file = resolveInside({ path, root });
+  const prior = await lstat(file);
+  const realPath = await realpath5(file);
+  if (isUnavailableFile({ file, limit, prior, realPath, truncate })) {
+    throw new CheckerError({ message: "input unavailable." });
+  }
+  return { file, prior };
+}
+async function readRegular({
+  limit,
+  path,
+  preserveBom,
+  root,
+  truncate = false
+}) {
+  const { file, prior } = await resolveCheckedFile({ limit, path, root, truncate });
+  const handle = await open(file, OPEN_FLAGS);
+  try {
+    return await readOpened({
+      file,
+      handle,
+      limit,
+      preserveBom,
+      prior,
+      totalBytes: prior.size,
+      truncate
+    });
+  } finally {
+    await handle.close();
+  }
+}
+
+// storage/read-record.mts
+var RECORD_LIMIT = 4194304;
+function parseRecord(text2) {
+  const contents = text2.replace(new RegExp("^\\uFEFF", "v"), "");
+  const json = JSON.parse(contents);
+  return { json, text: text2 };
+}
+async function readRecord(location) {
+  async function run3() {
+    return await readRegular({ ...location, limit: RECORD_LIMIT, preserveBom: true });
+  }
+  const status = await classifyResult({ message: "could not read checker state", run: run3 });
+  if (Result_exports.isSuccess(status)) {
+    const record2 = parseRecord(status.success);
+    return Option_exports.some(record2);
+  }
+  const { cause } = status.failure;
+  if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
+    return Option_exports.none();
+  }
+  throw status.failure;
+}
+
+// storage/read-existing.mts
+async function readExisting(location) {
+  const contents = await readRecord(location);
+  if (Option_exports.isSome(contents)) {
+    return contents.value.json;
+  }
+}
+
+// storage/replace-pin.mts
+import { open as open3, realpath as realpath7, rm as rm2 } from "node:fs/promises";
+import { dirname as dirname8 } from "node:path";
+
+// storage/write-atomic.mts
+import { randomUUID } from "node:crypto";
+import { link as link2, mkdir, open as open2, realpath as realpath6, rename, rm } from "node:fs/promises";
+import { dirname as dirname7, join as join5, relative, sep as sep2 } from "node:path";
+var PRIVATE_FILE = 384;
+var PRIVATE_DIR = 448;
+async function ensureSegment(path) {
+  await mkdir(path, { mode: PRIVATE_DIR, recursive: true });
+  if (await realpath6(path) !== path) {
+    throw new CheckerError({ message: "output directory is a symbolic link." });
+  }
+}
+async function ensureDirectory({ directory, root }) {
+  await ensureSegment(root);
+  const nested = relative(root, directory);
+  if (nested.length === 0) {
+    return;
+  }
+  let current = root;
+  for (const part of nested.split(sep2)) {
+    current = join5(current, part);
+    await ensureSegment(current);
+  }
+}
+async function installRecord({ first, target, temp }) {
+  if (first) {
+    await link2(temp, target);
+    return;
+  }
+  await rename(temp, target);
+}
+async function storeRecord({ handle, record: record2 }) {
+  try {
+    const content = JSON.stringify(record2);
+    await handle.writeFile(`${content}
+`);
+  } finally {
+    await handle.close();
+  }
+}
+async function writeTempRecord({ first, parent, target, value: value3 }) {
+  const nonce = randomUUID();
+  const temp = join5(parent, `.tenet-${nonce}.tmp`);
+  const handle = await open2(temp, "wx", PRIVATE_FILE);
+  try {
+    await storeRecord({ handle, record: value3 });
+    await installRecord({ first, target, temp });
+  } finally {
+    await rm(temp, { force: true });
+  }
+}
+async function writeAtomic(input) {
+  const root = await resolveRoot(input.root);
+  const target = resolveInside({ path: input.path, root });
+  const parent = dirname7(target);
+  await ensureDirectory({ directory: parent, root });
+  await writeTempRecord({ first: input.first === true, parent, target, value: input.value });
+}
+
+// storage/replace-pin.mts
+var PRIVATE_FILE2 = 384;
+async function resolvePinLock(input) {
+  const root = await resolveRoot(input.root);
+  const lock = resolveInside({ path: `${input.path}.lock`, root });
+  const parent = dirname8(lock);
+  if (await realpath7(parent) !== parent) {
+    throw new CheckerError({ message: "output directory is a symbolic link." });
+  }
+  return lock;
+}
+async function replacePin(input) {
+  const lock = await resolvePinLock(input);
+  const claim = await open3(lock, "wx", PRIVATE_FILE2);
+  try {
+    const actual = await readRecord(input);
+    if (Option_exports.isNone(actual) || Option_exports.isNone(input.prior) || actual.value.text !== input.prior.value.text) {
+      throw new CheckerError({ message: "the pin changed during qualification. Rerun the check." });
+    }
+    await writeAtomic(input);
+  } finally {
+    await claim.close();
+    await rm2(lock, { force: true });
+  }
+}
+
+// sandbox/rust-build.mts
+var MAX_BUILD_CFGS = 64;
+var MAX_OUTPUT_BYTES = 262144;
+var BUILD_DIR_PATTERN = new RegExp("^(?<pkg>.+)-[0-9a-f]{16}$", "v");
+var RUSTC_CFG_LINE = new RegExp("^cargo::?rustc-cfg=(?<cfg>.+)$", "v");
+var SAFE_CFG_PATTERN = new RegExp('^[A-Za-z0-9_]+(?:="[^"\\n\\r\\\\]*")?$', "v");
+var SECTION_HEADER_PATTERN = new RegExp("^\\s*\\[(?<name>[^\\]]+)\\]\\s*$", "v");
+var PACKAGE_NAME_PATTERN = new RegExp('^\\s*name\\s*=\\s*"(?<name>[^"]+)"', "v");
+var EMPTY_BUILD_ARTIFACTS = { rustBuildCfgs: [] };
+function readPackageNameLine(line) {
+  const match7 = PACKAGE_NAME_PATTERN.exec(line);
+  const name = match7?.groups?.["name"];
+  if (name === void 0 || name.length === 0) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(name);
+}
+function readSectionName(line) {
+  const header = SECTION_HEADER_PATTERN.exec(line);
+  const name = header?.groups?.["name"]?.trim();
+  return Option_exports.fromNullishOr(name);
+}
+function advancePackageScan({ rawLine, state }) {
+  if (Option_exports.isSome(state.name)) {
+    return state;
+  }
+  const line = rawLine.split("#")[0] ?? "";
+  const section = readSectionName(line);
+  if (Option_exports.isSome(section)) {
+    return { inPackage: section.value === "package", name: Option_exports.none() };
+  }
+  if (!state.inPackage) {
+    return state;
+  }
+  return { inPackage: true, name: readPackageNameLine(line) };
+}
+function extractRawPackageName(manifest) {
+  let state = { inPackage: false, name: Option_exports.none() };
+  for (const rawLine of manifest.split("\n")) {
+    state = advancePackageScan({ rawLine, state });
+  }
+  return state.name;
+}
+function buildPackageNameVariants(rawName) {
+  const underscored = rawName.replaceAll("-", "_");
+  const hyphenated = rawName.replaceAll("_", "-");
+  return /* @__PURE__ */ new Set([rawName, underscored, hyphenated]);
+}
+async function readPackageNameVariants(projectRoot) {
+  const manifestPath = join6(projectRoot, "Cargo.toml");
+  const manifest = await runOptional(async () => await readFile2(manifestPath, "utf-8"));
+  if (Option_exports.isNone(manifest)) {
+    return /* @__PURE__ */ new Set();
+  }
+  const rawName = extractRawPackageName(manifest.value);
+  if (Option_exports.isNone(rawName)) {
+    return /* @__PURE__ */ new Set();
+  }
+  return buildPackageNameVariants(rawName.value);
+}
+async function hasRegularFile(path) {
+  const info = await runOptional(async () => await stat(path));
+  return Option_exports.isSome(info) && info.value.isFile();
+}
+async function hasDirectory(path) {
+  const info = await runOptional(async () => await stat(path));
+  return Option_exports.isSome(info) && info.value.isDirectory();
+}
+async function readCandidateDirectory(dirPath) {
+  const dirStat = await runOptional(async () => await stat(dirPath));
+  if (Option_exports.isNone(dirStat) || !dirStat.value.isDirectory()) {
+    return Option_exports.none();
+  }
+  const outputPath = join6(dirPath, "output");
+  const outPath = join6(dirPath, "out");
+  const hasOutputFile = await hasRegularFile(outputPath);
+  const hasOutDir = await hasDirectory(outPath);
+  if (!hasOutputFile && !hasOutDir) {
+    return Option_exports.none();
+  }
+  return Option_exports.some({ dirPath, hasOutDir, hasOutputFile, mtimeMs: dirStat.value.mtimeMs });
+}
+async function inspectBuildCandidate({
+  buildRoot,
+  entry,
+  packageNames
+}) {
+  const match7 = BUILD_DIR_PATTERN.exec(entry);
+  const pkg = match7?.groups?.["pkg"];
+  if (pkg === void 0 || !packageNames.has(pkg)) {
+    return Option_exports.none();
+  }
+  const dirPath = join6(buildRoot, entry);
+  return await readCandidateDirectory(dirPath);
+}
+async function selectNewestBuildDir({
+  canonicalRoot,
+  packageNames
+}) {
+  const buildRoot = join6(canonicalRoot, "target", "debug", "build");
+  const listed = await runOptional(async () => await readdir(buildRoot));
+  if (Option_exports.isNone(listed)) {
+    return Option_exports.none();
+  }
+  let newest = Option_exports.none();
+  for (const entry of listed.value.toSorted()) {
+    const candidate = await inspectBuildCandidate({ buildRoot, entry, packageNames });
+    if (Option_exports.isSome(candidate) && (Option_exports.isNone(newest) || candidate.value.mtimeMs > newest.value.mtimeMs)) {
+      newest = candidate;
+    }
+  }
+  return newest;
+}
+function parseSafeRustCfgs(outputText) {
+  const foundCfgs = /* @__PURE__ */ new Set();
+  for (const rawLine of outputText.split("\n")) {
+    const trimmed = rawLine.trim();
+    const match7 = RUSTC_CFG_LINE.exec(trimmed);
+    const cfg = match7?.groups?.["cfg"]?.trim();
+    if (cfg !== void 0 && SAFE_CFG_PATTERN.test(cfg)) {
+      foundCfgs.add(cfg);
+    }
+  }
+  return [...foundCfgs].toSorted().slice(0, MAX_BUILD_CFGS);
+}
+async function readBuildCfgs({ canonicalRoot, dirPath }) {
+  const outputPath = join6(dirPath, "output");
+  const relativePath = relative2(canonicalRoot, outputPath);
+  const text2 = await runOptional(
+    async () => await readRegular({ limit: MAX_OUTPUT_BYTES, path: relativePath, root: canonicalRoot, truncate: true })
+  );
+  if (Option_exports.isNone(text2)) {
+    return [];
+  }
+  return parseSafeRustCfgs(text2.value);
+}
+async function resolveSafeOutDir({
+  canonicalRoot,
+  dirPath
+}) {
+  const outPath = join6(dirPath, "out");
+  const canonicalOut = await runOptional(async () => await realpath8(outPath));
+  if (Option_exports.isNone(canonicalOut)) {
+    return Option_exports.none();
+  }
+  const prefix = `${canonicalRoot}${sep3}`;
+  if (!canonicalOut.value.startsWith(prefix) || !await hasDirectory(canonicalOut.value)) {
+    return Option_exports.none();
+  }
+  return canonicalOut;
+}
+async function readOptionalCfgs({
+  candidate,
+  canonicalRoot
+}) {
+  if (!candidate.hasOutputFile) {
+    return [];
+  }
+  return await readBuildCfgs({ canonicalRoot, dirPath: candidate.dirPath });
+}
+async function readOptionalOutDir({
+  candidate,
+  canonicalRoot
+}) {
+  if (!candidate.hasOutDir) {
+    return Option_exports.none();
+  }
+  return await resolveSafeOutDir({ canonicalRoot, dirPath: candidate.dirPath });
+}
+async function readBuildDirArtifacts(input) {
+  const rustBuildCfgs = await readOptionalCfgs(input);
+  const outDir = await readOptionalOutDir(input);
+  return { rustBuildCfgs, rustBuildOutDir: Option_exports.getOrUndefined(outDir) };
+}
+async function collectRustBuildArtifacts({
+  projectRoot
+}) {
+  const canonicalRoot = await runOptional(async () => await realpath8(projectRoot));
+  if (Option_exports.isNone(canonicalRoot)) {
+    return EMPTY_BUILD_ARTIFACTS;
+  }
+  const packageNames = await readPackageNameVariants(canonicalRoot.value);
+  if (packageNames.size === 0) {
+    return EMPTY_BUILD_ARTIFACTS;
+  }
+  const newest = await selectNewestBuildDir({ canonicalRoot: canonicalRoot.value, packageNames });
+  if (Option_exports.isNone(newest)) {
+    return EMPTY_BUILD_ARTIFACTS;
+  }
+  return await readBuildDirArtifacts({ candidate: newest.value, canonicalRoot: canonicalRoot.value });
+}
+
 // sandbox/rust-deps.mts
-import { readdir, readFile as readFile2, stat } from "node:fs/promises";
-import { join as join3 } from "node:path";
+import { readdir as readdir2, readFile as readFile3, stat as stat2 } from "node:fs/promises";
+import { join as join7 } from "node:path";
 var MAX_RUST_EXTERNS = 64;
 var RUST_CRATE_PATTERN = new RegExp("^lib(?<name>[A-Za-z0-9_]+)-[0-9a-f]{16}\\.(?<ext>rlib|dylib|so)$", "v");
 var CARGO_NAME_PATTERN = new RegExp('^\\s*name\\s*=\\s*"(?<name>[^"]+)"', "mv");
 async function readCargoPackageName(projectRoot) {
-  const manifestPath = join3(projectRoot, "Cargo.toml");
-  const manifest = await runOptional(async () => await readFile2(manifestPath, "utf-8"));
+  const manifestPath = join7(projectRoot, "Cargo.toml");
+  const manifest = await runOptional(async () => await readFile3(manifestPath, "utf-8"));
   if (Option_exports.isNone(manifest)) {
     return Option_exports.none();
   }
@@ -23286,7 +24015,7 @@ async function readCargoPackageName(projectRoot) {
   return Option_exports.some(normalized);
 }
 async function readRustFileMtime(fullPath) {
-  const info = await runOptional(async () => await stat(fullPath));
+  const info = await runOptional(async () => await stat2(fullPath));
   if (Option_exports.isNone(info) || !info.value.isFile()) {
     return Option_exports.none();
   }
@@ -23303,7 +24032,7 @@ async function readRustArtifact({
   if (name === void 0 || name === selfName) {
     return Option_exports.none();
   }
-  const artifactPath = join3(depsDir, entry);
+  const artifactPath = join7(depsDir, entry);
   const mtimeMs = await readRustFileMtime(artifactPath);
   if (Option_exports.isNone(mtimeMs)) {
     return Option_exports.none();
@@ -23349,7 +24078,7 @@ async function collectRustExterns({
   depsDir,
   projectRoot
 }) {
-  const listed = await runOptional(async () => await readdir(depsDir));
+  const listed = await runOptional(async () => await readdir2(depsDir));
   if (Option_exports.isNone(listed)) {
     return [];
   }
@@ -23361,7 +24090,7 @@ async function collectRustExterns({
 }
 
 // sandbox/project-deps.mts
-var EMPTY_DEPS = { rustExterns: [] };
+var EMPTY_DEPS = { rustBuildCfgs: [], rustExterns: [] };
 function isBoundedDepPath(candidate) {
   const userHome = homedir2();
   const forbiddenPaths = ["/", "/Users", "/private", "/var", userHome];
@@ -23370,8 +24099,8 @@ function isBoundedDepPath(candidate) {
 }
 async function readCanonicalDirectory(candidate) {
   await access5(candidate);
-  const canonical = await realpath4(candidate);
-  const info = await stat2(canonical);
+  const canonical = await realpath9(candidate);
+  const info = await stat3(canonical);
   if (!info.isDirectory() || !isBoundedDepPath(canonical)) {
     throw new CheckerError({ message: "dependency path is not a bounded directory" });
   }
@@ -23381,21 +24110,21 @@ async function resolveDirectory(candidate) {
   return await runOptional(async () => await readCanonicalDirectory(candidate));
 }
 async function resolveNodeDeps(projectRoot) {
-  const candidate = join4(projectRoot, "node_modules");
+  const candidate = join8(projectRoot, "node_modules");
   const nodeModules = await resolveDirectory(candidate);
   if (Option_exports.isNone(nodeModules)) {
     return EMPTY_DEPS;
   }
-  return { nodeModules: nodeModules.value, rustExterns: [] };
+  return { nodeModules: nodeModules.value, rustBuildCfgs: [], rustExterns: [] };
 }
 async function findSitePackagesInLib(libDir) {
-  const listed = await runOptional(async () => await readdir2(libDir));
+  const listed = await runOptional(async () => await readdir3(libDir));
   if (Option_exports.isNone(listed)) {
     return Option_exports.none();
   }
   const pythonDirs = listed.value.filter((entry) => entry.startsWith("python")).toSorted();
   for (const entry of pythonDirs) {
-    const candidate = join4(libDir, entry, "site-packages");
+    const candidate = join8(libDir, entry, "site-packages");
     const sitePackages = await resolveDirectory(candidate);
     if (Option_exports.isSome(sitePackages)) {
       return sitePackages;
@@ -23404,57 +24133,58 @@ async function findSitePackagesInLib(libDir) {
   return Option_exports.none();
 }
 async function resolvePythonSitePackages(venvDir) {
-  const libCandidate = join4(venvDir, "lib");
+  const libCandidate = join8(venvDir, "lib");
   const libDir = await resolveDirectory(libCandidate);
   if (Option_exports.isSome(libDir)) {
     return await findSitePackagesInLib(libDir.value);
   }
-  const winCandidate = join4(venvDir, "Lib", "site-packages");
+  const winCandidate = join8(venvDir, "Lib", "site-packages");
   return await resolveDirectory(winCandidate);
 }
 async function resolvePythonDeps(projectRoot) {
-  const venvDir = join4(projectRoot, ".venv");
+  const venvDir = join8(projectRoot, ".venv");
   const pythonSitePackages = await resolvePythonSitePackages(venvDir);
   if (Option_exports.isNone(pythonSitePackages)) {
     return EMPTY_DEPS;
   }
-  return { pythonSitePackages: pythonSitePackages.value, rustExterns: [] };
+  return { pythonSitePackages: pythonSitePackages.value, rustBuildCfgs: [], rustExterns: [] };
 }
 async function resolveRustDeps(projectRoot) {
-  const candidate = join4(projectRoot, "target", "debug", "deps");
+  const candidate = join8(projectRoot, "target", "debug", "deps");
   const rustDepsDir = await resolveDirectory(candidate);
+  const build = await collectRustBuildArtifacts({ projectRoot });
   if (Option_exports.isNone(rustDepsDir)) {
-    return EMPTY_DEPS;
+    return { ...build, rustExterns: [] };
   }
   const rustExterns = await collectRustExterns({ depsDir: rustDepsDir.value, projectRoot });
-  return { rustDepsDir: rustDepsDir.value, rustExterns };
+  return { ...build, rustDepsDir: rustDepsDir.value, rustExterns };
 }
 async function readProjectFile({
   name,
   projectRoot
 }) {
-  const candidate = join4(projectRoot, name);
-  return await runOptional(async () => await readFile3(candidate, "utf-8"));
+  const candidate = join8(projectRoot, name);
+  return await runOptional(async () => await readFile4(candidate, "utf-8"));
 }
 function readGoPathModCache() {
   const goPath = hostEnvironment4.GOPATH?.split(delimiter)[0]?.trim() ?? "";
   if (goPath.length === 0) {
     return "";
   }
-  return join4(goPath, "pkg", "mod");
+  return join8(goPath, "pkg", "mod");
 }
 function readGoModCacheCandidates() {
   const userHome = homedir2();
   const configured = hostEnvironment4.GOMODCACHE?.trim() ?? "";
   const goPathCache = readGoPathModCache();
-  const defaultCache = join4(userHome, "go", "pkg", "mod");
+  const defaultCache = join8(userHome, "go", "pkg", "mod");
   return [configured, goPathCache, defaultCache].filter((entry) => entry.length > 0);
 }
 async function resolveGoModCache(projectRoot) {
   for (const candidate of readGoModCacheCandidates()) {
     const canonical = await resolveDirectory(candidate);
     if (Option_exports.isSome(canonical)) {
-      const prefix = `${canonical.value}${sep}`;
+      const prefix = `${canonical.value}${sep4}`;
       if (canonical.value !== projectRoot && !projectRoot.startsWith(prefix)) {
         return canonical;
       }
@@ -23463,7 +24193,7 @@ async function resolveGoModCache(projectRoot) {
   return Option_exports.none();
 }
 async function resolveGoDeps(projectRoot) {
-  const vendorCandidate = join4(projectRoot, "vendor");
+  const vendorCandidate = join8(projectRoot, "vendor");
   const vendorOption = await resolveDirectory(vendorCandidate);
   const modOption = await readProjectFile({ name: "go.mod", projectRoot });
   const sumOption = await readProjectFile({ name: "go.sum", projectRoot });
@@ -23473,6 +24203,7 @@ async function resolveGoDeps(projectRoot) {
     goModCache: Option_exports.getOrUndefined(cacheOption),
     goSum: Option_exports.getOrUndefined(sumOption),
     goVendor: Option_exports.getOrUndefined(vendorOption),
+    rustBuildCfgs: [],
     rustExterns: []
   };
 }
@@ -23499,7 +24230,7 @@ function readSafeWithinRoot({ candidate, root }) {
   if (candidate === void 0) {
     return Option_exports.none();
   }
-  const prefix = `${root}${sep}`;
+  const prefix = `${root}${sep4}`;
   if (!candidate.startsWith(prefix)) {
     return Option_exports.none();
   }
@@ -23511,25 +24242,27 @@ function selectSafeRustExterns({ deps, rustDepsDir }) {
   }
   return deps.rustExterns;
 }
-function filterInsideRoot({ deps, projectRoot }) {
-  const safeGo = readSafeWithinRoot({ candidate: deps.goVendor, root: projectRoot });
-  const goVendor = Option_exports.getOrUndefined(safeGo);
-  const safeNode = readSafeWithinRoot({ candidate: deps.nodeModules, root: projectRoot });
-  const nodeModules = Option_exports.getOrUndefined(safeNode);
-  const safePython = readSafeWithinRoot({ candidate: deps.pythonSitePackages, root: projectRoot });
-  const pythonSitePackages = Option_exports.getOrUndefined(safePython);
-  const safeRust = readSafeWithinRoot({ candidate: deps.rustDepsDir, root: projectRoot });
+function filterRustDeps({ deps, root }) {
+  const safeRust = readSafeWithinRoot({ candidate: deps.rustDepsDir, root });
   const rustDepsDir = Option_exports.getOrUndefined(safeRust);
+  const safeOut = readSafeWithinRoot({ candidate: deps.rustBuildOutDir, root });
+  const rustBuildOutDir = Option_exports.getOrUndefined(safeOut);
   const rustExterns = selectSafeRustExterns({ deps, rustDepsDir });
+  return { rustBuildCfgs: deps.rustBuildCfgs, rustBuildOutDir, rustDepsDir, rustExterns };
+}
+function filterInsideRoot({ deps, root }) {
+  const safeGo = readSafeWithinRoot({ candidate: deps.goVendor, root });
+  const safeNode = readSafeWithinRoot({ candidate: deps.nodeModules, root });
+  const safePython = readSafeWithinRoot({ candidate: deps.pythonSitePackages, root });
+  const rust = filterRustDeps({ deps, root });
   return {
     goMod: deps.goMod,
     goModCache: deps.goModCache,
     goSum: deps.goSum,
-    goVendor,
-    nodeModules,
-    pythonSitePackages,
-    rustDepsDir,
-    rustExterns
+    goVendor: Option_exports.getOrUndefined(safeGo),
+    nodeModules: Option_exports.getOrUndefined(safeNode),
+    pythonSitePackages: Option_exports.getOrUndefined(safePython),
+    ...rust
   };
 }
 async function resolveProjectDeps({
@@ -23544,7 +24277,7 @@ async function resolveProjectDeps({
     return EMPTY_DEPS;
   }
   const deps = await selectDepsForRuntime({ projectRoot: canonicalRoot.value, runtime });
-  return filterInsideRoot({ deps, projectRoot: canonicalRoot.value });
+  return filterInsideRoot({ deps, root: canonicalRoot.value });
 }
 
 // sandbox/runner-sandbox.mts
@@ -23552,12 +24285,6 @@ var PROBE_TIMEOUT_MS = 15e3;
 var COMPILED_PROBE_TIMEOUT_MS = 3e4;
 var OUTPUT_BYTES5 = 65536;
 var COMPILED_RUNTIMES3 = /* @__PURE__ */ new Set(["go", "rust"]);
-var PROBE_FILES = {
-  go: ".tenet_observe/main.go",
-  node: ".tenet-observe.mjs",
-  python: ".tenet-observe.py",
-  rust: ".tenet-observe.rs"
-};
 var ASSERTION_MARKERS = /* @__PURE__ */ new Map([
   [
     "node",
@@ -23574,9 +24301,6 @@ var ASSERTION_MARKERS = /* @__PURE__ */ new Map([
     }
   ]
 ]);
-function probeFile(runtime) {
-  return PROBE_FILES[runtime];
-}
 async function createDepLink({ source, target }) {
   if (source === void 0) {
     return;
@@ -23585,14 +24309,14 @@ async function createDepLink({ source, target }) {
     await symlink(source, target, "dir");
     return;
   }
-  await mkdir(target, { recursive: true });
+  await mkdir2(target, { recursive: true });
 }
 async function prepareDepLinks({ deps, files, work }) {
-  const nodeTarget = join5(work, "node_modules");
+  const nodeTarget = join9(work, "node_modules");
   await createDepLink({ source: deps.nodeModules, target: nodeTarget });
   const hasStagedVendor = [...files.keys()].some((path) => path.startsWith("vendor/"));
   if (!hasStagedVendor) {
-    const vendorTarget = join5(work, "vendor");
+    const vendorTarget = join9(work, "vendor");
     await createDepLink({ source: deps.goVendor, target: vendorTarget });
   }
 }
@@ -23604,7 +24328,7 @@ async function buildCommand({
   projectRoot,
   work
 }) {
-  const entry = probeFile(check2.runtime);
+  const entry = resolveProbeFile(check2);
   if (process.platform === "darwin") {
     return await createMacosSandbox({
       check: check2,
@@ -23709,12 +24433,12 @@ async function createGoModFallback({
     return;
   }
   if (!files.has("go.mod")) {
-    const goModPath = join5(work, "go.mod");
+    const goModPath = join9(work, "go.mod");
     const goModContent = deps.goMod ?? "module tenet_check\n\ngo 1.21\n";
     await writeFile(goModPath, goModContent, { flag: "wx" });
   }
   if (!files.has("go.sum") && deps.goSum !== void 0) {
-    const goSumPath = join5(work, "go.sum");
+    const goSumPath = join9(work, "go.sum");
     await writeFile(goSumPath, deps.goSum, { flag: "wx" });
   }
 }
@@ -23722,10 +24446,14 @@ async function writeProbeFile({ check: check2, work }) {
   if (check2.test === void 0) {
     return;
   }
-  const entry = probeFile(check2.runtime);
-  const targetPath = join5(work, entry);
-  const parentDir = dirname5(targetPath);
-  await mkdir(parentDir, { recursive: true });
+  const entry = resolveProbeFile(check2);
+  const targetPath = resolve5(work, entry);
+  const workPrefix = `${resolve5(work)}${sep5}`;
+  if (!targetPath.startsWith(workPrefix)) {
+    throw new CheckerError({ message: "probe path falls outside the checkout" });
+  }
+  const parentDir = dirname9(targetPath);
+  await mkdir2(parentDir, { recursive: true });
   await writeFile(targetPath, check2.test, { flag: "wx" });
 }
 async function createSandbox(input) {
@@ -23741,13 +24469,13 @@ async function createSandbox(input) {
 
 // sandbox/runner.mts
 async function copySource({ path, source, work }) {
-  const file = resolve3(work, path);
-  const prefix = join6(work, sep2);
+  const file = resolve6(work, path);
+  const prefix = join10(work, sep6);
   if (!file.startsWith(prefix)) {
     throw new CheckerError({ message: "a staged source path falls outside the checkout" });
   }
-  const parent = dirname6(file);
-  await mkdir2(parent, { recursive: true });
+  const parent = dirname10(file);
+  await mkdir3(parent, { recursive: true });
   await writeFile2(file, source, { flag: "wx" });
 }
 async function prepareProject(project) {
@@ -23776,7 +24504,7 @@ async function restoreSubject({ project, variant }) {
   if (source === void 0) {
     throw new CheckerError({ message: "the checker subject disappeared" });
   }
-  const targetPath = join6(work, check2.subject);
+  const targetPath = join10(work, check2.subject);
   await writeFile2(targetPath, source);
 }
 function readObservationHint(variant) {
@@ -23852,28 +24580,28 @@ async function observe({
   skipActual = false
 }) {
   const temporary = tmpdir4();
-  const workPrefix = join6(temporary, "tenet-observe-");
-  const tmpPrefix = join6(temporary, "tenet-probe-tmp-");
+  const workPrefix = join10(temporary, "tenet-observe-");
+  const tmpPrefix = join10(temporary, "tenet-probe-tmp-");
   const work = await mkdtemp(workPrefix);
   const probeTmp = await mkdtemp(tmpPrefix);
   try {
     const project = await prepareProject({ check: check2, files, probeTmp, projectRoot, work });
     return await executeObservation({ check: check2, project, qualify, skipActual });
   } finally {
-    await rm(work, { force: true, recursive: true });
-    await rm(probeTmp, { force: true, recursive: true });
+    await rm3(work, { force: true, recursive: true });
+    await rm3(probeTmp, { force: true, recursive: true });
   }
 }
 
 // sandbox/runner-version.mts
-import { stat as stat3 } from "node:fs/promises";
+import { stat as stat4 } from "node:fs/promises";
 var BWRAP3 = "/usr/bin/bwrap";
 var PYTHON2 = "/usr/bin/python3";
 var PRLIMIT3 = "/usr/bin/prlimit";
 var SANDBOX_EXEC3 = "/usr/bin/sandbox-exec";
-var RUNNER_REVISION = 7;
+var RUNNER_REVISION = 8;
 function readBinaryIdentity(path) {
-  const read = Effect_exports.tryPromise(async () => await stat3(path));
+  const read = Effect_exports.tryPromise(async () => await stat4(path));
   function buildMissingIdentity() {
     return [path, null];
   }
@@ -24020,302 +24748,6 @@ function applyAuditFix({
     files,
     summary: decoded.value.summary
   });
-}
-
-// storage/hash-source.mts
-import { createHash } from "node:crypto";
-function hashSource(data) {
-  const sha = createHash("sha256");
-  sha.update(data);
-  return sha.digest("hex");
-}
-
-// storage/read-regular.mts
-import { constants } from "node:fs";
-import { lstat, open, realpath as realpath6 } from "node:fs/promises";
-
-// storage/resolve-inside.mts
-import { isAbsolute, join as join7, resolve as resolve4, sep as sep3 } from "node:path";
-function resolveInside({ root, path }) {
-  const target = resolve4(root, path);
-  const prefix = join7(root, sep3);
-  const components = path.split(sep3);
-  if (isAbsolute(path) || components.includes("..") || !target.startsWith(prefix)) {
-    throw new CheckerError({ message: "input falls outside the checkout." });
-  }
-  return target;
-}
-
-// storage/resolve-root.mts
-import { realpath as realpath5 } from "node:fs/promises";
-import { basename as basename3, dirname as dirname7, join as join8, resolve as resolve5 } from "node:path";
-function readErrorCode(value3) {
-  if (value3 instanceof Error && "code" in value3 && typeof value3.code === "string") {
-    return value3.code;
-  }
-  return "";
-}
-async function readRealPath(path) {
-  async function run3() {
-    return await realpath5(path);
-  }
-  const inspect = tryOperation({ message: "resolve canonical root path", run: run3 });
-  return await inspect.pipe(Effect_exports.result, Effect_exports.runPromise);
-}
-async function resolveRoot(path) {
-  const absolute = resolve5(path);
-  const resolved = await readRealPath(absolute);
-  if (Result_exports.isSuccess(resolved)) {
-    return resolved.success;
-  }
-  const parent = dirname7(absolute);
-  if (readErrorCode(resolved.failure.cause) !== "ENOENT" || parent === absolute) {
-    throw resolved.failure;
-  }
-  const trusted = await resolveRoot(parent);
-  const child = basename3(absolute);
-  return join8(trusted, child);
-}
-
-// storage/read-regular.mts
-var OPEN_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW;
-function readBufferCapacity({ limit, truncate }) {
-  if (truncate) {
-    return limit;
-  }
-  return limit + 1;
-}
-function sliceBeforeLastNewline(text2) {
-  const lastNewline = text2.lastIndexOf("\n");
-  if (lastNewline > 0) {
-    return text2.slice(0, lastNewline);
-  }
-  return text2;
-}
-function trimTruncatedPrefix({ text: text2, totalBytes }) {
-  const sliced = sliceBeforeLastNewline(text2);
-  const shownBytes = Buffer.byteLength(sliced);
-  const shown = String(shownBytes);
-  const total = String(totalBytes);
-  return `${sliced}
-[truncated: showing first ${shown} of ${total} bytes]
-`;
-}
-function isUnavailableFile({
-  file,
-  limit,
-  prior,
-  realPath,
-  truncate
-}) {
-  if (!prior.isFile() || realPath !== file) {
-    return true;
-  }
-  return !truncate && prior.size > limit;
-}
-function decodeText({
-  buffer,
-  limit,
-  preserveBom = false,
-  totalBytes,
-  truncate,
-  used
-}) {
-  const data = buffer.subarray(0, used);
-  if (!truncate && used > limit || data.includes(0)) {
-    throw new CheckerError({ message: "incomplete text input." });
-  }
-  const decoder4 = new TextDecoder("utf-8", { fatal: !truncate, ignoreBOM: preserveBom });
-  const text2 = decoder4.decode(data);
-  if (truncate && totalBytes > used) {
-    return trimTruncatedPrefix({ text: text2, totalBytes });
-  }
-  return text2;
-}
-async function readText2({
-  handle,
-  limit,
-  preserveBom,
-  totalBytes,
-  truncate
-}) {
-  const capacity = readBufferCapacity({ limit, truncate });
-  const buffer = Buffer.alloc(capacity);
-  let used = 0;
-  while (used < buffer.length) {
-    const result3 = await handle.read(buffer, used, buffer.length - used);
-    if (result3.bytesRead === 0) {
-      break;
-    }
-    used += result3.bytesRead;
-  }
-  return decodeText({ buffer, limit, preserveBom, totalBytes, truncate, used });
-}
-async function readOpened(input) {
-  const { handle, prior, file } = input;
-  const stat4 = await handle.stat();
-  if (stat4.dev !== prior.dev || stat4.ino !== prior.ino || await realpath6(file) !== file) {
-    throw new CheckerError({ message: "input changed while opening it." });
-  }
-  return await readText2(input);
-}
-async function resolveCheckedFile({
-  limit,
-  path,
-  root: rawRoot,
-  truncate
-}) {
-  const root = await resolveRoot(rawRoot);
-  const file = resolveInside({ path, root });
-  const prior = await lstat(file);
-  const realPath = await realpath6(file);
-  if (isUnavailableFile({ file, limit, prior, realPath, truncate })) {
-    throw new CheckerError({ message: "input unavailable." });
-  }
-  return { file, prior };
-}
-async function readRegular({
-  limit,
-  path,
-  preserveBom,
-  root,
-  truncate = false
-}) {
-  const { file, prior } = await resolveCheckedFile({ limit, path, root, truncate });
-  const handle = await open(file, OPEN_FLAGS);
-  try {
-    return await readOpened({
-      file,
-      handle,
-      limit,
-      preserveBom,
-      prior,
-      totalBytes: prior.size,
-      truncate
-    });
-  } finally {
-    await handle.close();
-  }
-}
-
-// storage/read-record.mts
-var RECORD_LIMIT = 4194304;
-function parseRecord(text2) {
-  const contents = text2.replace(new RegExp("^\\uFEFF", "v"), "");
-  const json = JSON.parse(contents);
-  return { json, text: text2 };
-}
-async function readRecord(location) {
-  async function run3() {
-    return await readRegular({ ...location, limit: RECORD_LIMIT, preserveBom: true });
-  }
-  const status = await classifyResult({ message: "could not read checker state", run: run3 });
-  if (Result_exports.isSuccess(status)) {
-    const record2 = parseRecord(status.success);
-    return Option_exports.some(record2);
-  }
-  const { cause } = status.failure;
-  if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
-    return Option_exports.none();
-  }
-  throw status.failure;
-}
-
-// storage/read-existing.mts
-async function readExisting(location) {
-  const contents = await readRecord(location);
-  if (Option_exports.isSome(contents)) {
-    return contents.value.json;
-  }
-}
-
-// storage/replace-pin.mts
-import { open as open3, realpath as realpath8, rm as rm3 } from "node:fs/promises";
-import { dirname as dirname9 } from "node:path";
-
-// storage/write-atomic.mts
-import { randomUUID } from "node:crypto";
-import { link as link2, mkdir as mkdir3, open as open2, realpath as realpath7, rename, rm as rm2 } from "node:fs/promises";
-import { dirname as dirname8, join as join9, relative, sep as sep4 } from "node:path";
-var PRIVATE_FILE = 384;
-var PRIVATE_DIR = 448;
-async function ensureSegment(path) {
-  await mkdir3(path, { mode: PRIVATE_DIR, recursive: true });
-  if (await realpath7(path) !== path) {
-    throw new CheckerError({ message: "output directory is a symbolic link." });
-  }
-}
-async function ensureDirectory({ directory, root }) {
-  await ensureSegment(root);
-  const nested = relative(root, directory);
-  if (nested.length === 0) {
-    return;
-  }
-  let current = root;
-  for (const part of nested.split(sep4)) {
-    current = join9(current, part);
-    await ensureSegment(current);
-  }
-}
-async function installRecord({ first, target, temp }) {
-  if (first) {
-    await link2(temp, target);
-    return;
-  }
-  await rename(temp, target);
-}
-async function storeRecord({ handle, record: record2 }) {
-  try {
-    const content = JSON.stringify(record2);
-    await handle.writeFile(`${content}
-`);
-  } finally {
-    await handle.close();
-  }
-}
-async function writeTempRecord({ first, parent, target, value: value3 }) {
-  const nonce = randomUUID();
-  const temp = join9(parent, `.tenet-${nonce}.tmp`);
-  const handle = await open2(temp, "wx", PRIVATE_FILE);
-  try {
-    await storeRecord({ handle, record: value3 });
-    await installRecord({ first, target, temp });
-  } finally {
-    await rm2(temp, { force: true });
-  }
-}
-async function writeAtomic(input) {
-  const root = await resolveRoot(input.root);
-  const target = resolveInside({ path: input.path, root });
-  const parent = dirname8(target);
-  await ensureDirectory({ directory: parent, root });
-  await writeTempRecord({ first: input.first === true, parent, target, value: input.value });
-}
-
-// storage/replace-pin.mts
-var PRIVATE_FILE2 = 384;
-async function resolvePinLock(input) {
-  const root = await resolveRoot(input.root);
-  const lock = resolveInside({ path: `${input.path}.lock`, root });
-  const parent = dirname9(lock);
-  if (await realpath8(parent) !== parent) {
-    throw new CheckerError({ message: "output directory is a symbolic link." });
-  }
-  return lock;
-}
-async function replacePin(input) {
-  const lock = await resolvePinLock(input);
-  const claim = await open3(lock, "wx", PRIVATE_FILE2);
-  try {
-    const actual = await readRecord(input);
-    if (Option_exports.isNone(actual) || Option_exports.isNone(input.prior) || actual.value.text !== input.prior.value.text) {
-      throw new CheckerError({ message: "the pin changed during qualification. Rerun the check." });
-    }
-    await writeAtomic(input);
-  } finally {
-    await claim.close();
-    await rm3(lock, { force: true });
-  }
 }
 
 // audit/read-execution-files.mts
@@ -24768,6 +25200,48 @@ function buildFixOutcome({ result: result3, status }) {
   };
 }
 
+// audit/fix/read-test-files.mts
+var MAX_TEST_FILE_BYTES = 12e3;
+var MAX_TEST_TOTAL_BYTES = 36e3;
+async function readSingleTestFile({
+  limit,
+  path,
+  root
+}) {
+  async function readText3() {
+    return await readRegular({ limit, path, root, truncate: true });
+  }
+  const outcome = await classifyResult({
+    message: "bounded fix test read unavailable",
+    run: readText3
+  });
+  return Result_exports.getSuccess(outcome);
+}
+async function advanceTestPool({ path, root, state }) {
+  const limit = Math.min(state.remaining, MAX_TEST_FILE_BYTES);
+  const text2 = await readSingleTestFile({ limit, path, root });
+  if (Option_exports.isNone(text2)) {
+    return state;
+  }
+  return {
+    entries: [...state.entries, [path, text2.value]],
+    remaining: state.remaining - Buffer.byteLength(text2.value)
+  };
+}
+async function readBoundedTestFiles({
+  paths,
+  root
+}) {
+  let state = { entries: [], remaining: MAX_TEST_TOTAL_BYTES };
+  for (const path of paths) {
+    if (state.remaining <= 0) {
+      break;
+    }
+    state = await advanceTestPool({ path, root, state });
+  }
+  return Object.fromEntries(state.entries);
+}
+
 // fx/explain-findings.mts
 import { env as env4 } from "node:process";
 
@@ -24796,16 +25270,16 @@ import { env as env3 } from "node:process";
 import { pathToFileURL } from "node:url";
 
 // fx/fx-cache.mts
-import { access as access7, mkdir as mkdir4, mkdtemp as mkdtemp2, realpath as realpath9, rename as rename2, rm as rm4 } from "node:fs/promises";
+import { access as access7, mkdir as mkdir4, mkdtemp as mkdtemp2, realpath as realpath10, rename as rename2, rm as rm4 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { isAbsolute as isAbsolute2, join as join11, relative as relative2, sep as sep5 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join12, relative as relative3, sep as sep7 } from "node:path";
 import { cwd, env as env2 } from "node:process";
 
 // fx/install-fx.mts
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { cp } from "node:fs/promises";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 import { env } from "node:process";
 
 // fx/resolve-asset.mts
@@ -24826,7 +25300,7 @@ async function resolveWorkerAsset(name) {
 var INSTALL_TIMEOUT_MS = 9e4;
 async function copyManifest(input) {
   const source = await resolveWorkerAsset(input.directory);
-  const target = join10(input.destination, input.directory);
+  const target = join11(input.destination, input.directory);
   await cp(source, target);
 }
 async function installFxRuntime(directory) {
@@ -24866,10 +25340,10 @@ function readCode(value3) {
 }
 async function resolveTrustedPath(path) {
   const sourceRoot = env2.TENET_WORKER_SOURCE_ROOT ?? cwd();
-  const source = await realpath9(sourceRoot);
+  const source = await realpath10(sourceRoot);
   const destination = await resolveRoot(path);
-  const relation = relative2(source, destination);
-  if (isAbsolute2(relation) || relation === ".." || relation.startsWith(`..${sep5}`)) {
+  const relation = relative3(source, destination);
+  if (isAbsolute2(relation) || relation === ".." || relation.startsWith(`..${sep7}`)) {
     return destination;
   }
   throw new CheckerError({ message: "move the fx cache outside the reviewed repository" });
@@ -24889,7 +25363,7 @@ async function publish({ directory, destination }) {
 }
 async function ensureInstallation({ cache: cache2, destination }) {
   await mkdir4(cache2, { mode: 448, recursive: true });
-  const prefix = join11(cache2, "install-");
+  const prefix = join12(cache2, "install-");
   const temporary = await mkdtemp2(prefix);
   try {
     await installFxRuntime(temporary);
@@ -24900,11 +25374,11 @@ async function ensureInstallation({ cache: cache2, destination }) {
 }
 async function resolveInstallation() {
   const userHome = homedir3();
-  const home = env2.XDG_CACHE_HOME ?? join11(userHome, ".cache");
-  const directory = join11(home, "tenet", "libfx");
+  const home = env2.XDG_CACHE_HOME ?? join12(userHome, ".cache");
+  const directory = join12(home, "tenet", "libfx");
   const cache2 = await resolveTrustedPath(directory);
-  const destination = join11(cache2, LIBFX_VERSION);
-  const entry = join11(destination, "node_modules", "libfx", "node.js");
+  const destination = join12(cache2, LIBFX_VERSION);
+  const entry = join12(destination, "node_modules", "libfx", "node.js");
   return { cache: cache2, destination, entry };
 }
 async function isCached(trusted) {
@@ -25348,7 +25822,7 @@ async function explainFindings({
 }
 
 // fx/generation.mts
-import { readFile as readFile4 } from "node:fs/promises";
+import { readFile as readFile5 } from "node:fs/promises";
 function encodeInput(request3) {
   const { contract, inventory, repair } = request3;
   const files = Object.fromEntries(inventory.files);
@@ -25371,16 +25845,16 @@ function encodeInput(request3) {
 }
 async function generate(request3) {
   const promptUrl = await resolveWorkerAsset("checker-prompt.md");
-  const instructions = await readFile4(promptUrl, "utf-8");
+  const instructions = await readFile5(promptUrl, "utf-8");
   const source = encodeInput(request3);
   return await runFxJson({ instructions, onRequest: request3.onRequest, source });
 }
 
 // fx/propose-fix.mts
-import { readFile as readFile5 } from "node:fs/promises";
+import { readFile as readFile6 } from "node:fs/promises";
 async function readFixPrompt() {
   const promptPath = await resolveWorkerAsset("fix-prompt.md");
-  return await readFile5(promptPath, "utf-8");
+  return await readFile6(promptPath, "utf-8");
 }
 function buildFixPayload({
   contracts,
@@ -25390,6 +25864,7 @@ function buildFixPayload({
   priorAttemptError,
   relatedSources,
   sources,
+  tests,
   witnesses
 }) {
   const base = {
@@ -25399,6 +25874,7 @@ function buildFixPayload({
     module: moduleName,
     relatedSources,
     sources,
+    tests,
     witnesses
   };
   if (priorAttemptError !== void 0 && priorAttemptError.length > 0) {
@@ -25510,6 +25986,21 @@ function collectDiagnosticLines({
   }
   return lines;
 }
+function mapWitnessOutcomeStatus(result3) {
+  if (result3.outcome === "passed") {
+    return "fixed";
+  }
+  if (result3.outcome === "failed") {
+    return "failed";
+  }
+  return "unresolved";
+}
+function buildWitnessOutcomes(witnessResults) {
+  return witnessResults.map((result3) => {
+    const status = mapWitnessOutcomeStatus(result3);
+    return buildFixOutcome({ result: result3, status });
+  });
+}
 async function verifyFixPatch({
   files,
   group,
@@ -25521,14 +26012,61 @@ async function verifyFixPatch({
   const witnessResults = await replayTargets({ files, root, state, targets: witnessTargets });
   const guardResults = await replayTargets({ files, root, state, targets: group.guards });
   const diagnostics = collectDiagnosticLines({ guardResults, witnessResults });
+  const fixedCount = witnessResults.filter((item) => item.outcome === "passed").length;
+  const guardRegressions = guardResults.filter((item) => item.outcome !== "passed").length;
+  const outcomes = buildWitnessOutcomes(witnessResults);
   if (diagnostics.length > 0) {
-    return { error: diagnostics.join("\n"), ok: false };
+    return {
+      error: diagnostics.join("\n"),
+      fixedCount,
+      guardRegressions,
+      ok: false,
+      outcomes
+    };
   }
-  const outcomes = witnessResults.map((result3) => buildFixOutcome({ result: result3, status: "fixed" }));
-  return { ok: true, outcomes };
+  return { fixedCount, guardRegressions: 0, ok: true, outcomes };
 }
 
 // audit/fix/run-fix-attempt.mts
+function buildVerifiedOutcome({
+  changedPaths,
+  costUsd,
+  files,
+  requests,
+  verified
+}) {
+  if (verified.ok) {
+    return {
+      changedPaths,
+      costUsd,
+      files,
+      fixedCount: verified.fixedCount,
+      guardRegressions: 0,
+      outcomes: verified.outcomes,
+      requests
+    };
+  }
+  if (verified.fixedCount > 0 && verified.guardRegressions === 0) {
+    return {
+      changedPaths,
+      costUsd,
+      error: verified.error,
+      files,
+      fixedCount: verified.fixedCount,
+      guardRegressions: 0,
+      outcomes: verified.outcomes,
+      requests
+    };
+  }
+  return {
+    changedPaths: [],
+    costUsd,
+    error: verified.error,
+    fixedCount: verified.fixedCount,
+    guardRegressions: verified.guardRegressions,
+    requests
+  };
+}
 async function evaluateProposal({
   context: context3,
   proposal
@@ -25543,6 +26081,8 @@ async function evaluateProposal({
       changedPaths: [],
       costUsd: proposal.costUsd,
       error: applied.error,
+      fixedCount: 0,
+      guardRegressions: 0,
       requests: proposal.requests
     };
   }
@@ -25553,21 +26093,13 @@ async function evaluateProposal({
     root: context3.root,
     state: context3.state
   });
-  if (!verified.ok) {
-    return {
-      changedPaths: [],
-      costUsd: proposal.costUsd,
-      error: verified.error,
-      requests: proposal.requests
-    };
-  }
-  return {
+  return buildVerifiedOutcome({
     changedPaths: applied.changedPaths,
     costUsd: proposal.costUsd,
     files: applied.files,
-    outcomes: verified.outcomes,
-    requests: proposal.requests
-  };
+    requests: proposal.requests,
+    verified
+  });
 }
 async function runFixAttempt(context3) {
   const tier = selectAuditTier({ deep: context3.deep });
@@ -25581,6 +26113,7 @@ async function runFixAttempt(context3) {
     reasoningEffort: tier.effort,
     relatedSources: context3.relatedSources,
     sources: context3.sources,
+    tests: context3.tests,
     witnesses: context3.promptWitnesses
   });
   if (proposal.error !== void 0) {
@@ -25588,6 +26121,8 @@ async function runFixAttempt(context3) {
       changedPaths: [],
       costUsd: proposal.costUsd,
       error: proposal.error,
+      fixedCount: 0,
+      guardRegressions: 0,
       requests: proposal.requests
     };
   }
@@ -25648,7 +26183,7 @@ function buildFailedOutcomes(pending) {
     return buildFixOutcome({ result: item.initial, status });
   });
 }
-function buildAttemptContext(input) {
+async function buildAttemptContext(input) {
   const sources = buildBoundedSources({
     files: input.currentFiles,
     paths: input.group.files,
@@ -25661,6 +26196,10 @@ function buildAttemptContext(input) {
     perFileBytes: MAX_RELATED_FILE_BYTES,
     totalBytes: MAX_RELATED_TOTAL_BYTES
   });
+  const tests = await readBoundedTestFiles({
+    paths: input.group.testFiles ?? [],
+    root: input.root
+  });
   const promptWitnesses = input.precheck.pending.map((item) => buildPromptWitness(item));
   return {
     currentFiles: input.currentFiles,
@@ -25671,23 +26210,39 @@ function buildAttemptContext(input) {
     relatedSources,
     root: input.root,
     sources,
-    state: input.state
+    state: input.state,
+    tests
   };
+}
+function isBetterPartial({ current, result: result3 }) {
+  const currentBest = current?.fixedCount ?? 0;
+  return result3.guardRegressions === 0 && result3.fixedCount > currentBest;
+}
+function buildPartialAttemptState({
+  costUsd,
+  requests,
+  result: result3,
+  state
+}) {
+  const unchanged = { bestPartial: state.bestPartial, costUsd, priorAttemptError: result3.error, requests };
+  if (!isBetterPartial({ current: state.bestPartial, result: result3 }) || result3.changedPaths.length === 0) {
+    return unchanged;
+  }
+  if (result3.files === void 0 || result3.outcomes === void 0) {
+    return unchanged;
+  }
+  const bestPartial = { changedPaths: result3.changedPaths, files: result3.files, fixedCount: result3.fixedCount, outcomes: result3.outcomes };
+  return { bestPartial, costUsd, priorAttemptError: result3.error, requests };
 }
 function buildAttemptState({ alreadyPassing, result: result3, state }) {
   const costUsd = combineCost({ base: state.costUsd, delta: result3.costUsd });
   const requests = state.requests + result3.requests;
-  if (result3.files !== void 0 && result3.outcomes !== void 0) {
-    const resolved = {
-      changedPaths: result3.changedPaths,
-      costUsd,
-      files: result3.files,
-      outcomes: [...alreadyPassing, ...result3.outcomes],
-      requests
-    };
+  if (result3.error === void 0 && result3.files !== void 0 && result3.outcomes !== void 0) {
+    const outcomes = [...alreadyPassing, ...result3.outcomes];
+    const resolved = { changedPaths: result3.changedPaths, costUsd, files: result3.files, outcomes, requests };
     return { costUsd, requests, resolved };
   }
-  return { costUsd, priorAttemptError: result3.error, requests };
+  return buildPartialAttemptState({ costUsd, requests, result: result3, state });
 }
 async function advanceRepairAttempt({
   alreadyPassing,
@@ -25702,8 +26257,20 @@ async function advanceRepairAttempt({
   budget.consume(result3.requests);
   return buildAttemptState({ alreadyPassing, result: result3, state });
 }
+function buildRepairResult({ input, state }) {
+  if (state.resolved !== void 0) {
+    return state.resolved;
+  }
+  if (state.bestPartial !== void 0) {
+    const partialOutcomes = [...input.precheck.alreadyPassing, ...state.bestPartial.outcomes];
+    return { changedPaths: state.bestPartial.changedPaths, costUsd: state.costUsd, files: state.bestPartial.files, outcomes: partialOutcomes, requests: state.requests };
+  }
+  const failedOutcomes = buildFailedOutcomes(input.precheck.pending);
+  const outcomes = [...input.precheck.alreadyPassing, ...failedOutcomes];
+  return { changedPaths: [], costUsd: state.costUsd, files: input.currentFiles, outcomes, requests: state.requests };
+}
 async function runRepairLoop(input) {
-  const baseContext = buildAttemptContext(input);
+  const baseContext = await buildAttemptContext(input);
   let state = { costUsd: 0, requests: 0 };
   for (let attempt = 0; attempt < MAX_FIX_ATTEMPTS; attempt += 1) {
     if (input.budget.readRemaining() <= 0 || state.resolved !== void 0) {
@@ -25716,17 +26283,7 @@ async function runRepairLoop(input) {
       state
     });
   }
-  if (state.resolved !== void 0) {
-    return state.resolved;
-  }
-  const failedOutcomes = buildFailedOutcomes(input.precheck.pending);
-  return {
-    changedPaths: [],
-    costUsd: state.costUsd,
-    files: input.currentFiles,
-    outcomes: [...input.precheck.alreadyPassing, ...failedOutcomes],
-    requests: state.requests
-  };
+  return buildRepairResult({ input, state });
 }
 async function repairAuditGroup(input) {
   const precheck = await checkInitialWitnesses({
@@ -25955,6 +26512,7 @@ var AuditFixGroupFields = Schema_exports.Struct({
   guards: AuditFixGuardList,
   name: Schema_exports.String,
   relatedFiles: OptionalStringList2,
+  testFiles: OptionalStringList2,
   witnesses: AuditFixWitnessList
 });
 var AuditFixGroup = Schema_exports.toEncoded(AuditFixGroupFields);
@@ -27013,7 +27571,7 @@ function updatePin({ prior, next, files }) {
 }
 
 // review/review.mts
-import { realpath as realpath10 } from "node:fs/promises";
+import { realpath as realpath11 } from "node:fs/promises";
 
 // review/read-reason.mts
 function readReason(error) {
@@ -27067,7 +27625,7 @@ async function readBaseInputs({
 }
 
 // discovery/discovery.mts
-import { basename as basename7, dirname as dirname10, extname as extname3 } from "node:path";
+import { basename as basename7, dirname as dirname11, extname as extname3 } from "node:path";
 
 // discovery/hash-surface.mts
 import { basename as basename4 } from "node:path";
@@ -27498,7 +28056,7 @@ function listPackageRoots(input) {
   const packageModules = input.contract.paths.filter(
     (path) => path.endsWith("/__init__.py") && !isHiddenDirectoryPath(path)
   );
-  return packageModules.map((path) => dirname10(path));
+  return packageModules.map((path) => dirname11(path));
 }
 function hasProductionCode(paths) {
   return paths.some((path) => {
@@ -27762,13 +28320,13 @@ function readCached(ctx) {
 }
 
 // review/receipt/receipt.mts
-import { dirname as dirname11, join as join12 } from "node:path";
+import { dirname as dirname12, join as join13 } from "node:path";
 var decodeReceipt = Schema_exports.decodeUnknownOption(Receipt, { onExcessProperty: "error" });
 function resolvePaths(contract) {
   const identity2 = hashSource(contract.path);
-  const receipt = join12("agent-checks", `${identity2}.json`);
-  const directory = dirname11(contract.path);
-  const lock = join12(directory, "agent-checks.lock.json");
+  const receipt = join13("agent-checks", `${identity2}.json`);
+  const directory = dirname12(contract.path);
+  const lock = join13(directory, "agent-checks.lock.json");
   return { lock, receipt };
 }
 async function readReceipt({
@@ -28132,7 +28690,7 @@ function createBudget(maxGenerations) {
   };
 }
 async function normalizeRequest(input) {
-  const root = await realpath10(input.root);
+  const root = await realpath11(input.root);
   const state = await resolveRoot(input.state);
   if (input.pinRoot === void 0) {
     return { ...input, root, state };
@@ -28153,7 +28711,7 @@ async function run2(input) {
 }
 
 // audit/synthesize.mts
-import { readFile as readFile6 } from "node:fs/promises";
+import { readFile as readFile7 } from "node:fs/promises";
 var EMPTY_FEEDBACK = {
   guards: [],
   unresolved: [],
@@ -28161,7 +28719,7 @@ var EMPTY_FEEDBACK = {
 };
 async function readAuditPrompt() {
   const promptPath = await resolveWorkerAsset("audit-prompt.md");
-  return await readFile6(promptPath, "utf-8");
+  return await readFile7(promptPath, "utf-8");
 }
 async function buildModulePayload({
   deep,

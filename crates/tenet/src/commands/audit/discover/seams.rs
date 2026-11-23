@@ -1,8 +1,13 @@
+mod entrypoints;
+#[cfg(test)]
+mod tests;
+
 use alloc::collections::BTreeSet;
 use core::str;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, anyhow};
+use entrypoints::{find_package_entrypoints, has_path_extension, read_parent_dir};
 use tenet_engine::run_checkout_git;
 
 use super::context::{
@@ -32,7 +37,7 @@ const MAX_INDEX_FILES: usize = 256;
 const MAX_LOGIC_BYTES: usize = 16_000;
 const MAX_SCAN_FILES: usize = 16;
 const MIN_STEM_LEN: usize = 4;
-const RELATED_FILE_LIMIT: usize = 4;
+const RELATED_FILE_LIMIT: usize = 5;
 const SAME_DIR_GO_WEIGHT: usize = 2;
 const STEM_MENTION_WEIGHT: usize = 2;
 
@@ -85,14 +90,19 @@ pub(super) fn has_executable_logic(root: &Path, shard_files: &[String]) -> bool 
     })
 }
 
-/// Find up to four external production files referenced by or sharing a Go package with
-/// `shard_files`.
+/// Find up to five external production files: up to two public package or crate entrypoints
+/// followed by files referenced by or sharing a Go package with `shard_files`.
 pub(in crate::commands) fn find_related_files(
     root: &Path,
     shard_files: &[String],
     runtime_paths: &[String],
 ) -> Vec<String> {
     let included_paths: BTreeSet<&str> = shard_files.iter().map(String::as_str).collect();
+    let entrypoints = find_package_entrypoints(root, shard_files, runtime_paths, &included_paths);
+    let mut excluded_paths = included_paths;
+    for path in &entrypoints {
+        let _inserted = excluded_paths.insert(path.as_str());
+    }
     let shard_dirs: BTreeSet<&str> = shard_files
         .iter()
         .map(|path| read_parent_dir(path))
@@ -100,13 +110,16 @@ pub(in crate::commands) fn find_related_files(
     let headers = read_shard_headers(root, shard_files);
     let ranked: Vec<(usize, String)> = runtime_paths
         .iter()
-        .filter(|path| !included_paths.contains(path.as_str()) && is_code_file(path))
+        .filter(|path| !excluded_paths.contains(path.as_str()) && is_code_file(path))
         .filter_map(|candidate| {
             let score = score_candidate(candidate, &headers, &shard_dirs);
             (score > 0).then(|| (score, candidate.clone()))
         })
         .collect();
-    take_top_ranked(ranked, RELATED_FILE_LIMIT)
+    let remaining = RELATED_FILE_LIMIT.saturating_sub(entrypoints.len());
+    let mut related = entrypoints;
+    related.extend(take_top_ranked(ranked, remaining));
+    related
 }
 
 /// Filter `shard_files` to paths present in `changed_paths`.
@@ -197,14 +210,7 @@ fn has_direct_import(headers: &str, stem: &str) -> bool {
 }
 
 fn is_code_file(path: &str) -> bool {
-    Path::new(path)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| CODE_EXTENSIONS.contains(&ext))
-}
-
-fn read_parent_dir(path: &str) -> &str {
-    path.rsplit_once('/').map_or("", |(dir, _)| dir)
+    has_path_extension(path, CODE_EXTENSIONS)
 }
 
 fn read_shard_headers(root: &Path, shard_files: &[String]) -> String {

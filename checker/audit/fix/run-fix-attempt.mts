@@ -20,6 +20,7 @@ export type AttemptContext = Readonly<{
   root: string;
   sources: Readonly<Record<string, string>>;
   state: string;
+  tests: Readonly<Record<string, string>>;
 }>;
 
 export type AttemptOutcome = Readonly<{
@@ -27,6 +28,8 @@ export type AttemptOutcome = Readonly<{
   costUsd: Finding['cost_usd'];
   error?: string;
   files?: ReadonlyMap<string, string>;
+  fixedCount: number;
+  guardRegressions: number;
   outcomes?: readonly AuditFixOutcome[];
   requests: number;
 }>;
@@ -35,6 +38,56 @@ type EvaluateProposalInput = Readonly<{
   context: AttemptContext;
   proposal: ProposeFixOutcome;
 }>;
+
+type BuildVerifiedOutcomeInput = Readonly<{
+  changedPaths: readonly string[];
+  costUsd: Finding['cost_usd'];
+  files: ReadonlyMap<string, string>;
+  requests: number;
+  verified: Awaited<ReturnType<typeof verifyFixPatch>>;
+}>;
+
+function buildVerifiedOutcome({
+  changedPaths,
+  costUsd,
+  files,
+  requests,
+  verified,
+}: BuildVerifiedOutcomeInput): AttemptOutcome {
+  if (verified.ok) {
+    return {
+      changedPaths,
+      costUsd,
+      files,
+      fixedCount: verified.fixedCount,
+      guardRegressions: 0,
+      outcomes: verified.outcomes,
+      requests,
+    };
+  }
+
+  if (verified.fixedCount > 0 && verified.guardRegressions === 0) {
+    return {
+      changedPaths,
+      costUsd,
+      error: verified.error,
+      files,
+      fixedCount: verified.fixedCount,
+      guardRegressions: 0,
+      outcomes: verified.outcomes,
+      requests,
+    };
+  }
+
+  return {
+    changedPaths: [],
+    costUsd,
+    error: verified.error,
+    fixedCount: verified.fixedCount,
+    guardRegressions: verified.guardRegressions,
+    requests,
+  };
+}
 
 async function evaluateProposal({
   context,
@@ -51,6 +104,8 @@ async function evaluateProposal({
       changedPaths: [],
       costUsd: proposal.costUsd,
       error: applied.error,
+      fixedCount: 0,
+      guardRegressions: 0,
       requests: proposal.requests,
     };
   }
@@ -63,22 +118,13 @@ async function evaluateProposal({
     state: context.state,
   });
 
-  if (!verified.ok) {
-    return {
-      changedPaths: [],
-      costUsd: proposal.costUsd,
-      error: verified.error,
-      requests: proposal.requests,
-    };
-  }
-
-  return {
+  return buildVerifiedOutcome({
     changedPaths: applied.changedPaths,
     costUsd: proposal.costUsd,
     files: applied.files,
-    outcomes: verified.outcomes,
     requests: proposal.requests,
-  };
+    verified,
+  });
 }
 
 /** Propose one candidate fix via fx/, apply edits in memory, and verify witnesses and guards. */
@@ -95,6 +141,7 @@ export async function runFixAttempt(context: AttemptContext): Promise<AttemptOut
     reasoningEffort: tier.effort,
     relatedSources: context.relatedSources,
     sources: context.sources,
+    tests: context.tests,
     witnesses: context.promptWitnesses,
   });
 
@@ -103,6 +150,8 @@ export async function runFixAttempt(context: AttemptContext): Promise<AttemptOut
       changedPaths: [],
       costUsd: proposal.costUsd,
       error: proposal.error,
+      fixedCount: 0,
+      guardRegressions: 0,
       requests: proposal.requests,
     };
   }

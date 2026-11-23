@@ -6,6 +6,7 @@ import { Option } from 'effect';
 import { CheckerError } from '../checker-error.mts';
 import type { Check } from '../types.d.mts';
 import { runOptional } from './run-optional.mts';
+import { collectRustBuildArtifacts } from './rust-build.mts';
 import { collectRustExterns, type RustExtern } from './rust-deps.mts';
 
 export type ProjectDeps = Readonly<{
@@ -15,6 +16,8 @@ export type ProjectDeps = Readonly<{
   goVendor?: string;
   nodeModules?: string;
   pythonSitePackages?: string;
+  rustBuildCfgs: readonly string[];
+  rustBuildOutDir?: string;
   rustDepsDir?: string;
   rustExterns: readonly RustExtern[];
 }>;
@@ -39,17 +42,11 @@ type SelectSafeRustInput = Readonly<{
   rustDepsDir?: string;
 }>;
 
-type FilterRootInput = Readonly<{
-  deps: ProjectDeps;
-  projectRoot: string;
-}>;
+type FilterRootInput = Readonly<{ deps: ProjectDeps; root: string }>;
 
-type ProjectFileInput = Readonly<{
-  name: string;
-  projectRoot: string;
-}>;
+type ProjectFileInput = Readonly<{ name: string; projectRoot: string }>;
 
-const EMPTY_DEPS = { rustExterns: [] } as const satisfies ProjectDeps;
+const EMPTY_DEPS = { rustBuildCfgs: [], rustExterns: [] } as const satisfies ProjectDeps;
 
 function isBoundedDepPath(candidate: string): boolean {
   const userHome = homedir();
@@ -84,7 +81,7 @@ async function resolveNodeDeps(projectRoot: string): Promise<ProjectDeps> {
     return EMPTY_DEPS;
   }
 
-  return { nodeModules: nodeModules.value, rustExterns: [] };
+  return { nodeModules: nodeModules.value, rustBuildCfgs: [], rustExterns: [] };
 }
 
 async function findSitePackagesInLib(libDir: string): Promise<Option.Option<string>> {
@@ -131,20 +128,21 @@ async function resolvePythonDeps(projectRoot: string): Promise<ProjectDeps> {
     return EMPTY_DEPS;
   }
 
-  return { pythonSitePackages: pythonSitePackages.value, rustExterns: [] };
+  return { pythonSitePackages: pythonSitePackages.value, rustBuildCfgs: [], rustExterns: [] };
 }
 
 async function resolveRustDeps(projectRoot: string): Promise<ProjectDeps> {
   const candidate = join(projectRoot, 'target', 'debug', 'deps');
   const rustDepsDir = await resolveDirectory(candidate);
+  const build = await collectRustBuildArtifacts({ projectRoot });
 
   if (Option.isNone(rustDepsDir)) {
-    return EMPTY_DEPS;
+    return { ...build, rustExterns: [] };
   }
 
   const rustExterns = await collectRustExterns({ depsDir: rustDepsDir.value, projectRoot });
 
-  return { rustDepsDir: rustDepsDir.value, rustExterns };
+  return { ...build, rustDepsDir: rustDepsDir.value, rustExterns };
 }
 
 async function readProjectFile({
@@ -205,6 +203,7 @@ async function resolveGoDeps(projectRoot: string): Promise<ProjectDeps> {
     goModCache: Option.getOrUndefined(cacheOption),
     goSum: Option.getOrUndefined(sumOption),
     goVendor: Option.getOrUndefined(vendorOption),
+    rustBuildCfgs: [],
     rustExterns: [],
   };
 }
@@ -251,26 +250,30 @@ function selectSafeRustExterns({ deps, rustDepsDir }: SelectSafeRustInput): read
   return deps.rustExterns;
 }
 
-function filterInsideRoot({ deps, projectRoot }: FilterRootInput): ProjectDeps {
-  const safeGo = readSafeWithinRoot({ candidate: deps.goVendor, root: projectRoot });
-  const goVendor = Option.getOrUndefined(safeGo);
-  const safeNode = readSafeWithinRoot({ candidate: deps.nodeModules, root: projectRoot });
-  const nodeModules = Option.getOrUndefined(safeNode);
-  const safePython = readSafeWithinRoot({ candidate: deps.pythonSitePackages, root: projectRoot });
-  const pythonSitePackages = Option.getOrUndefined(safePython);
-  const safeRust = readSafeWithinRoot({ candidate: deps.rustDepsDir, root: projectRoot });
+function filterRustDeps({ deps, root }: FilterRootInput): Pick<ProjectDeps, 'rustBuildCfgs' | 'rustBuildOutDir' | 'rustDepsDir' | 'rustExterns'> {
+  const safeRust = readSafeWithinRoot({ candidate: deps.rustDepsDir, root });
   const rustDepsDir = Option.getOrUndefined(safeRust);
+  const safeOut = readSafeWithinRoot({ candidate: deps.rustBuildOutDir, root });
+  const rustBuildOutDir = Option.getOrUndefined(safeOut);
   const rustExterns = selectSafeRustExterns({ deps, rustDepsDir });
+
+  return { rustBuildCfgs: deps.rustBuildCfgs, rustBuildOutDir, rustDepsDir, rustExterns };
+}
+
+function filterInsideRoot({ deps, root }: FilterRootInput): ProjectDeps {
+  const safeGo = readSafeWithinRoot({ candidate: deps.goVendor, root });
+  const safeNode = readSafeWithinRoot({ candidate: deps.nodeModules, root });
+  const safePython = readSafeWithinRoot({ candidate: deps.pythonSitePackages, root });
+  const rust = filterRustDeps({ deps, root });
 
   return {
     goMod: deps.goMod,
     goModCache: deps.goModCache,
     goSum: deps.goSum,
-    goVendor,
-    nodeModules,
-    pythonSitePackages,
-    rustDepsDir,
-    rustExterns,
+    goVendor: Option.getOrUndefined(safeGo),
+    nodeModules: Option.getOrUndefined(safeNode),
+    pythonSitePackages: Option.getOrUndefined(safePython),
+    ...rust,
   };
 }
 
@@ -291,5 +294,5 @@ export async function resolveProjectDeps({
 
   const deps = await selectDepsForRuntime({ projectRoot: canonicalRoot.value, runtime });
 
-  return filterInsideRoot({ deps, projectRoot: canonicalRoot.value });
+  return filterInsideRoot({ deps, root: canonicalRoot.value });
 }

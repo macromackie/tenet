@@ -22,6 +22,7 @@ const SYSTEM_PATH = '/usr/bin:/bin';
 const NODE = '/runtime/node';
 const GO_MOD_CACHE_MOUNT = '/deps/gomodcache';
 const GO_ROOT_MOUNT = '/goroot';
+const RUST_OUT_MOUNT = '/deps/rust-out';
 const DEFAULT_TMPFS_BYTES = '67108864';
 const COMPILED_TMPFS_BYTES = '268435456';
 const COMPILED_RUNTIMES: ReadonlySet<string> = new Set(['go', 'rust']);
@@ -143,6 +144,7 @@ function buildDepMounts(deps: ProjectDeps): readonly string[] {
     [deps.goVendor, '/project/vendor'],
     [deps.nodeModules, '/project/node_modules'],
     [deps.pythonSitePackages, '/deps/python'],
+    [deps.rustBuildOutDir, RUST_OUT_MOUNT],
     [deps.rustDepsDir, '/deps/rust'],
   ];
 
@@ -159,11 +161,13 @@ function buildDepMounts(deps: ProjectDeps): readonly string[] {
 
 function buildGoProgram({ deps, files, probeFile }: ProgramInput): readonly string[] {
   const probeDir = dirname(probeFile);
+  const isTestProbe = probeFile.endsWith('_test.go');
 
   return buildGoCommand({
     binary: `${GO_ROOT_MOUNT}/bin/go`,
     deps,
     files,
+    isTestProbe,
     output: '/tmp/observe',
     probeDir,
   });
@@ -210,6 +214,18 @@ function buildGoEnvForLinux(deps: ProjectDeps): Readonly<Record<string, string>>
   return buildGoEnv({ goModCache: GO_MOD_CACHE_MOUNT, goroot: GO_ROOT_MOUNT, probeTmp: '/tmp' });
 }
 
+type PythonEnvFlagsInput = Omit<EnvFlagsInput, 'runtime'>;
+
+function buildPythonEnvFlags({ deps, files }: PythonEnvFlagsInput): readonly string[] {
+  const basePath = readPythonPaths({ files, root: '/project' });
+
+  if (deps.pythonSitePackages === undefined) {
+    return [...BASE_ENV_FLAGS, '--setenv', 'PYTHONPATH', basePath];
+  }
+
+  return [...BASE_ENV_FLAGS, '--setenv', 'PYTHONPATH', `${basePath}:/deps/python`];
+}
+
 function buildEnvFlags({ deps, files, runtime }: EnvFlagsInput): readonly string[] {
   if (runtime === 'go') {
     const goEnv = buildGoEnvForLinux(deps);
@@ -218,17 +234,15 @@ function buildEnvFlags({ deps, files, runtime }: EnvFlagsInput): readonly string
     return [...BASE_ENV_FLAGS, ...goFlags];
   }
 
-  if (runtime !== 'python') {
-    return BASE_ENV_FLAGS;
+  if (runtime === 'rust' && deps.rustBuildOutDir !== undefined) {
+    return [...BASE_ENV_FLAGS, '--setenv', 'OUT_DIR', RUST_OUT_MOUNT];
   }
 
-  const basePath = readPythonPaths({ files, root: '/project' });
-
-  if (deps.pythonSitePackages === undefined) {
-    return [...BASE_ENV_FLAGS, '--setenv', 'PYTHONPATH', basePath];
+  if (runtime === 'python') {
+    return buildPythonEnvFlags({ deps, files });
   }
 
-  return [...BASE_ENV_FLAGS, '--setenv', 'PYTHONPATH', `${basePath}:/deps/python`];
+  return BASE_ENV_FLAGS;
 }
 
 /** Build a Linux bubblewrap + prlimit sandbox invocation for an isolated behavior probe. */

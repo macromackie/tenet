@@ -172,6 +172,11 @@ pub(in crate::commands) fn format_slash_path(path: &Path) -> String {
 
 /// Read up to `limit` bytes from `path` and return them lowercased, or empty on I/O errors.
 pub(super) fn read_bounded_lowercase(path: &Path, limit: usize) -> String {
+    read_bounded_text(path, limit).to_ascii_lowercase()
+}
+
+/// Read up to `limit` bytes from `path` as lossy UTF-8 text, or empty on I/O errors.
+pub(super) fn read_bounded_text(path: &Path, limit: usize) -> String {
     let Ok(file) = File::open(path) else {
         return String::new();
     };
@@ -182,7 +187,7 @@ pub(super) fn read_bounded_lowercase(path: &Path, limit: usize) -> String {
     if file.take(limit_u64).read_to_end(&mut bytes).is_err() {
         return String::new();
     }
-    String::from_utf8_lossy(&bytes).to_ascii_lowercase()
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Extract a non-generic lowercase subject stem from `file` (falling back to its parent folder).
