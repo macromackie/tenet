@@ -144,9 +144,9 @@ fn write_offline_terminal(
     writeln!(
         out,
         "{}  {}\n",
-        output::format_styled("Tenet Offline Check").bold(),
+        output::format_styled("Tenet Check (--skip-semantic)").bold(),
         format_dim(&format!(
-            "{} pinned checks \u{b7} zero model requests",
+            "{} pinned checks \u{b7} semantic review skipped \u{b7} 0 model requests",
             payload.behavior.len(),
         )),
     )?;
@@ -167,6 +167,11 @@ fn write_offline_terminal(
         "  {}  {}",
         output::format_styled("Coverage").bold(),
         format_coverage_line(payload.coverage),
+    )?;
+    writeln!(
+        out,
+        "  {}  Semantic contract review skipped; run `tenet check` for full review.",
+        output::format_styled("Note").bold(),
     )?;
     Ok(())
 }

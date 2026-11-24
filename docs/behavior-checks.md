@@ -42,21 +42,21 @@ The first generation requires Node and npm to install the pinned `libfx` package
 
 When in-root project dependencies already exist on disk (`node_modules`, `.venv` or `venv` `site-packages`, or prebuilt Rust artifacts in `target/debug/deps` from `cargo build`), Tenet canonicalizes and mounts them read-only inside the sandbox without running installs or Cargo build scripts. Discovery prioritizes manifests, flagged files, and contract-referenced modules ahead of generated (`gen/`, `generated/`), compatibility (`_future/`, `compat/`), and vendor paths up to 128 KiB per file (384 KiB per contract prompt). Isolated probes that exit non-zero surface sanitized diagnostics (`ERR_MODULE_NOT_FOUND`, `ModuleNotFoundError`, `E0432`/`E0463`). An unavailable dependency, platform, or observation produces a review item. Use a [project check](./local-checks.md) for behavior that requires the project's full environment.
 
-## Replay offline or after a fix
+## Replay after a fix or without semantic review
 
-Replay locked runtime scripts without calling an LLM or setting provider credentials:
+For air-gapped environments, pre-commit hooks, or CI gates without provider credentials, `tenet check --skip-semantic` provides an explicit fallback that skips semantic contract review and only replays deterministic static checks, declared local checks, and locked runtime scripts:
 
 ```sh
-tenet check --offline
-tenet check --offline --contract timeouts
+tenet check --skip-semantic
+tenet check --skip-semantic --contract timeouts
 tenet show timeouts
 ```
 
-`tenet check --offline` (alias `--replay`) executes static lint checks, declared local checks, and locked scripts in `scripts/` (including ephemeral contracts under `.tenet/scan/.contracts/`) inside the local sandbox, then persists a receipt at `.tenet/offline-check.json` so `tenet status` reports those results. `tenet show timeouts` prints the contract rule, observed evidence, diff, and the direct runnable path to each script under `.contracts/001-timeouts/scripts/`.
+`tenet check --skip-semantic` (compatibility aliases `--offline`, `--replay`) executes static lint checks, declared local checks, and locked scripts in `scripts/` (including ephemeral contracts under `.tenet/scan/.contracts/`) inside the local sandbox without running semantic contract review, then persists a receipt at `.tenet/offline-check.json` so `tenet status` reports those results. `tenet show timeouts` prints the contract rule, observed evidence, diff, and the direct runnable path to each script under `.contracts/001-timeouts/scripts/`.
 
 When `OPENROUTER_API_KEY` and request budget are available during `tenet check`, Tenet runs one bounded `fx` pass per contract to turn raw failed and unresolved findings into situation-specific plain-English diagnostics without altering recorded outcomes. Interactive terminals stream live progress phases (`discovering source`, `generating checks`, `qualifying controls`, `repairing checks`, `replaying checks`, and `explaining findings`).
 
-Run `tenet fix` to apply safe native lint fixes and repair failing runtime scripts in a bounded sandboxed verify-until-green loop. Pass `--contract timeouts` to scope repairs to one contract or `--severity` to filter by severity. After editing the code manually, rerun `tenet check --offline --contract timeouts` or `tenet check --contract timeouts`.
+Run `tenet fix` to apply safe native lint fixes and repair failing runtime scripts in a bounded sandboxed verify-until-green loop. Pass `--contract timeouts` to scope repairs to one contract or `--severity` to filter by severity. After editing the code manually, rerun `tenet check --contract timeouts` for full review, or `tenet check --skip-semantic --contract timeouts` if you only want to replay locked deterministic checks without semantic review.
 
 ## Hand-edit protection and caching
 
@@ -67,7 +67,7 @@ Generated behavior checks use two cache layers and a hash guard so local edits s
 
 ### Legacy pin compatibility
 
-Repositories with existing committed `agent-checks.lock.json` files beside `CONTRACT.md` continue to replay during both `tenet check` and `tenet check --offline`. Tenet reads `scripts/.lock.json` first and falls back to `agent-checks.lock.json` when no `scripts/` manifest exists. Newly generated or refreshed checks materialize into `scripts/` and `scripts/.lock.json`.
+Repositories with existing committed `agent-checks.lock.json` files beside `CONTRACT.md` continue to replay during both `tenet check` and `tenet check --skip-semantic`. Tenet reads `scripts/.lock.json` first and falls back to `agent-checks.lock.json` when no `scripts/` manifest exists. Newly generated or refreshed checks materialize into `scripts/` and `scripts/.lock.json`.
 
 ## Mixing automated checks and manual review
 
@@ -77,8 +77,8 @@ Keep closely related clauses in one contract when they share one concern and fil
 
 ## Pull requests and JSON output
 
-On a supported GitHub pull-request checkout, `tenet check` selects the merge base. Fetch enough Git history for that comparison. Use `--base REF` to choose an exact base, `--full` to check the entire repository, or `--offline` to replay locked scripts in CI without model credentials. An inferred PR review establishes a new full baseline when the PR edits a governing contract. A currently failing behavior check remains visible even after a favorable review record.
+On a supported GitHub pull-request checkout, `tenet check` selects the merge base. Fetch enough Git history for that comparison. Use `--base REF` to choose an exact base, `--full` to check the entire repository, or `--skip-semantic` as an explicit fallback to skip semantic contract review and only replay deterministic static checks, declared local checks, and locked scripts in CI without model credentials. An inferred PR review establishes a new full baseline when the PR edits a governing contract. A currently failing behavior check remains visible even after a favorable review record.
 
-For scripts, `tenet check --json` and `tenet check --offline --json` write JSON Lines. A `behavior_checks` event holds observations (including optional `severity` on findings), and the closing summary carries the process exit code. With `--final --json`, the command writes one document containing `contracts`, `checks`, and `behavior_checks`. A passing example covers only the input and behavior it exercised; read unresolved rows to see which promises still lack evidence.
+For scripts, `tenet check --json` and `tenet check --skip-semantic --json` write JSON Lines. A `behavior_checks` event holds observations (including optional `severity` on findings), and the closing summary carries the process exit code. With `--final --json`, the command writes one document containing `contracts`, `checks`, and `behavior_checks`. A passing example covers only the input and behavior it exercised; read unresolved rows to see which promises still lack evidence.
 
 The `generation` object reports attempted probe-generation requests and returned cost in US dollars (`requests`, `returned_cost_usd`), and reports bounded `fx` failure-explanation usage separately (`explanation_requests`, `explanation_cost_usd`). A missing price appears as `null`. Each finding also carries `reused` (for `.tenet/agent-checks/` receipt cache hits) and `pin_reused` when a matching `scripts/.lock.json` or legacy `agent-checks.lock.json` pin replayed without generating new probes. Jev request receipts remain separate. New script generation uses the remaining `--max-requests` allowance after semantic review. Snapshots use the reproducible semantic evaluation path. An explicit Jev endpoint or external receipt for a final check does not send source to another router.

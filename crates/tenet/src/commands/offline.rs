@@ -91,8 +91,8 @@ pub(super) fn collect_pinned_targets(
     Ok((entries, malformed))
 }
 
-/// Run deterministic static, local, and pinned runtime checks completely offline without model
-/// calls.
+/// Run deterministic static, local, and pinned runtime checks without semantic model review
+/// (`tenet check --skip-semantic`, aliases `--offline`, `--replay`).
 pub(super) async fn run(
     root: &Path,
     state: &Path,

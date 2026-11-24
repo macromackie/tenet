@@ -3,7 +3,7 @@
 ```sh
 tenet doctor [--json]
 tenet scan [PATHS...] [--apply|--yes] [--ephemeral] [--base REF] [--shallow] [--starter [NAME]] [--library DIR] [--scope DIR] [--repros-dir DIR] [--fresh] [--max-requests N] [--json]
-tenet check [PATHS...] [--base REF] [--offline|--replay] [--full] [--contract NAME] [--json]
+tenet check [PATHS...] [--base REF] [--skip-semantic] [--full] [--contract NAME] [--json]
 tenet check --qualify CONTRACT/NAME [--json]
 tenet check --final [--evidence PATH] [--json]
 tenet fix [PATHS...] [--contract NAME] [--base REF] [--severity LEVEL] [--max-requests N] [--json]
@@ -84,24 +84,30 @@ defects remain.
 
 `tenet init` and `tenet audit` remain supported as backwards-compatible aliases for `tenet scan`.
 
-## Full and offline checks
+## Full checks and deterministic fallback
 
 ```sh
 tenet check
 tenet check --contract cache-values
-tenet check --offline
-tenet check --offline --contract timeouts
 ```
 
 `tenet check` assesses the current repository without assuming any contract holds. File judgments are followed by a
 bounded repository assessment to check missing files and requirements that span files, alongside static lint checks and
 locked runtime scripts.
 
-`tenet check --offline` (alias `--replay`) replays static checks, declared local checks, and locked runtime scripts
-under `.contracts/<NNN>-<name>/scripts/` and ephemeral `.tenet/scan/.contracts/` folders (plus legacy
-`agent-checks.lock.json` pins) inside the local OS sandbox without calling an LLM or requiring provider credentials. It
-saves the latest offline run to `.tenet/offline-check.json` so `tenet status` can surface those results immediately. Use
-`--offline` in pre-commit hooks, air-gapped environments, or CI jobs that run without API keys.
+As an explicit fallback for air-gapped environments, pre-commit hooks, or CI jobs that run without provider credentials,
+`tenet check --skip-semantic` (hidden compatibility aliases `--offline`, `--replay`) skips semantic contract review and
+only replays deterministic static checks, declared local checks, and locked runtime scripts under
+`.contracts/<NNN>-<name>/scripts/` and ephemeral `.tenet/scan/.contracts/` folders (plus legacy `agent-checks.lock.json`
+pins) inside the local OS sandbox:
+
+```sh
+tenet check --skip-semantic
+tenet check --skip-semantic --contract timeouts
+```
+
+It saves the latest fallback run to `.tenet/offline-check.json` so `tenet status` can surface those results immediately,
+and explicitly reports that semantic review did not run.
 
 `tenet check src/` checks those paths together with explicit context. Coverage is calculated for each contract.
 Selecting every file in a nested contract can verify it. A smaller selection can conclude `clear` or `failed`;
@@ -236,9 +242,10 @@ file, `status` lists it once per check. Pass that check's paths after the name, 
 records and earlier assessments, and counts of the older ones. `show --pending --json` lists every pending contract in
 that form and each changed file's patch once. See [JSON](./json.md) for every command's format.
 
-`tenet check` runs with a configured model by default so online checks never silently skip semantic review. Use
-`tenet check --offline` (alias `--replay`) to replay static checks, declared local checks, and locked runtime scripts
-without provider credentials, `tenet status` to inspect coverage and review states offline, `tenet check --dry-run` to
+`tenet check` runs with a configured model by default so checks never silently skip semantic review. As an explicit
+fallback without provider credentials, `tenet check --skip-semantic` (hidden compatibility aliases `--offline`,
+`--replay`) skips semantic contract review and only replays deterministic static checks, declared local checks, and
+locked runtime scripts. Use `tenet status` to inspect coverage and review states offline, `tenet check --dry-run` to
 preview planned requests without credentials, or `--max-requests N` to bound new model requests. Repeated identical
 requests are answered from `.tenet/answers.jsonl`; `--fresh` asks the model again. An answer is reused only by the same
 Tenet version and provider, for the model revision the provider reported. `status --prune-cache` removes answers an
@@ -341,7 +348,6 @@ as version 1 otherwise. A Tenet older than 0.11.0 cannot read a version 2 lock, 
 | Option                       | Default          | Purpose                                                                                                                                                   |
 | ---------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--contract NAME`            | all contracts    | Select one requirement                                                                                                                                    |
-| `--offline`, `--replay`      | off              | Replay static lint checks, declared local checks, and locked runtime scripts without calling an LLM or requiring provider credentials                     |
 | `--context PATH[:START-END]` | none             | Add a repository file, or only its lines START through END, to check inputs; repeat for more files or ranges; see [Add context](./reviews.md#add-context) |
 | `--context-profile PROFILE`  | `standard`       | Select `standard` or `long` evidence and provider byte limits; also accepted by `export`                                                                  |
 | `--contract-batch-size N`    | 1                | Ask about up to N contracts for the same file together; accepts 1 through 64                                                                              |
@@ -353,6 +359,12 @@ as version 1 otherwise. A Tenet older than 0.11.0 cannot read a version 2 lock, 
 | `--reporter KIND`            | default          | `default`, `verbose`, or `jsonl`                                                                                                                          |
 | `--json`                     | off              | Shorthand for JSONL                                                                                                                                       |
 | `--fresh`                    | off              | Ask the model again instead of reusing answers to identical requests; with `--dry-run`, predict as if nothing were cached                                 |
+
+### Fallback options
+
+| Option            | Default | Purpose                                                                                                                                                                                                                                                                                                            |
+| ----------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--skip-semantic` | off     | Explicit fallback for air-gapped environments, pre-commit hooks, or CI gates without provider credentials: skip semantic contract review and only replay deterministic static lint checks, declared local checks, and locked runtime scripts in `scripts/` (hidden compatibility aliases: `--offline`, `--replay`) |
 
 `check --dry-run` lists candidate pairs and builds each file input, including the contract and explicit context,
 without credentials or model requests. JSON `selected` records include encoded `input_bytes`, `input_limit_bytes`,
@@ -367,7 +379,7 @@ earlier answers. `file_pairs` counts selected file/contract checks, including ch
 The summary also counts `combined_over_limit`, the contracts whose combined input exceeds the limit after reduction, and
 reports the diff's `coverage`. When the requests to send exceed `--max-requests`, it prints a warning to stderr. A diff with no changes
 prints `No changes since BASE; nothing to check.` Only execution errors exit 2.
-`check --offline`, `validate`, `contracts`, `skills`, `status`, `show`, `log`, and `export` also work without credentials.
+`check --skip-semantic`, `validate`, `contracts`, `skills`, `status`, `show`, `log`, and `export` also work without credentials.
 
 ## Assessment inputs
 

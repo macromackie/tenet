@@ -61,19 +61,31 @@ fn parse_audit_replay_flag_and_conflicts() -> Result<()> {
 }
 
 #[test]
-fn parse_check_offline_and_replay_alias() -> Result<()> {
-    let offline = Cli::try_parse_from(["tenet", "check", "--offline", "--json"])?;
-    let Command::Check(args) = offline.command else {
+fn parse_check_skip_semantic_and_aliases() -> Result<()> {
+    let skip_semantic = Cli::try_parse_from(["tenet", "check", "--skip-semantic", "--json"])?;
+    let Command::Check(args) = skip_semantic.command else {
         anyhow::bail!("expected check subcommand");
     };
-    anyhow::ensure!(args.offline, "expected --offline to be set");
+    anyhow::ensure!(args.skip_semantic, "expected --skip-semantic to be set");
     anyhow::ensure!(args.run.json, "expected --json to be set");
 
-    let replay = Cli::try_parse_from(["tenet", "check", "--replay"])?;
-    let Command::Check(alias_args) = replay.command else {
+    let offline = Cli::try_parse_from(["tenet", "check", "--offline"])?;
+    let Command::Check(offline_args) = offline.command else {
         anyhow::bail!("expected check subcommand");
     };
-    anyhow::ensure!(alias_args.offline, "expected --replay alias to set offline");
+    anyhow::ensure!(
+        offline_args.skip_semantic,
+        "expected --offline alias to set skip_semantic"
+    );
+
+    let replay = Cli::try_parse_from(["tenet", "check", "--replay"])?;
+    let Command::Check(replay_args) = replay.command else {
+        anyhow::bail!("expected check subcommand");
+    };
+    anyhow::ensure!(
+        replay_args.skip_semantic,
+        "expected --replay alias to set skip_semantic"
+    );
     Ok(())
 }
 

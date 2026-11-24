@@ -193,6 +193,7 @@ fn assert_offline_status(root: &Path, expected_code: i32, expected_outcome: &str
     let stdout = String::from_utf8(text.stdout)?;
     assert_eq!(text.status.code(), Some(expected_code), "{stdout:?}");
     assert!(stdout.contains("Offline checks"), "{stdout:?}");
+    assert!(stdout.contains("semantic review skipped"), "{stdout:?}");
     assert!(stdout.contains("1 file \u{b7} 1 script"), "{stdout:?}");
     assert!(!stdout.contains("1 scripts"), "{stdout:?}");
     let expected_next = if expected_code == 1_i32 {
@@ -217,12 +218,12 @@ fn assert_offline_status(root: &Path, expected_code: i32, expected_outcome: &str
     clippy::panic_in_result_fn,
     reason = "Tests report failures through assertions."
 )]
-fn check_offline_replays_pinned_scripts_without_api_key() -> Result<()> {
+fn check_skip_semantic_replays_pinned_scripts_without_api_key() -> Result<()> {
     let project = tempfile::tempdir()?;
     let root = project.path();
     create_offline_demo_repo(root)?;
 
-    let passing = run_without_openrouter(root, &["check", "--offline", "--json"])?;
+    let passing = run_without_openrouter(root, &["check", "--skip-semantic", "--json"])?;
     let pass_doc: Value = serde_json::from_slice(&passing.stdout)?;
     assert_eq!(
         pass_doc.get("mode").and_then(Value::as_str),
@@ -247,14 +248,44 @@ fn check_offline_replays_pinned_scripts_without_api_key() -> Result<()> {
             root.join("src/choose.mjs"),
             "export const choose = (v) => v || 7;\n",
         )?;
-        let failing = run_without_openrouter(root, &["check", "--offline"])?;
+        let failing = run_without_openrouter(root, &["check", "--skip-semantic"])?;
         assert_eq!(failing.status.code(), Some(1_i32));
-        let fail_offline_text = String::from_utf8(failing.stdout)?;
+        let fail_text = String::from_utf8(failing.stdout)?;
         assert!(
-            !fail_offline_text.contains("expected 0 \u{b7} got 7"),
-            "expected no duplicate expected/got line in {fail_offline_text:?}"
+            fail_text.contains("Tenet Check (--skip-semantic)")
+                && fail_text.contains("Semantic contract review skipped; run `tenet check`"),
+            "expected explicit skip-semantic notice in {fail_text:?}"
+        );
+        assert!(
+            !fail_text.contains("expected 0 \u{b7} got 7"),
+            "expected no duplicate expected/got line in {fail_text:?}"
         );
         assert_offline_status(root, 1_i32, "failed")?;
     }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests report failures through assertions."
+)]
+fn check_offline_alias_replays_pinned_scripts_without_api_key() -> Result<()> {
+    let project = tempfile::tempdir()?;
+    let root = project.path();
+    create_offline_demo_repo(root)?;
+
+    let passing = run_without_openrouter(root, &["check", "--offline", "--json"])?;
+    let pass_doc: Value = serde_json::from_slice(&passing.stdout)?;
+    assert_eq!(
+        pass_doc.get("mode").and_then(Value::as_str),
+        Some("offline-check")
+    );
+    assert!(
+        matches!(passing.status.code(), Some(0_i32 | 3_i32)),
+        "expected exit 0 or 3, got {:?}: {:?}",
+        passing.status.code(),
+        String::from_utf8_lossy(&passing.stdout)
+    );
     Ok(())
 }

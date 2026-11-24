@@ -77,7 +77,7 @@ confidence threshold routes the raw answer; changing it does not itself require 
 pending, so a rerun sends unanswered or changed inputs; `check --dry-run` predicts how many. A record still settles an
 input whose request failed. Use `--fresh` to sample again; resampling does not verify an answer.
 
-Semantic `tenet check` requires a configured model; use `tenet check --offline` to replay static checks, declared local checks, and locked runtime scripts without credentials, `tenet status` to inspect current states and offline check receipts without calling a model, and `tenet log` to list every revision and record. Each revision keeps its `--min-confidence`, and `status`, `show`,
+Semantic `tenet check` requires a configured model; as an explicit fallback without provider credentials, `tenet check --skip-semantic` (compatibility aliases `--offline`, `--replay`) skips semantic contract review and only replays static checks, declared local checks, and locked runtime scripts. Use `tenet status` to inspect current states and persisted `.tenet/offline-check.json` receipts without calling a model, and `tenet log` to list every revision and record. Each revision keeps its `--min-confidence`, and `status`, `show`,
 and `log` print it when it differs from the default 0.8.
 
 Revisions also keep the context profile, so reopening a long-context review does not apply the smaller standard bound.

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.37.0
+
+- Renamed `tenet check --offline` to `tenet check --skip-semantic` (moved under the `Fallback` help heading and hidden from short help, with hidden `--offline` and `--replay` compatibility aliases) so skipping semantic contract review is explicit and unmistakable; updated terminal output and `tenet status` summaries to state clearly that semantic contract review was skipped while keeping `.tenet/offline-check.json` and JSON keys (`offline_checks`, `"mode": "offline-check"`) backwards-compatible.
+- Aligned core product contract `025-cli-output-and-model-requirement` with `tenet check --skip-semantic` and its hidden `--offline` / `--replay` compatibility aliases.
+
 ## v0.36.0
 
 - Made deep adversarial edge-case synthesis the default mode for `tenet scan` and `tenet audit` (and the embedded checker's `runAudit`), adding `--shallow` to opt into the lighter, faster pass while retaining `--deep` as a compatibility no-op (`--deep` and `--shallow` conflict; `tenet audit --replay` also rejects `--shallow`).

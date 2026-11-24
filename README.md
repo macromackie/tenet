@@ -12,22 +12,22 @@ Binaries support macOS and Linux on ARM64 and x86-64. Local checks run with tool
 
 ## Quickstart
 
-Verify your environment, scan the repository into `.contracts/`, inspect coverage, repair findings, and replay checks offline or against a diff:
+Verify your environment, scan the repository into `.contracts/`, check code against contracts, repair findings, and inspect status:
 
 ```sh
 tenet doctor                       # Verify credentials, sandbox tooling, and repository setup
 tenet scan                         # Deep-scan modules by default (pass --shallow for a faster scan)
 tenet scan --apply                 # Write contracts and runnable scripts into .contracts/
 tenet scan --ephemeral             # Materialize a trial scan into .tenet/scan/.contracts/
-tenet status                       # Show repository coverage, offline check receipts, and contract health
+tenet check                        # Run semantic review, static checks, and locked runtime scripts
+tenet check --base origin/main     # Review a pull request diff against the base branch
 tenet fix                          # Apply native lint fixes and sandboxed runtime repairs
 tenet fix --severity high          # Limit repairs to findings at or above one severity level
-tenet check --offline              # Replay static, local, and locked runtime scripts without an LLM
-tenet check --base origin/main     # Review a pull request diff against the base branch
+tenet status                       # Show repository coverage, persisted check receipts, and contract health
 tenet show timeouts                # Inspect the rule, diff, evidence, and runnable script path
 ```
 
-With `OPENROUTER_API_KEY` set on macOS or Linux, Tenet builds qualified behavior checks in an OS sandbox, streams live progress phases in interactive terminals, and explains failed or unresolved findings through `fx`. Use `tenet check --offline` (alias `--replay`) to replay static, local, and locked runtime checks with zero model calls and persist `.tenet/offline-check.json` for `tenet status`. `tenet init` and `tenet audit` remain supported as backwards-compatible aliases for `tenet scan`. See [behavior checks](docs/behavior-checks.md), [local checks](docs/local-checks.md), and [final checks](docs/final-checks.md).
+With `OPENROUTER_API_KEY` set on macOS or Linux, Tenet builds qualified behavior checks in an OS sandbox, streams live progress phases in interactive terminals, and explains failed or unresolved findings through `fx`. As an explicit fallback for air-gapped environments, pre-commit hooks, or CI gates without provider credentials, `tenet check --skip-semantic` (compatibility aliases `--offline`, `--replay`) skips semantic contract review and only replays deterministic static checks, declared local checks, and locked runtime scripts in `scripts/`, saving its receipt to `.tenet/offline-check.json` for `tenet status`. `tenet init` and `tenet audit` remain supported as backwards-compatible aliases for `tenet scan`. See [behavior checks](docs/behavior-checks.md), [local checks](docs/local-checks.md), and [final checks](docs/final-checks.md).
 
 ## Contracts
 

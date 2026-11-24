@@ -3,24 +3,24 @@
 Every JSON object Tenet prints carries a `version`. JSON goes to stdout, and with JSON requested, progress and
 warnings go to stderr. Each format numbers its versions independently:
 
-| Command                                                     | Output                                                                        | Version |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------- | ------- |
-| `doctor --json`                                             | One environment and repository readiness report                               | 1       |
-| `scan --json` (aliases: `init --json`, `audit --json`)      | One repository scan, catalog recommendation, scaffold, or module audit report | 1       |
-| `check --json`, `check --reporter jsonl`                    | One [event](./output.md#jsonl) per line                                       | 5       |
-| `check --offline --json` (alias: `check --replay --json`)   | One [event](./output.md#jsonl) per line for offline static and script replay  | 5       |
-| `check --dry-run --json`                                    | One event per line: `selected`, `combined`, then `summary`                    | 5       |
-| `check --qualify CONTRACT/NAME --json`                      | One checker qualification report                                              | 1       |
-| `check --final --json`                                      | One [final check report](./final-checks.md)                                   | 1       |
-| `fix --json`                                                | One native lint and sandboxed runtime repair report                           | 1       |
-| `status --json`                                             | One object (with additive `coverage` and `offline_checks`)                    | 1       |
-| `show NAME --json`, `show --pending --json`                 | One object                                                                    | 2       |
-| `record NAME ... --json`                                    | One object with `record`, `replaces`, and `exit_code`                         | 1       |
-| `log --json`                                                | One review log entry per line                                                 | 2       |
-| `export`                                                    | One [evidence packet](./export.md#contents)                                   | 2       |
-| `contracts list --json`                                     | One object                                                                    | 1       |
-| `contracts outdated --json`, `update --json`, `diff --json` | One object                                                                    | 1       |
-| `skills outdated --json`, `update --json`, `diff --json`    | One object                                                                    | 1       |
+| Command                                                           | Output                                                                                                          | Version |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------- |
+| `doctor --json`                                                   | One environment and repository readiness report                                                                 | 1       |
+| `scan --json` (aliases: `init --json`, `audit --json`)            | One repository scan, catalog recommendation, scaffold, or module audit report                                   | 1       |
+| `check --json`, `check --reporter jsonl`                          | One [event](./output.md#jsonl) per line                                                                         | 5       |
+| `check --skip-semantic --json` (aliases: `--offline`, `--replay`) | One [event](./output.md#jsonl) per line for fallback static, local, and script replay (semantic review skipped) | 5       |
+| `check --dry-run --json`                                          | One event per line: `selected`, `combined`, then `summary`                                                      | 5       |
+| `check --qualify CONTRACT/NAME --json`                            | One checker qualification report                                                                                | 1       |
+| `check --final --json`                                            | One [final check report](./final-checks.md)                                                                     | 1       |
+| `fix --json`                                                      | One native lint and sandboxed runtime repair report                                                             | 1       |
+| `status --json`                                                   | One object (with additive `coverage` and `offline_checks`)                                                      | 1       |
+| `show NAME --json`, `show --pending --json`                       | One object                                                                                                      | 2       |
+| `record NAME ... --json`                                          | One object with `record`, `replaces`, and `exit_code`                                                           | 1       |
+| `log --json`                                                      | One review log entry per line                                                                                   | 2       |
+| `export`                                                          | One [evidence packet](./export.md#contents)                                                                     | 2       |
+| `contracts list --json`                                           | One object                                                                                                      | 1       |
+| `contracts outdated --json`, `update --json`, `diff --json`       | One object                                                                                                      | 1       |
+| `skills outdated --json`, `update --json`, `diff --json`          | One object                                                                                                      | 1       |
 
 ## Compatibility
 
@@ -74,11 +74,12 @@ contracts, scaffolded paths, discovered modules, synthesized contracts and mater
 
 ## Check
 
-[Output](./output.md#jsonl) describes `check` events. `check --offline --json` (alias `check --replay --json`) emits
-version 5 JSONL events without calling an LLM or requiring provider credentials, replaying static lint checks, declared
-local checks, and locked runtime scripts under `.contracts/<NNN>-<name>/scripts/` (plus legacy `agent-checks.lock.json`
-pins). Findings in `behavior_checks`, `scan`, and `check --offline` output may include an optional `severity` string
-that `tenet fix --severity` filters on; ignore absent or unknown severity values when reading earlier logs.
+[Output](./output.md#jsonl) describes `check` events. The explicit fallback `check --skip-semantic --json` (compatibility
+aliases `--offline`, `--replay`) skips semantic contract review and emits version 5 JSONL events without calling an LLM
+or requiring provider credentials, replaying only deterministic static lint checks, declared local checks, and locked
+runtime scripts under `.contracts/<NNN>-<name>/scripts/` (plus legacy `agent-checks.lock.json` pins). Findings in
+`behavior_checks`, `scan`, and `check --skip-semantic` output may include an optional `severity` string that
+`tenet fix --severity` filters on; ignore absent or unknown severity values when reading earlier logs.
 
 `check --dry-run --json` makes no model request and prints:
 
@@ -139,7 +140,7 @@ listed when its lines took the place of contents left out to fit.
 `status --json` prints the `review` label, the `base` commit, the latest `revision`, `unchanged` when the working tree
 matches the base, additive `coverage` and `offline_checks` (when `.tenet/offline-check.json` exists), `contracts`,
 `deleted_contracts`, and `exit_code`. The additive `coverage` object summarizes governed and ungoverned repository scope
-alongside active contracts and materialized scripts, and `offline_checks` carries the latest `tenet check --offline`
+alongside active contracts and materialized scripts, and `offline_checks` carries the latest `tenet check --skip-semantic`
 receipt (`behavior`, `local_count`, `native_passed`, `native_failed`, `recorded_at`, and `version`), both without
 breaking version 1 consumers. Each contract has:
 

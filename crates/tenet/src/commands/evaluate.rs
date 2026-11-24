@@ -33,7 +33,7 @@ pub(super) async fn evaluate(
     state: &Path,
     check: &Check,
 ) -> Result<ExitStatus, CommandError> {
-    if check.offline {
+    if check.skip_semantic {
         return super::offline::run(root, state, check).await;
     }
     if let Some(selector) = &check.qualify {

@@ -19,8 +19,8 @@ use crate::{
 const OFFLINE_RECEIPT_FILE: &str = "offline-check.json";
 const OFFLINE_RECEIPT_VERSION: u64 = 1;
 
-/// Persisted summary of the most recent `tenet check --offline` run at
-/// `<state>/offline-check.json`.
+/// Persisted summary of the most recent `tenet check --skip-semantic` (aliases `--offline`,
+/// `--replay`) run at `<state>/offline-check.json`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct OfflineReceipt {
     pub behavior: Vec<AuditReplayResult>,
@@ -146,7 +146,12 @@ pub(super) fn write_offline_section(
     receipt: &OfflineReceipt,
 ) -> Result<(), CommandError> {
     let summary = receipt.summarize();
-    writeln!(out, " {}", output::format_styled("Offline checks").bold())?;
+    writeln!(
+        out,
+        " {}  {}",
+        output::format_styled("Offline checks").bold(),
+        format_dim("semantic review skipped; run `tenet check` for full review"),
+    )?;
     writeln!(
         out,
         "  {} passed \u{b7} {} failed \u{b7} {} unresolved",

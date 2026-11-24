@@ -19,13 +19,13 @@ tenet scan --ephemeral
 
 ```sh
 tenet check
-tenet check --offline
 tenet check --base origin/main
 ```
 
 - `tenet check` runs semantic review, static checks, and locked runtime scripts across the repository without assuming existing code complies.
-- `tenet check --offline` (alias `--replay`) replays static checks, declared local checks, and locked runtime scripts in the sandbox without calling an LLM or requiring provider credentials, and saves the receipt to `.tenet/offline-check.json`.
 - `tenet check --base origin/main` compares staged, unstaged, and untracked changes against the base revision, assuming the base complies.
+
+As an explicit fallback for air-gapped environments, pre-commit hooks, or CI gates without provider credentials, `tenet check --skip-semantic` skips semantic contract review and only replays deterministic static checks, declared local checks, and locked runtime scripts in `scripts/`, saving its receipt to `.tenet/offline-check.json` (`--offline` and `--replay` remain supported as compatibility aliases).
 
 Each contract finishes with one semantic conclusion:
 

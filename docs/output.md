@@ -234,16 +234,16 @@ contracts govern the rest. A check that no contract governs still exits 0 and ne
 
 ## Check exit codes
 
-`check`, `check --offline`, and `status` share these codes:
+`check`, `check --skip-semantic`, and `status` share these codes:
 
-| Code | Meaning                                                                                                                                                         |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Every contract in the check selection or current review is settled without a violation, or all checks in `check --offline` / `.tenet/offline-check.json` passed |
-| 1    | A settled violation: a recorded failure, or a failing check in `check --offline` / `.tenet/offline-check.json`                                                  |
-| 2    | Invalid arguments or configuration, credentials or an endpoint the provider rejected, unreadable review state, a capture failure, or another execution error    |
-| 3    | A recorded `unresolved` conclusion, or an unresolved check in `check --offline` / `.tenet/offline-check.json`                                                   |
-| 4    | A contract is pending, including model failures, unresolved answers, failed requests, and exhausted budgets, or no check has run yet                            |
-| 130  | Cancelled                                                                                                                                                       |
+| Code | Meaning                                                                                                                                                               |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Every contract in the check selection or current review is settled without a violation, or all checks in `check --skip-semantic` / `.tenet/offline-check.json` passed |
+| 1    | A settled violation: a recorded failure, or a failing check in `check --skip-semantic` / `.tenet/offline-check.json`                                                  |
+| 2    | Invalid arguments or configuration, credentials or an endpoint the provider rejected, unreadable review state, a capture failure, or another execution error          |
+| 3    | A recorded `unresolved` conclusion, or an unresolved check in `check --skip-semantic` / `.tenet/offline-check.json`                                                   |
+| 4    | A contract is pending, including model failures, unresolved answers, failed requests, and exhausted budgets, or no check has run yet                                  |
+| 130  | Cancelled                                                                                                                                                             |
 
 Before any semantic review exists in `.tenet/events.jsonl`, `tenet status` derives its exit code from `.tenet/offline-check.json`
 when present (`0` when offline checks passed, `1` when any failed, `3` when any stayed unresolved, or `4` when empty).
