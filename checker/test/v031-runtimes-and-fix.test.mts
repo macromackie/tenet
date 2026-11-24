@@ -204,7 +204,7 @@ void test('Go same-package TestTenetObserve stages alongside package main and ru
 
   const files = new Map<string, string>([
     ['go.mod', 'module example.com/cli\n\ngo 1.21\n'],
-    ['cmd/tool/main.go', check.good],
+    ['cmd/tool/main.go', check.good ?? ''],
   ]);
 
   const observation = await observe({ check, files, projectRoot: root, qualify: true });

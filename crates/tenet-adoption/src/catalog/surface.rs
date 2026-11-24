@@ -1,3 +1,4 @@
+mod observe;
 mod terms;
 
 use alloc::collections::BTreeSet;
@@ -9,17 +10,20 @@ use std::{
 
 use tenet_contracts::Contract;
 
-use self::terms::{
-    COMMON_TERMS,
-    DECLARATION_KEYWORDS,
-    OBSERVATION_PATTERNS,
-    REQUIRED_FRAMEWORK_TERMS,
+use self::{
+    observe::{has_css_custom_property, observe},
+    terms::{COMMON_TERMS, DECLARATION_KEYWORDS, DOMAIN_PREFIXES, REQUIRED_FRAMEWORK_TERMS},
 };
-use super::{AdoptionError, profile::RepositoryProfile, split_words};
+use super::{
+    AdoptionError,
+    profile::{RepositoryProfile, is_excluded_source_path},
+    split_words,
+};
 
 pub(super) struct Surface {
     language: &'static str,
     path: PathBuf,
+    signal_terms: BTreeSet<String>,
     signals: Vec<&'static str>,
     symbols: Vec<String>,
     terms: BTreeSet<String>,
@@ -41,29 +45,18 @@ impl Surface {
 
     pub(super) fn score(&self, contract: &Contract, profile: &RepositoryProfile) -> Option<usize> {
         let names = split_words(&contract.name);
-        if ["typescript", "python", "rust", "javascript", "go"]
-            .iter()
-            .any(|language| {
-                names.contains(*language) && !self.language.eq_ignore_ascii_case(language)
-            })
+        if has_language_mismatch(self.language, &names)
+            || has_missing_framework_term(&names, &self.terms)
+            || !profile.is_domain_admissible(
+                &contract.name,
+                &names,
+                &self.terms,
+                &self.signal_terms,
+            )
         {
             return None;
         }
-        if REQUIRED_FRAMEWORK_TERMS
-            .iter()
-            .any(|word| names.contains(*word) && !self.terms.contains(*word))
-        {
-            return None;
-        }
-        if !profile.is_domain_admissible(&contract.name, &names, &self.terms) {
-            return None;
-        }
-        let title = names
-            .intersection(&self.terms)
-            .filter(|word| {
-                !self.language.eq_ignore_ascii_case(word) && !COMMON_TERMS.contains(&word.as_str())
-            })
-            .count();
+        let title = count_title_matches(self.language, &names, &self.terms);
         if title == 0 {
             return None;
         }
@@ -72,9 +65,44 @@ impl Surface {
             .intersection(&self.terms)
             .filter(|word| !COMMON_TERMS.contains(&word.as_str()))
             .count();
+        let signal_title = count_title_matches(self.language, &names, &self.signal_terms);
+        if is_domain_contract(&contract.name) && signal_title == 0 && (title < 2 || shared == 0) {
+            return None;
+        }
         let total = title.saturating_mul(4).saturating_add(shared);
         (total > 0).then_some(total)
     }
+}
+
+fn has_language_mismatch(language: &str, names: &BTreeSet<String>) -> bool {
+    ["typescript", "python", "rust", "javascript", "go"]
+        .iter()
+        .any(|target| names.contains(*target) && !language.eq_ignore_ascii_case(target))
+}
+
+fn has_missing_framework_term(names: &BTreeSet<String>, terms: &BTreeSet<String>) -> bool {
+    REQUIRED_FRAMEWORK_TERMS
+        .iter()
+        .any(|word| names.contains(*word) && !terms.contains(*word))
+}
+
+fn is_domain_contract(contract_name: &str) -> bool {
+    contract_name
+        .split_once('-')
+        .is_some_and(|(prefix, _)| DOMAIN_PREFIXES.contains(&prefix))
+}
+
+fn count_title_matches(
+    language: &str,
+    names: &BTreeSet<String>,
+    terms: &BTreeSet<String>,
+) -> usize {
+    names
+        .intersection(terms)
+        .filter(|word| {
+            !language.eq_ignore_ascii_case(word) && !COMMON_TERMS.contains(&word.as_str())
+        })
+        .count()
 }
 
 fn is_workflow_path(path: &Path) -> bool {
@@ -92,6 +120,7 @@ fn detect_language(path: &Path) -> Option<&'static str> {
     match path.extension()?.to_str()? {
         "ts" | "tsx" | "mts" | "cts" => Some("TypeScript"),
         "js" | "jsx" | "mjs" | "cjs" => Some("JavaScript"),
+        "css" | "scss" => Some("CSS"),
         "rs" => Some("Rust"),
         "go" => Some("Go"),
         "py" => Some("Python"),
@@ -121,13 +150,26 @@ fn build_declarative_surface(path: &Path, language: &'static str, source: &str) 
                 &["infra", "terraform", "state", "apply", "authority"],
             )
         },
+        "CSS" if has_css_custom_property(source) => {
+            (
+                "design tokens",
+                "CSS design tokens",
+                &["ui", "css", "design", "token", "theme"],
+            )
+        },
+        "CSS" if source.contains('{') && source.contains(':') => {
+            ("stylesheet", "CSS stylesheet rules", &["ui", "css"])
+        },
         _ => return None,
     };
+    let signal_terms: BTreeSet<String> =
+        extra_terms.iter().map(|term| (*term).to_owned()).collect();
     let mut terms = split_words(&path.to_string_lossy());
-    terms.extend(extra_terms.iter().map(|term| (*term).to_owned()));
+    terms.extend(signal_terms.iter().cloned());
     Some(Surface {
         language,
         path: path.to_path_buf(),
+        signal_terms,
         signals: vec![signal],
         symbols: vec![symbol.to_owned()],
         terms,
@@ -160,15 +202,16 @@ fn build_code_surface(path: &Path, language: &'static str, source: &str) -> Opti
     if symbols.is_empty() {
         return None;
     }
-    let (signals, signal_terms) = observe(source);
+    let observed = observe(path, source);
     let mut terms = split_words(&symbols.join(" "));
-    terms.extend(signal_terms);
+    terms.extend(observed.terms);
     terms.extend(split_words(&path.to_string_lossy()));
     let _inserted = terms.insert(language.to_ascii_lowercase());
     Some(Surface {
         language,
         path: path.to_path_buf(),
-        signals,
+        signal_terms: observed.signal_terms,
+        signals: observed.signals,
         symbols,
         terms,
     })
@@ -210,51 +253,5 @@ pub(super) fn inspect(root: &Path, inventory: &[PathBuf]) -> Result<Vec<Surface>
 }
 
 fn is_support_path(path: &Path) -> bool {
-    const SUPPORT: &[&str] = &[
-        "dist",
-        "examples",
-        "fixtures",
-        "node_modules",
-        "scripts",
-        "target",
-        "test",
-        "testdata",
-        "tests",
-        "tools",
-        "vendor",
-    ];
-    if is_workflow_path(path) {
-        return false;
-    }
-    path.iter().any(|part| {
-        part.to_str()
-            .is_none_or(|name| name.starts_with('.') || SUPPORT.contains(&name))
-    })
-}
-
-fn observe(source: &str) -> (Vec<&'static str>, BTreeSet<String>) {
-    let mut signals = Vec::new();
-    let mut terms = BTreeSet::new();
-    if source.lines().any(|line| {
-        line.starts_with("export function ") || line.starts_with("export async function ")
-    }) {
-        signals.push("an exported function");
-        terms.extend(split_words("an exported function"));
-    }
-    for (label, extra_terms, markers) in OBSERVATION_PATTERNS {
-        if markers.iter().any(|marker| {
-            source
-                .lines()
-                .map(str::trim_start)
-                .filter(|line| {
-                    !(line.starts_with('#') || line.starts_with("//") || line.starts_with('*'))
-                })
-                .any(|line| line.contains(marker))
-        }) {
-            signals.push(label);
-            terms.extend(split_words(label));
-            terms.extend(extra_terms.iter().map(|term| (*term).to_owned()));
-        }
-    }
-    (signals, terms)
+    !is_workflow_path(path) && is_excluded_source_path(path)
 }

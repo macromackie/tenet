@@ -8,7 +8,10 @@ use tenet_checks::{
 };
 use tenet_engine::review::{self, CurrentContract};
 
-use super::coverage::{RepoCoverage, write_coverage_section};
+use super::{
+    coverage::{RepoCoverage, write_coverage_section},
+    offline::{OfflineReceipt, write_offline_next_step, write_offline_section},
+};
 use crate::{
     cli::ExitStatus,
     error::CommandError,
@@ -16,6 +19,13 @@ use crate::{
     report_format::{format_dim, format_display, format_marker, format_painted},
     review::{STATUS_VERSION, find_model, format_state_text},
 };
+
+/// Optional supplemental status sections shared by checked and unchecked status renderers.
+pub(super) struct StatusExtras<'extras> {
+    pub coverage: Option<&'extras RepoCoverage>,
+    pub mechanical: Option<&'extras [mechanical::Evidence]>,
+    pub offline: Option<&'extras OfflineReceipt>,
+}
 
 pub(super) fn collect_failed_behavior_contracts(rows: &[Finding]) -> BTreeSet<&str> {
     rows.iter()
@@ -164,16 +174,15 @@ fn write_details(out: &mut impl io::Write, row: &mechanical::Evidence) -> io::Re
     Ok(())
 }
 
-fn attach_optional_sections(
-    document: &mut Value,
-    mechanical: Option<&[mechanical::Evidence]>,
-    coverage: Option<&RepoCoverage>,
-) {
-    if let Some(rows) = mechanical {
+fn attach_optional_sections(document: &mut Value, extras: &StatusExtras<'_>) {
+    if let Some(rows) = extras.mechanical {
         document["mechanical_evidence"] = json!(rows);
     }
-    if let Some(map) = coverage {
+    if let Some(map) = extras.coverage {
         document["coverage"] = json!(map);
+    }
+    if let Some(receipt) = extras.offline {
+        document["offline_checks"] = json!(receipt);
     }
 }
 
@@ -186,8 +195,7 @@ pub(super) fn write_status_json(
     current: &review::Current<'_>,
     behavior_failed_contracts: &BTreeSet<&str>,
     generated: &[Finding],
-    mechanical: Option<&[mechanical::Evidence]>,
-    coverage: Option<&RepoCoverage>,
+    extras: &StatusExtras<'_>,
     status: ExitStatus,
 ) -> Result<(), CommandError> {
     let contracts = current
@@ -221,7 +229,7 @@ pub(super) fn write_status_json(
         "exit_code": u8::from(status),
     });
     document["behavior_checks"] = json!(generated);
-    attach_optional_sections(&mut document, mechanical, coverage);
+    attach_optional_sections(&mut document, extras);
     output::write_document(out, STATUS_VERSION, document)?;
     Ok(())
 }
@@ -230,28 +238,37 @@ pub(super) fn write_unchecked(
     out: &mut impl io::Write,
     base: Option<&str>,
     message: &str,
-    mechanical: Option<&[mechanical::Evidence]>,
-    coverage: Option<&RepoCoverage>,
+    extras: &StatusExtras<'_>,
     json: bool,
 ) -> Result<ExitStatus, CommandError> {
+    let status = extras
+        .offline
+        .map_or(ExitStatus::Pending, OfflineReceipt::exit_status);
     if json {
         let mut document = json!({
             "base": base,
             "revision": null,
             "contracts": [],
-            "exit_code": u8::from(ExitStatus::Pending),
+            "exit_code": u8::from(status),
             "message": message,
         });
-        attach_optional_sections(&mut document, mechanical, coverage);
+        attach_optional_sections(&mut document, extras);
         output::write_document(out, STATUS_VERSION, document)?;
+        return Ok(status);
+    }
+    if let Some(receipt) = extras.offline {
+        write_offline_section(out, receipt)?;
     } else {
         writeln!(out, "{message}")?;
-        if let Some(map) = coverage {
-            write_coverage_section(out, map)?;
-        }
-        if let Some(rows) = mechanical {
-            write_mechanical(out, rows)?;
-        }
     }
-    Ok(ExitStatus::Pending)
+    if let Some(map) = extras.coverage {
+        write_coverage_section(out, map)?;
+    }
+    if let Some(rows) = extras.mechanical {
+        write_mechanical(out, rows)?;
+    }
+    if let Some(receipt) = extras.offline {
+        write_offline_next_step(out, receipt)?;
+    }
+    Ok(status)
 }

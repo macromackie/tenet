@@ -27,7 +27,7 @@ use crate::{
     cli::{Check, ExitStatus, ReporterKind},
     error::CommandError,
     output,
-    review::{compute_coverage, discover_all_contracts},
+    review::{OfflineReceipt, compute_coverage, discover_all_contracts},
 };
 
 /// One pinned behavior check discovered from committed `.contracts/` or `<state>/scan/.contracts/`.
@@ -123,6 +123,7 @@ pub(super) async fn run(
     }
     let coverage = compute_coverage(root, state)?;
     let status = compute_offline_status(&native_report, &local_rows, &behavior_results);
+    save_offline_receipt(state, &native_report, &local_rows, &behavior_results)?;
     let mut out = output::open_stdout().lock();
     let payload = OfflineOutput {
         behavior: &behavior_results,
@@ -133,6 +134,17 @@ pub(super) async fn run(
     };
     write_offline_output(&mut out, &payload, json_mode)?;
     Ok(status)
+}
+
+fn save_offline_receipt(
+    state: &Path,
+    native: &fixes::Report,
+    local: &[mechanical::Evidence],
+    behavior: &[AuditReplayResult],
+) -> Result<(), CommandError> {
+    let native_passed = native.verified.iter().filter(|item| item.passed).count();
+    let native_failed = native.verified.len().saturating_sub(native_passed);
+    OfflineReceipt::new(behavior.to_vec(), local.len(), native_failed, native_passed).save(state)
 }
 
 #[expect(

@@ -206,10 +206,19 @@ fn copy_staged_pin_bundle_migrates_legacy_inline_pin() -> anyhow::Result<()> {
         .pointer("/bundle/checks/0")
         .ok_or_else(|| anyhow::anyhow!("missing migrated check"))?;
     let expected_hash = format!("{:x}", Sha256::digest(inline_code.as_bytes()));
+    let expected_controls = serde_json::to_string(&[
+        "throws on empty string",
+        "accepts empty string",
+        "extract validator",
+    ])?;
+    let expected_control_hash = format!("{:x}", Sha256::digest(expected_controls.as_bytes()));
     anyhow::ensure!(first_check.get("test").is_none());
+    anyhow::ensure!(first_check.get("good").is_none());
+    anyhow::ensure!(first_check.get("defect").is_none());
+    anyhow::ensure!(first_check.get("refactor").is_none());
     anyhow::ensure!(first_check.get("scriptFile") == Some(&json!("reject-empty-nil.mjs")));
     anyhow::ensure!(first_check.get("scriptHash") == Some(&json!(expected_hash)));
-    anyhow::ensure!(first_check.get("defect") == Some(&json!("accepts empty string")));
+    anyhow::ensure!(first_check.get("controlHash") == Some(&json!(expected_control_hash)));
     Ok(())
 }
 

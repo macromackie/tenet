@@ -141,7 +141,7 @@ void test('validate allows array edits on large source files exceeding the 128 K
     files,
   });
 
-  const hasFix = checked.good.includes('export const value = 1;');
+  const hasFix = (checked.good ?? '').includes('export const value = 1;');
 
   assert.deepEqual([checked.brownfield, hasFix], [true, true]);
 });

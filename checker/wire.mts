@@ -104,12 +104,13 @@ export type Receipt = typeof Receipt.Type;
 
 const CheckFields = Schema.Struct({
   brownfield: OptionalFlag,
-  defect: Schema.String,
+  controlHash: OptionalText,
+  defect: OptionalText,
   expected: Schema.Unknown,
-  good: Schema.String,
+  good: OptionalText,
   id: Schema.String,
   promise: Schema.String,
-  refactor: Schema.String,
+  refactor: OptionalText,
   runtime: Runtime,
   scriptFile: OptionalText,
   scriptHash: OptionalText,

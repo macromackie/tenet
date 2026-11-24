@@ -21877,8 +21877,85 @@ function formatProbeFailure({
   return `${base}: ${detail}${hint}`;
 }
 
-// sandbox/controls/validate-check.mts
+// sandbox/controls/read-pin-meta.mts
 var MAX_FIELD_BYTES = 131072;
+function readOptionalPinText(raw) {
+  if (typeof raw !== "string" || raw.trim().length === 0 || Buffer.byteLength(raw) > MAX_FIELD_BYTES) {
+    return Option_exports.none();
+  }
+  return Option_exports.some(raw);
+}
+function readPinTexts(fields) {
+  const rawControlHash = fields.get("controlHash");
+  const rawScriptFile = fields.get("scriptFile");
+  const rawScriptHash = fields.get("scriptHash");
+  return {
+    controlHash: readOptionalPinText(rawControlHash),
+    scriptFile: readOptionalPinText(rawScriptFile),
+    scriptHash: readOptionalPinText(rawScriptHash)
+  };
+}
+function isOmittedControl(value3) {
+  return value3 === void 0 || value3 === "";
+}
+function hasOmittedControls(fields) {
+  const rawGood = fields.get("good");
+  const rawDefect = fields.get("defect");
+  const rawRefactor = fields.get("refactor");
+  return isOmittedControl(rawGood) && isOmittedControl(rawDefect) && isOmittedControl(rawRefactor);
+}
+function buildSlimControls({ controlHash, explicitBrownfield }) {
+  if (explicitBrownfield && Option_exports.isSome(controlHash)) {
+    return { brownfield: true, controlHash: controlHash.value };
+  }
+  if (explicitBrownfield) {
+    return { brownfield: true };
+  }
+  if (Option_exports.isSome(controlHash)) {
+    return { controlHash: controlHash.value };
+  }
+  return {};
+}
+function resolveSlimControls({
+  controlHash,
+  explicitBrownfield,
+  fields,
+  scriptFile
+}) {
+  if (!hasOmittedControls(fields)) {
+    return Option_exports.none();
+  }
+  if (Option_exports.isNone(scriptFile) && Option_exports.isNone(controlHash)) {
+    return Option_exports.none();
+  }
+  const slim = buildSlimControls({ controlHash, explicitBrownfield });
+  return Option_exports.some(slim);
+}
+function buildScriptMeta({ scriptFile, scriptHash }) {
+  if (Option_exports.isSome(scriptFile) && Option_exports.isSome(scriptHash)) {
+    return { scriptFile: scriptFile.value, scriptHash: scriptHash.value };
+  }
+  if (Option_exports.isSome(scriptFile)) {
+    return { scriptFile: scriptFile.value };
+  }
+  if (Option_exports.isSome(scriptHash)) {
+    return { scriptHash: scriptHash.value };
+  }
+  return {};
+}
+function readPinMeta({ fields, fromPin }) {
+  if (!fromPin) {
+    return { controlHash: Option_exports.none(), scriptMeta: {}, slimControls: Option_exports.none() };
+  }
+  const { controlHash, scriptFile, scriptHash } = readPinTexts(fields);
+  const explicitBrownfield = fields.get("brownfield") === true;
+  const slimControls = resolveSlimControls({ controlHash, explicitBrownfield, fields, scriptFile });
+  const scriptMeta = buildScriptMeta({ scriptFile, scriptHash });
+  return { controlHash, scriptMeta, slimControls };
+}
+
+// sandbox/controls/validate-check.mts
+var MAX_FIELD_BYTES2 = 131072;
 var EDIT_LIMIT_PADDING = 32768;
 var ID_PATTERN = new RegExp("^[a-z][a-z0-9\\-]{0,63}$", "v");
 var NATIVE_TEST_RUNTIMES = /* @__PURE__ */ new Set(["node", "python"]);
@@ -21891,7 +21968,7 @@ function readFields(candidate) {
   return fields;
 }
 function readText(value3) {
-  if (typeof value3 !== "string" || value3.trim().length === 0 || Buffer.byteLength(value3) > MAX_FIELD_BYTES) {
+  if (typeof value3 !== "string" || value3.trim().length === 0 || Buffer.byteLength(value3) > MAX_FIELD_BYTES2) {
     throw new CheckerError({
       message: "the generated checker is missing a bounded test, promise or control"
     });
@@ -21915,7 +21992,10 @@ function readField({ fields, key }) {
   const raw = fields.get(key);
   return readText(raw);
 }
-function readTarget({ fields, files }) {
+function readTarget({
+  fields,
+  files
+}) {
   const id2 = readField({ fields, key: "id" });
   const subject = readField({ fields, key: "subject" });
   if (!ID_PATTERN.test(id2) || !files.has(subject) || !fields.has("expected")) {
@@ -21945,9 +22025,9 @@ function assertDistinctControls({ defect, good, refactor }) {
 function readControlLimit({ control, source }) {
   if (Array.isArray(control)) {
     const padded = Buffer.byteLength(source) + EDIT_LIMIT_PADDING;
-    return Math.max(MAX_FIELD_BYTES, padded);
+    return Math.max(MAX_FIELD_BYTES2, padded);
   }
-  return MAX_FIELD_BYTES;
+  return MAX_FIELD_BYTES2;
 }
 function resolveRefactor({
   allowBrownfield,
@@ -21975,7 +22055,7 @@ function buildControl({ control, label, source }) {
   const limit = readControlLimit({ control, source });
   return applyControl({ control, label, limit, source });
 }
-function readControls({ fields, fromPin, source }) {
+function readFullControls({ fields, fromPin, source }) {
   const rawGood = fields.get("good");
   const rawDefect = fields.get("defect");
   const rawRefactor = fields.get("refactor");
@@ -21993,38 +22073,19 @@ function readControls({ fields, fromPin, source }) {
     source
   });
 }
-function readOptionalPinText(raw) {
-  if (typeof raw !== "string" || raw.trim().length === 0 || Buffer.byteLength(raw) > MAX_FIELD_BYTES) {
-    return Option_exports.none();
+function readControls({ fields, fromPin, pinMeta, source }) {
+  if (Option_exports.isSome(pinMeta.slimControls)) {
+    return pinMeta.slimControls.value;
   }
-  return Option_exports.some(raw);
+  const resolved = readFullControls({ fields, fromPin, source });
+  if (Option_exports.isSome(pinMeta.controlHash)) {
+    return { ...resolved, controlHash: pinMeta.controlHash.value };
+  }
+  return resolved;
 }
-function buildScriptMeta({ scriptFile, scriptHash }) {
-  if (Option_exports.isSome(scriptFile) && Option_exports.isSome(scriptHash)) {
-    return { scriptFile: scriptFile.value, scriptHash: scriptHash.value };
-  }
-  if (Option_exports.isSome(scriptFile)) {
-    return { scriptFile: scriptFile.value };
-  }
-  if (Option_exports.isSome(scriptHash)) {
-    return { scriptHash: scriptHash.value };
-  }
-  return {};
-}
-function readScriptMeta({ fields, fromPin }) {
-  if (!fromPin) {
-    return {};
-  }
-  const rawScriptFile = fields.get("scriptFile");
-  const rawScriptHash = fields.get("scriptHash");
-  const scriptFile = readOptionalPinText(rawScriptFile);
-  const scriptHash = readOptionalPinText(rawScriptHash);
-  return buildScriptMeta({ scriptFile, scriptHash });
-}
-function attachEntry({ base, fields, files, fromPin }) {
+function attachEntry({ base, fields, files, pinMeta }) {
   if (!fields.has("testFile")) {
-    const scriptMeta = readScriptMeta({ fields, fromPin });
-    return { ...base, ...scriptMeta, test: readField({ fields, key: "test" }) };
+    return { ...base, ...pinMeta.scriptMeta, test: readField({ fields, key: "test" }) };
   }
   const testFile = readField({ fields, key: "testFile" });
   const isNative = NATIVE_TEST_RUNTIMES.has(base.runtime) && base.expected === true;
@@ -22043,9 +22104,10 @@ function validate3({ check: check2, files, fromPin = false }) {
   if (source === void 0) {
     throw new CheckerError({ message: "the generated checker target is missing from source" });
   }
-  const controls = readControls({ fields, fromPin, source });
+  const pinMeta = readPinMeta({ fields, fromPin });
+  const controls = readControls({ fields, fromPin, pinMeta, source });
   const base = { ...target, ...controls };
-  return attachEntry({ base, fields, files, fromPin });
+  return attachEntry({ base, fields, files, pinMeta });
 }
 
 // sandbox/os/linux-sandbox.mts
@@ -23816,6 +23878,22 @@ async function readExisting(location) {
 import { dirname as dirname6, join as join7 } from "node:path";
 
 // storage/build-check-entry.mts
+function computeControlHash({
+  controlHash,
+  defect = "",
+  good = "",
+  refactor = ""
+}) {
+  if (controlHash !== void 0 && controlHash.length > 0) {
+    return Option_exports.some(controlHash);
+  }
+  if (good.length === 0 && defect.length === 0 && refactor.length === 0) {
+    return Option_exports.none();
+  }
+  const encoded = JSON.stringify([good, defect, refactor]);
+  const digest = hashSource(encoded);
+  return Option_exports.some(digest);
+}
 function readCheckTarget(check2) {
   return {
     expected: check2.expected,
@@ -23825,36 +23903,103 @@ function readCheckTarget(check2) {
     subject: check2.subject
   };
 }
-function readCheckControls(check2) {
-  if (check2.brownfield !== void 0) {
-    return {
-      brownfield: check2.brownfield,
-      defect: check2.defect,
-      good: check2.good,
-      refactor: check2.refactor
-    };
+function pickBrownfield(brownfield) {
+  if (brownfield !== void 0) {
+    return { brownfield };
   }
-  return { defect: check2.defect, good: check2.good, refactor: check2.refactor };
+  return {};
 }
-function attachScriptMeta({ base, scriptFile, scriptHash }) {
-  if (scriptHash !== void 0) {
-    return { ...base, scriptFile, scriptHash };
+function pickControlHash(controlHash) {
+  if (Option_exports.isSome(controlHash)) {
+    return { controlHash: controlHash.value };
   }
-  return { ...base, scriptFile };
+  return {};
 }
-function buildCheckEntry({
+function pickDefect(defect) {
+  if (defect !== void 0) {
+    return { defect };
+  }
+  return {};
+}
+function pickGood(good) {
+  if (good !== void 0) {
+    return { good };
+  }
+  return {};
+}
+function pickRefactor(refactor) {
+  if (refactor !== void 0) {
+    return { refactor };
+  }
+  return {};
+}
+function readCheckControls({ check: check2, includeControls }) {
+  const controlHash = computeControlHash(check2);
+  const meta = {
+    ...pickBrownfield(check2.brownfield),
+    ...pickControlHash(controlHash)
+  };
+  if (!includeControls) {
+    return meta;
+  }
+  return {
+    ...meta,
+    ...pickDefect(check2.defect),
+    ...pickGood(check2.good),
+    ...pickRefactor(check2.refactor)
+  };
+}
+function resolveOptionalText({ fallback, preferred }) {
+  if (preferred !== void 0) {
+    return Option_exports.some(preferred);
+  }
+  return Option_exports.fromUndefinedOr(fallback);
+}
+function pickScriptFile(scriptFile) {
+  if (Option_exports.isSome(scriptFile)) {
+    return { scriptFile: scriptFile.value };
+  }
+  return {};
+}
+function pickScriptHash(scriptHash) {
+  if (Option_exports.isSome(scriptHash)) {
+    return { scriptHash: scriptHash.value };
+  }
+  return {};
+}
+function pickTest(test) {
+  if (test !== void 0) {
+    return { test };
+  }
+  return {};
+}
+function pickTestFile(testFile) {
+  if (testFile !== void 0) {
+    return { testFile };
+  }
+  return {};
+}
+function readScriptFields({
   check: check2,
   scriptFile,
   scriptHash,
   test
 }) {
+  const resolvedFile = resolveOptionalText({ fallback: check2.scriptFile, preferred: scriptFile });
+  const resolvedHash = resolveOptionalText({ fallback: check2.scriptHash, preferred: scriptHash });
+  return {
+    ...pickScriptFile(resolvedFile),
+    ...pickScriptHash(resolvedHash),
+    ...pickTest(test),
+    ...pickTestFile(check2.testFile)
+  };
+}
+function buildCheckEntry(input) {
+  const { check: check2, includeControls = true } = input;
   const target = readCheckTarget(check2);
-  const controls = readCheckControls(check2);
-  const entry = attachScriptMeta({ base: { ...target, ...controls }, scriptFile, scriptHash });
-  if (test !== void 0) {
-    return { ...entry, test };
-  }
-  return entry;
+  const controls = readCheckControls({ check: check2, includeControls });
+  const scripts = readScriptFields(input);
+  return { ...target, ...controls, ...scripts };
 }
 
 // storage/is-safe-script-file.mts
@@ -24142,9 +24287,15 @@ async function preserveIfHandEdited({
   if (Option_exports.isNone(existing) || hashSource(existing.value) === priorHash) {
     return Option_exports.none();
   }
-  const diskCheck = buildCheckEntry({ check: check2, scriptFile, scriptHash: priorHash });
+  const diskCheck = buildCheckEntry({
+    check: check2,
+    includeControls: false,
+    scriptFile,
+    scriptHash: priorHash
+  });
   const hydratedCheck = buildCheckEntry({
     check: check2,
+    includeControls: true,
     scriptFile,
     scriptHash: priorHash,
     test: existing.value
@@ -24160,9 +24311,20 @@ async function writeFreshScript({
 }) {
   await writeTextAtomic({ path: scriptPath, root, text: text2 });
   const scriptHash = hashSource(text2);
-  const diskCheck = buildCheckEntry({ check: check2, scriptFile, scriptHash });
-  const hydratedCheck = buildCheckEntry({ check: check2, scriptFile, scriptHash, test: text2 });
+  const diskCheck = buildCheckEntry({ check: check2, includeControls: false, scriptFile, scriptHash });
+  const hydratedCheck = buildCheckEntry({
+    check: check2,
+    includeControls: true,
+    scriptFile,
+    scriptHash,
+    test: text2
+  });
   return { diskCheck, handEdited: false, hydratedCheck, scriptFile };
+}
+function buildNonScriptResult(check2) {
+  const diskCheck = buildCheckEntry({ check: check2, includeControls: false });
+  const hydratedCheck = buildCheckEntry({ check: check2, includeControls: true });
+  return { diskCheck, handEdited: false, hydratedCheck };
 }
 async function writeOneCheck({
   check: check2,
@@ -24173,7 +24335,7 @@ async function writeOneCheck({
   usedNames
 }) {
   if (check2.test === void 0 || check2.test.length === 0) {
-    return { diskCheck: check2, handEdited: false, hydratedCheck: check2 };
+    return buildNonScriptResult(check2);
   }
   const priorByCheckId = priorIdChecks.get(check2.id);
   const scriptFile = allocateScriptFile({ check: check2, priorCheck: priorByCheckId, usedNames });
@@ -25372,12 +25534,13 @@ var ReceiptFields = Schema_exports.Struct({
 var Receipt = Schema_exports.toEncoded(ReceiptFields);
 var CheckFields = Schema_exports.Struct({
   brownfield: OptionalFlag,
-  defect: Schema_exports.String,
+  controlHash: OptionalText,
+  defect: OptionalText,
   expected: Schema_exports.Unknown,
-  good: Schema_exports.String,
+  good: OptionalText,
   id: Schema_exports.String,
   promise: Schema_exports.String,
-  refactor: Schema_exports.String,
+  refactor: OptionalText,
   runtime: Runtime,
   scriptFile: OptionalText,
   scriptHash: OptionalText,
@@ -27562,7 +27725,7 @@ function buildOpenFinding({ contract, reason }) {
 }
 
 // review/pin/brownfield-witness.mts
-var MAX_FIELD_BYTES2 = 131072;
+var MAX_FIELD_BYTES3 = 131072;
 var MAX_REPRO_CODE_CHARS = 4e3;
 var MAX_REPRO_VALUE_CHARS = 512;
 var ID_PATTERN2 = new RegExp("^[a-z][a-z0-9\\-]{0,63}$", "v");
@@ -27586,7 +27749,7 @@ function isControlOnlyQualifyError(detail) {
 }
 function readBoundedField({ fields, key }) {
   const value3 = fields.get(key);
-  if (typeof value3 !== "string" || value3.trim().length === 0 || Buffer.byteLength(value3) > MAX_FIELD_BYTES2) {
+  if (typeof value3 !== "string" || value3.trim().length === 0 || Buffer.byteLength(value3) > MAX_FIELD_BYTES3) {
     return Option_exports.none();
   }
   return Option_exports.some(value3);
@@ -28122,20 +28285,6 @@ function updatePin({ prior, next, files, handEditedIds }) {
     return next;
   }
   return mergeSameContractPin({ files, handEditedIds, next, prior });
-}
-
-// review/review.mts
-import { realpath as realpath12 } from "node:fs/promises";
-
-// review/read-reason.mts
-function readReason(error) {
-  if (error instanceof SyntaxError) {
-    return "The checker response was not valid JSON.";
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "Could not complete the check.";
 }
 
 // discovery/base.mts
@@ -28736,6 +28885,12 @@ function buildFailedObservation({
   const repro = Option_exports.getOrUndefined(reproOption);
   return buildFinding({ ...context3, message, outcome: "failed", repro });
 }
+function isMissingControl(value3) {
+  return value3 === void 0 || value3.length === 0;
+}
+function isSlimPinCheck(check2) {
+  return [check2.good, check2.defect, check2.refactor].every((value3) => isMissingControl(value3));
+}
 async function observeOne(input) {
   const { evaluation, check: check2, pinReused, qualified, reused } = input;
   const context3 = {
@@ -28745,11 +28900,12 @@ async function observeOne(input) {
     reused,
     subject: check2.subject
   };
+  const shouldQualify = !qualified && !isSlimPinCheck(check2);
   const result3 = await observe({
     check: check2,
     files: evaluation.current.runtimeFiles,
     projectRoot: evaluation.root,
-    qualify: !qualified
+    qualify: shouldQualify
   });
   if (result3.passed) {
     return buildFinding({ ...context3, message: check2.promise, outcome: "passed" });
@@ -28983,6 +29139,20 @@ async function saveReceipt({ ctx, rows, pin }) {
     tools
   };
   await writeAtomic({ path: ctx.receipt, root: request3.state, value: value3 });
+}
+
+// review/review.mts
+import { realpath as realpath12 } from "node:fs/promises";
+
+// review/read-reason.mts
+function readReason(error) {
+  if (error instanceof SyntaxError) {
+    return "The checker response was not valid JSON.";
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Could not complete the check.";
 }
 
 // review/report-coverage.mts

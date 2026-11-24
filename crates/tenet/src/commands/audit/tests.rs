@@ -1,3 +1,5 @@
+mod save_consolidation;
+
 use core::slice;
 use std::{fs, process::Command};
 

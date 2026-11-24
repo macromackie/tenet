@@ -1,12 +1,13 @@
 use alloc::collections::BTreeSet;
 use std::{
+    fs,
     io::Write,
     path::{Component, Path, PathBuf},
 };
 
 use serde::Serialize;
 use tenet_checks::behavior::{find_pin_path, read_pin_summary};
-use tenet_contracts::Contract;
+use tenet_contracts::{Contract, parse as parse_contract};
 use tenet_engine::{discover_contracts, list_paths};
 
 use crate::{error::CommandError, output, report_format::format_dim};
@@ -42,12 +43,31 @@ pub(crate) fn discover_all_contracts(
 ) -> Result<(Vec<Contract>, Vec<Contract>), CommandError> {
     let committed = discover_contracts(root)?;
     let scan_root = state.join("scan");
-    let ephemeral = if scan_root.join(".contracts").is_dir() {
-        discover_contracts(&scan_root)?
-    } else {
-        Vec::new()
-    };
+    let ephemeral = read_ephemeral_contracts(&scan_root)?;
     Ok((committed, ephemeral))
+}
+
+fn read_ephemeral_contracts(scan_root: &Path) -> Result<Vec<Contract>, CommandError> {
+    let contracts_dir = scan_root.join(".contracts");
+    let Ok(entries) = fs::read_dir(&contracts_dir) else {
+        return Ok(Vec::new());
+    };
+    let mut folders: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
+    folders.sort();
+    let mut contracts = Vec::new();
+    for folder in folders {
+        let doc_path = folder.join("CONTRACT.md");
+        if !doc_path.is_file() {
+            continue;
+        }
+        let Ok(relative) = doc_path.strip_prefix(scan_root) else {
+            continue;
+        };
+        let document = fs::read_to_string(&doc_path)?;
+        contracts.push(parse_contract(relative, &document).map_err(anyhow::Error::from)?);
+    }
+    contracts.sort_by_key(|item| item.number);
+    Ok(contracts)
 }
 
 /// Compute offline coverage across committed `.contracts/` and ephemeral
@@ -129,12 +149,15 @@ pub(super) fn write_coverage_section(
         } else {
             contract.scope.display().to_string()
         };
+        let file_noun = choose_plural(contract.governed_files, "file", "files");
+        let item_script_noun = choose_plural(contract.script_count, "script", "scripts");
         writeln!(
             out,
             "    {}  {}",
             contract.name,
             format_dim(&format!(
-                "scope {scope_label} \u{b7} {} files \u{b7} {} scripts{ephemeral_tag}",
+                "scope {scope_label} \u{b7} {} {file_noun} \u{b7} {} \
+                 {item_script_noun}{ephemeral_tag}",
                 contract.governed_files, contract.script_count,
             )),
         )?;

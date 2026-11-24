@@ -130,10 +130,16 @@ async function preserveIfHandEdited({
     return Option.none();
   }
 
-  const diskCheck = buildCheckEntry({ check, scriptFile, scriptHash: priorHash });
+  const diskCheck = buildCheckEntry({
+    check,
+    includeControls: false,
+    scriptFile,
+    scriptHash: priorHash,
+  });
 
   const hydratedCheck = buildCheckEntry({
     check,
+    includeControls: true,
     scriptFile,
     scriptHash: priorHash,
     test: existing.value,
@@ -152,10 +158,24 @@ async function writeFreshScript({
   await writeTextAtomic({ path: scriptPath, root, text });
 
   const scriptHash = hashSource(text);
-  const diskCheck = buildCheckEntry({ check, scriptFile, scriptHash });
-  const hydratedCheck = buildCheckEntry({ check, scriptFile, scriptHash, test: text });
+  const diskCheck = buildCheckEntry({ check, includeControls: false, scriptFile, scriptHash });
+
+  const hydratedCheck = buildCheckEntry({
+    check,
+    includeControls: true,
+    scriptFile,
+    scriptHash,
+    test: text,
+  });
 
   return { diskCheck, handEdited: false, hydratedCheck, scriptFile };
+}
+
+function buildNonScriptResult(check: Check): WriteOneCheckResult {
+  const diskCheck = buildCheckEntry({ check, includeControls: false });
+  const hydratedCheck = buildCheckEntry({ check, includeControls: true });
+
+  return { diskCheck, handEdited: false, hydratedCheck };
 }
 
 async function writeOneCheck({
@@ -167,7 +187,7 @@ async function writeOneCheck({
   usedNames,
 }: WriteOneCheckInput): Promise<WriteOneCheckResult> {
   if (check.test === undefined || check.test.length === 0) {
-    return { diskCheck: check, handEdited: false, hydratedCheck: check };
+    return buildNonScriptResult(check);
   }
 
   const priorByCheckId = priorIdChecks.get(check.id);

@@ -42,6 +42,7 @@ pub use pins::{
     SCRIPTS_LOCK_FILE,
     copy_staged_pin_bundle,
     find_pin_path,
+    merge_staged_pin_bundles,
     read_pin_summary,
 };
 pub use replay::{

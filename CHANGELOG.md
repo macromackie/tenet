@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.35.0
+
+- Consolidated multi-contract module synthesis into one clean module-level `.contracts/<NNN>-<module>/CONTRACT.md` per base module with merged runnable scripts in `scripts/` and a single slim `scripts/.lock.json`, preventing per-assertion `.contracts/` folder bloat while preserving single-contract names when a module has one rule.
+- Slimmed persisted `scripts/.lock.json` pin files by replacing embedded full-file `good`/`defect`/`refactor` control copies with a compact SHA-256 `controlHash`, cutting committed pin size by ~90% while keeping full backwards-compatible reads of legacy pins.
+- Tightened `tenet scan` / `tenet contracts recommend` catalog precision (`tenet-adoption`): excluded `site/`, `demo/`, `docs/`, `examples/`, `benchmarks/`, `fixtures/`, and test folders from frontend and code-surface detection, and required real database/ORM or UI/CSS/JSX signals for `data-*`, `ui-*`, and `web-*` contracts so pure libraries no longer receive false-positive SQL or design-token recommendations.
+- Persisted `tenet check --offline` receipts in `.tenet/offline-check.json` so `tenet status` immediately displays offline check pass/fail summaries and `Next tenet fix` guidance before any model review; fixed duplicate `expected`/`observed` lines on offline failure rows and singular `1 file`/`1 script` grammar in coverage output.
+
 ## v0.34.1
 
 - Restored `cargo-dist-version = "0.33.0"` in `Cargo.toml` so release packaging builds and publishes all four native `v0.34.x` binaries cleanly.

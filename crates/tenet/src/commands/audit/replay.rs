@@ -136,11 +136,18 @@ pub(in crate::commands) fn write_status_row(
         format_dim(location),
     )?;
     writeln!(out, "    {}", format_display(row.message))?;
-    if let Some(detail) = format_expected_observed(row.expected, row.observed) {
+    if !has_expected_observed(row.message)
+        && let Some(detail) = format_expected_observed(row.expected, row.observed)
+    {
         writeln!(out, "    {}", format_dim(&detail))?;
     }
     writeln!(out)?;
     Ok(())
+}
+
+fn has_expected_observed(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("expected ") && (lower.contains("observed ") || lower.contains("got "))
 }
 
 fn collect_replay_targets(queue: &AuditQueue, filters: &[PathBuf]) -> Vec<AuditReplayTarget> {

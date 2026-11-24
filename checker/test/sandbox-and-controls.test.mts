@@ -102,8 +102,9 @@ type ReplayInput = Readonly<{
 }>;
 
 async function verifyPatchReplay({ check, files }: ReplayInput): Promise<void> {
-  const byteSize = Buffer.byteLength(check.good);
-  const hasFix = check.good.includes('value === undefined');
+  const goodSource = check.good ?? '';
+  const byteSize = Buffer.byteLength(goodSource);
+  const hasFix = goodSource.includes('value === undefined');
 
   assert.ok(byteSize > LARGE_MIN_BYTES);
   assert.ok(hasFix);
@@ -112,7 +113,7 @@ async function verifyPatchReplay({ check, files }: ReplayInput): Promise<void> {
 
   assert.equal(buggyResult.passed, false);
 
-  const fixedFiles = new Map<string, string>([['large.ts', check.good]]);
+  const fixedFiles = new Map<string, string>([['large.ts', goodSource]]);
   const fixedResult = await observe({ check, files: fixedFiles, qualify: true });
 
   assert.equal(fixedResult.passed, true);

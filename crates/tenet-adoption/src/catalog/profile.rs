@@ -7,21 +7,40 @@ const API_TERMS: &[&str] = &[
     "api", "axum", "actix", "django", "endpoint", "express", "fastapi", "flask", "http", "openapi",
     "route", "router",
 ];
-const DATA_TERMS: &[&str] = &[
+const BUILD_OR_VENDOR_DIRS: &[&str] = &[
+    "dist",
+    "node_modules",
+    "scripts",
+    "target",
+    "tools",
+    "vendor",
+];
+const DATA_SIGNAL_TERMS: &[&str] = &[
     "alembic",
     "database",
     "migration",
+    "orm",
     "postgres",
-    "query",
     "sql",
     "sqlite",
-    "store",
-    "table",
-    "upload",
+];
+const DATA_STRONG_TERMS: &[&str] = &[
+    "alembic",
+    "database",
+    "diesel",
+    "drizzle",
+    "knex",
+    "migration",
+    "postgres",
+    "prisma",
+    "psycopg",
+    "sqlalchemy",
+    "sqlite",
+    "sqlx",
+    "typeorm",
 ];
 const EVAL_TERMS: &[&str] = &["benchmark", "eval", "grader", "judge", "rubric"];
 const FRONTEND_EXTENSIONS: &[&str] = &["css", "html", "jsx", "scss", "tsx"];
-const TERRAFORM_EXTENSIONS: &[&str] = &["tf", "tfvars"];
 const LLM_TERMS: &[&str] = &[
     "anthropic",
     "completion",
@@ -30,6 +49,25 @@ const LLM_TERMS: &[&str] = &[
     "openai",
     "openrouter",
     "prompt",
+];
+const NON_PRODUCTION_DIRS: &[&str] = &[
+    "__tests__",
+    "benchmark",
+    "benchmarks",
+    "demo",
+    "demos",
+    "doc",
+    "docs",
+    "example",
+    "examples",
+    "fixture",
+    "fixtures",
+    "site",
+    "storybook-static",
+    "test",
+    "testdata",
+    "tests",
+    "website",
 ];
 const RELEASE_TERMS: &[&str] = &["artifact", "export", "installer", "publish", "release"];
 const SECURITY_TERMS: &[&str] = &[
@@ -63,6 +101,27 @@ const SERVICE_TERMS: &[&str] = &[
     "worker",
 ];
 const TELEMETRY_TERMS: &[&str] = &["opentelemetry", "sentry", "span", "telemetry", "tracing"];
+const TERRAFORM_EXTENSIONS: &[&str] = &["tf", "tfvars"];
+const UI_SIGNAL_TERMS: &[&str] = &[
+    "component",
+    "css",
+    "design",
+    "dom",
+    "jsx",
+    "react",
+    "theme",
+    "ui",
+];
+const WEB_STRONG_TERMS: &[&str] = &[
+    "browser",
+    "gateway",
+    "hydration",
+    "middleware",
+    "navigation",
+    "nextjs",
+    "router",
+    "ssr",
+];
 
 /// Structural repository facts derived from discovered file paths alone.
 #[expect(
@@ -105,6 +164,7 @@ impl RepositoryProfile {
         contract_name: &str,
         names: &BTreeSet<String>,
         terms: &BTreeSet<String>,
+        signal_terms: &BTreeSet<String>,
     ) -> bool {
         if names.contains("mise") && !self.has_mise {
             return false;
@@ -131,7 +191,7 @@ impl RepositoryProfile {
                 }
             },
             "contract" => self.has_contracts,
-            "data" => has_any_term(terms, DATA_TERMS),
+            "data" => is_data_admissible(names, terms, signal_terms),
             "docs" => self.has_docs && (terms.contains("readme") || terms.contains("docs")),
             "eval" => has_any_term(terms, EVAL_TERMS),
             "infra" => self.has_terraform,
@@ -140,7 +200,12 @@ impl RepositoryProfile {
             "security" => has_any_term(terms, SECURITY_TERMS),
             "service" => has_any_term(terms, SERVICE_TERMS),
             "telemetry" => has_any_term(terms, TELEMETRY_TERMS),
-            "ui" | "web" => self.has_frontend,
+            "ui" => self.has_frontend && has_any_term(signal_terms, UI_SIGNAL_TERMS),
+            "web" => {
+                self.has_frontend
+                    && (has_any_term(signal_terms, UI_SIGNAL_TERMS)
+                        || has_any_term(terms, WEB_STRONG_TERMS))
+            },
             _ => true,
         }
     }
@@ -169,9 +234,10 @@ impl RepositoryProfile {
         if name == "README.md" || path.starts_with("docs") {
             self.has_docs = true;
         }
-        if FRONTEND_EXTENSIONS.contains(&extension)
-            || name.starts_with("next.config.")
-            || name.starts_with("vite.config.")
+        if !is_excluded_source_path(path)
+            && (FRONTEND_EXTENSIONS.contains(&extension)
+                || name.starts_with("next.config.")
+                || name.starts_with("vite.config."))
         {
             self.has_frontend = true;
         }
@@ -185,6 +251,30 @@ impl RepositoryProfile {
             self.has_uv = true;
         }
     }
+}
+
+pub(super) fn is_excluded_source_path(path: &Path) -> bool {
+    path.iter().any(|part| {
+        part.to_str().is_none_or(|name| {
+            name.starts_with('.')
+                || NON_PRODUCTION_DIRS.contains(&name)
+                || BUILD_OR_VENDOR_DIRS.contains(&name)
+        })
+    })
+}
+
+fn is_data_admissible(
+    names: &BTreeSet<String>,
+    terms: &BTreeSet<String>,
+    signal_terms: &BTreeSet<String>,
+) -> bool {
+    if has_any_term(signal_terms, DATA_SIGNAL_TERMS) {
+        return true;
+    }
+    let requires_sql_signal = ["alembic", "migration", "postgres", "schema", "sql", "store"]
+        .into_iter()
+        .any(|word| names.contains(word));
+    !requires_sql_signal && has_any_term(terms, DATA_STRONG_TERMS)
 }
 
 fn has_any_term(terms: &BTreeSet<String>, markers: &[&str]) -> bool {

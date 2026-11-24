@@ -1,10 +1,12 @@
 mod checks;
 mod coverage;
+mod offline;
 
 use std::{io::Write as _, path::Path};
 
 pub(crate) use checks::write_mechanical;
 use checks::{
+    StatusExtras,
     collect_failed_behavior_contracts,
     format_contract_row_state,
     write_status_json,
@@ -17,6 +19,7 @@ pub(crate) use coverage::{
     discover_all_contracts,
     format_coverage_line,
 };
+pub(crate) use offline::OfflineReceipt;
 use tenet_checks::mechanical;
 use tenet_engine::{
     ContractState,
@@ -87,10 +90,12 @@ pub(crate) async fn report_status(
         None
     };
     let coverage = compute_coverage(root, state).ok();
+    let offline = OfflineReceipt::read(state);
     let has_contracts = coverage
         .as_ref()
         .is_some_and(|map| !map.contracts.is_empty());
-    let review = if mechanical.is_some() || has_contracts {
+    let has_local_or_offline = mechanical.is_some() || has_contracts || offline.is_some();
+    let review = if has_local_or_offline {
         Review::read(state)?
     } else {
         Review::open_existing(state)?
@@ -104,6 +109,11 @@ pub(crate) async fn report_status(
             pruned.removed + pruned.kept
         )?;
     }
+    let extras = StatusExtras {
+        coverage: coverage.as_ref(),
+        mechanical: mechanical.as_deref(),
+        offline: offline.as_ref(),
+    };
     let mut out = output::open_stdout().lock();
     let current = match review::resolve_current(root, &review, base, None).await {
         Ok(current) => current,
@@ -112,20 +122,12 @@ pub(crate) async fn report_status(
                 &mut out,
                 Some(&unchecked.base),
                 &unchecked.to_string(),
-                mechanical.as_deref(),
-                coverage.as_ref(),
+                &extras,
                 json,
             );
         },
-        Err(error @ ReviewError::NoChecks) if mechanical.is_some() || has_contracts => {
-            return write_unchecked(
-                &mut out,
-                None,
-                &error.to_string(),
-                mechanical.as_deref(),
-                coverage.as_ref(),
-                json,
-            );
+        Err(error @ ReviewError::NoChecks) if has_local_or_offline => {
+            return write_unchecked(&mut out, None, &error.to_string(), &extras, json);
         },
         Err(error) => return Err(error.into()),
     };
@@ -144,8 +146,7 @@ pub(crate) async fn report_status(
             &current,
             &behavior_failed,
             &generated,
-            mechanical.as_deref(),
-            coverage.as_ref(),
+            &extras,
             status,
         )?;
         return Ok(status);

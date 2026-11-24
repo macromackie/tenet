@@ -8,6 +8,7 @@ import {
   resolveReplayCheck,
   runAuditReplay,
 } from '../../audit/index.mts';
+import { validate } from '../../sandbox/index.mts';
 import { writeAtomic, writePinScripts } from '../../storage/index.mts';
 import { canRun } from '../can-run-sandbox.mts';
 import { check, contract, createProject, SOURCE } from '../test-project.mts';
@@ -133,4 +134,28 @@ void test('parseAuditCandidates stages lockPath under scripts/.lock.json', () =>
   });
 
   assert.equal(candidates[0].lockPath, 'audit-pins/explicit-zero/scripts/.lock.json');
+});
+
+void test('validate accepts slim pin checks only when fromPin is true', () => {
+  const files = new Map<string, string>([[SOURCE, check.good]]);
+
+  const slimCheck = {
+    controlHash: 'abc123',
+    expected: check.expected,
+    id: check.id,
+    promise: check.promise,
+    runtime: check.runtime,
+    scriptFile: 'keeps-zero.mjs',
+    subject: SOURCE,
+    test: check.test,
+  };
+
+  assert.throws(() => validate({ check: slimCheck, files, fromPin: false }));
+
+  const validated = validate({ check: slimCheck, files, fromPin: true });
+
+  assert.deepEqual(
+    [validated.controlHash, validated.scriptFile, validated.good === undefined],
+    ['abc123', 'keeps-zero.mjs', true],
+  );
 });

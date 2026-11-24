@@ -1,24 +1,58 @@
+import { Option } from 'effect';
 import type { Check } from '../types.d.mts';
+import { hashSource } from './hash-source.mts';
 
 type BuildCheckEntryInput = Readonly<{
   check: Check;
-  scriptFile: string;
+  includeControls?: boolean;
+  scriptFile?: string;
   scriptHash?: string;
   test?: string;
 }>;
 
-type BaseCheck = Pick<
-  Check,
-  'brownfield' | 'defect' | 'expected' | 'good' | 'id' | 'promise' | 'refactor' | 'runtime' | 'subject'
->;
-
-type AttachScriptMetaInput = Readonly<{
-  base: BaseCheck;
-  scriptFile: string;
-  scriptHash?: string;
+type ReadControlsInput = Readonly<{
+  check: Check;
+  includeControls: boolean;
 }>;
 
-function readCheckTarget(check: Check): Pick<Check, 'expected' | 'id' | 'promise' | 'runtime' | 'subject'> {
+type ControlHashInput = Readonly<{
+  controlHash?: string;
+  defect?: string;
+  good?: string;
+  refactor?: string;
+}>;
+
+type OptionalTextInput = Readonly<{
+  fallback?: string;
+  preferred?: string;
+}>;
+
+type OptionalControls = Pick<Check, 'brownfield' | 'controlHash' | 'defect' | 'good' | 'refactor'>;
+type OptionalScripts = Pick<Check, 'scriptFile' | 'scriptHash' | 'test' | 'testFile'>;
+
+function computeControlHash({
+  controlHash,
+  defect = '',
+  good = '',
+  refactor = '',
+}: ControlHashInput): Option.Option<string> {
+  if (controlHash !== undefined && controlHash.length > 0) {
+    return Option.some(controlHash);
+  }
+
+  if (good.length === 0 && defect.length === 0 && refactor.length === 0) {
+    return Option.none();
+  }
+
+  const encoded = JSON.stringify([good, defect, refactor]);
+  const digest = hashSource(encoded);
+
+  return Option.some(digest);
+}
+
+function readCheckTarget(
+  check: Check,
+): Pick<Check, 'expected' | 'id' | 'promise' | 'runtime' | 'subject'> {
   return {
     expected: check.expected,
     id: check.id,
@@ -28,41 +62,129 @@ function readCheckTarget(check: Check): Pick<Check, 'expected' | 'id' | 'promise
   };
 }
 
-function readCheckControls(check: Check): Pick<Check, 'brownfield' | 'defect' | 'good' | 'refactor'> {
-  if (check.brownfield !== undefined) {
-    return {
-      brownfield: check.brownfield,
-      defect: check.defect,
-      good: check.good,
-      refactor: check.refactor,
-    };
+function pickBrownfield(brownfield?: boolean): Pick<Check, 'brownfield'> {
+  if (brownfield !== undefined) {
+    return { brownfield };
   }
 
-  return { defect: check.defect, good: check.good, refactor: check.refactor };
+  return {};
 }
 
-function attachScriptMeta({ base, scriptFile, scriptHash }: AttachScriptMetaInput): Check {
-  if (scriptHash !== undefined) {
-    return { ...base, scriptFile, scriptHash };
+function pickControlHash(controlHash: Option.Option<string>): Pick<Check, 'controlHash'> {
+  if (Option.isSome(controlHash)) {
+    return { controlHash: controlHash.value };
   }
 
-  return { ...base, scriptFile };
+  return {};
 }
 
-/** Construct a compact on-disk or hydrated in-memory Check entry with canonical key ordering. */
-export function buildCheckEntry({
+function pickDefect(defect?: string): Pick<Check, 'defect'> {
+  if (defect !== undefined) {
+    return { defect };
+  }
+
+  return {};
+}
+
+function pickGood(good?: string): Pick<Check, 'good'> {
+  if (good !== undefined) {
+    return { good };
+  }
+
+  return {};
+}
+
+function pickRefactor(refactor?: string): Pick<Check, 'refactor'> {
+  if (refactor !== undefined) {
+    return { refactor };
+  }
+
+  return {};
+}
+
+function readCheckControls({ check, includeControls }: ReadControlsInput): OptionalControls {
+  const controlHash = computeControlHash(check);
+
+  const meta = {
+    ...pickBrownfield(check.brownfield),
+    ...pickControlHash(controlHash),
+  };
+
+  if (!includeControls) {
+    return meta;
+  }
+
+  return {
+    ...meta,
+    ...pickDefect(check.defect),
+    ...pickGood(check.good),
+    ...pickRefactor(check.refactor),
+  };
+}
+
+function resolveOptionalText({ fallback, preferred }: OptionalTextInput): Option.Option<string> {
+  if (preferred !== undefined) {
+    return Option.some(preferred);
+  }
+
+  return Option.fromUndefinedOr(fallback);
+}
+
+function pickScriptFile(scriptFile: Option.Option<string>): Pick<Check, 'scriptFile'> {
+  if (Option.isSome(scriptFile)) {
+    return { scriptFile: scriptFile.value };
+  }
+
+  return {};
+}
+
+function pickScriptHash(scriptHash: Option.Option<string>): Pick<Check, 'scriptHash'> {
+  if (Option.isSome(scriptHash)) {
+    return { scriptHash: scriptHash.value };
+  }
+
+  return {};
+}
+
+function pickTest(test?: string): Pick<Check, 'test'> {
+  if (test !== undefined) {
+    return { test };
+  }
+
+  return {};
+}
+
+function pickTestFile(testFile?: string): Pick<Check, 'testFile'> {
+  if (testFile !== undefined) {
+    return { testFile };
+  }
+
+  return {};
+}
+
+function readScriptFields({
   check,
   scriptFile,
   scriptHash,
   test,
-}: BuildCheckEntryInput): Check {
+}: BuildCheckEntryInput): OptionalScripts {
+  const resolvedFile = resolveOptionalText({ fallback: check.scriptFile, preferred: scriptFile });
+  const resolvedHash = resolveOptionalText({ fallback: check.scriptHash, preferred: scriptHash });
+
+  return {
+    ...pickScriptFile(resolvedFile),
+    ...pickScriptHash(resolvedHash),
+    ...pickTest(test),
+    ...pickTestFile(check.testFile),
+  };
+}
+
+/** Construct a slim on-disk or hydrated in-memory Check entry with canonical key ordering. */
+export function buildCheckEntry(input: BuildCheckEntryInput): Check {
+  const { check, includeControls = true } = input;
   const target = readCheckTarget(check);
-  const controls = readCheckControls(check);
-  const entry = attachScriptMeta({ base: { ...target, ...controls }, scriptFile, scriptHash });
+  const controls = readCheckControls({ check, includeControls });
+  const scripts = readScriptFields(input);
 
-  if (test !== undefined) {
-    return { ...entry, test };
-  }
-
-  return entry;
+  return { ...target, ...controls, ...scripts };
 }

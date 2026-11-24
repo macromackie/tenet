@@ -156,6 +156,10 @@ fn status_reports_offline_coverage_before_any_model_check() -> Result<()> {
         stdout.contains("1/2 source files governed by 1 contract"),
         "{stdout:?}"
     );
+    assert!(
+        stdout.contains("1 file \u{b7} 1 script") && !stdout.contains("1 scripts"),
+        "{stdout:?}"
+    );
     assert!(stdout.contains("lib"), "{stdout:?}");
 
     let raw_json = run_without_openrouter(root, &["status", "--json"])?;
@@ -176,6 +180,34 @@ fn status_reports_offline_coverage_before_any_model_check() -> Result<()> {
     assert_eq!(
         doc.pointer("/coverage/contracts/0/script_count"),
         Some(&Value::from(1_u64))
+    );
+    Ok(())
+}
+
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests report failures through assertions."
+)]
+fn assert_offline_status(root: &Path, expected_code: i32, expected_outcome: &str) -> Result<()> {
+    let text = run_without_openrouter(root, &["status"])?;
+    let stdout = String::from_utf8(text.stdout)?;
+    assert_eq!(text.status.code(), Some(expected_code), "{stdout:?}");
+    assert!(stdout.contains("Offline checks"), "{stdout:?}");
+    assert!(stdout.contains("1 file \u{b7} 1 script"), "{stdout:?}");
+    assert!(!stdout.contains("1 scripts"), "{stdout:?}");
+    let expected_next = if expected_code == 1_i32 {
+        "Next  tenet fix"
+    } else {
+        "Next  tenet check"
+    };
+    assert!(stdout.contains(expected_next), "{stdout:?}");
+    let json_out = run_without_openrouter(root, &["status", "--json"])?;
+    let doc: Value = serde_json::from_slice(&json_out.stdout)?;
+    assert_eq!(json_out.status.code(), Some(expected_code), "{doc:?}");
+    assert_eq!(
+        doc.pointer("/offline_checks/behavior/0/outcome"),
+        Some(&Value::from(expected_outcome)),
+        "{doc:?}"
     );
     Ok(())
 }
@@ -207,22 +239,22 @@ fn check_offline_replays_pinned_scripts_without_api_key() -> Result<()> {
             pass_doc.pointer("/summary/behavior_passed"),
             Some(&Value::from(1_u64))
         );
+        assert!(root.join(".tenet/offline-check.json").is_file());
+        assert!(root.join(".tenet/.gitignore").is_file());
+        assert_offline_status(root, 0_i32, "passed")?;
+
         fs::write(
             root.join("src/choose.mjs"),
             "export const choose = (v) => v || 7;\n",
         )?;
-        let failing = run_without_openrouter(root, &["check", "--offline", "--json"])?;
-        assert_eq!(
-            failing.status.code(),
-            Some(1_i32),
-            "{:?}",
-            String::from_utf8_lossy(&failing.stdout)
+        let failing = run_without_openrouter(root, &["check", "--offline"])?;
+        assert_eq!(failing.status.code(), Some(1_i32));
+        let fail_offline_text = String::from_utf8(failing.stdout)?;
+        assert!(
+            !fail_offline_text.contains("expected 0 \u{b7} got 7"),
+            "expected no duplicate expected/got line in {fail_offline_text:?}"
         );
-        let fail_doc: Value = serde_json::from_slice(&failing.stdout)?;
-        assert_eq!(
-            fail_doc.pointer("/summary/behavior_failed"),
-            Some(&Value::from(1_u64))
-        );
+        assert_offline_status(root, 1_i32, "failed")?;
     }
     Ok(())
 }

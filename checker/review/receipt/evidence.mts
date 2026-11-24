@@ -108,6 +108,14 @@ function buildFailedObservation({
   return buildFinding({ ...context, message, outcome: 'failed', repro });
 }
 
+function isMissingControl(value?: string): boolean {
+  return value === undefined || value.length === 0;
+}
+
+function isSlimPinCheck(check: Check): boolean {
+  return [check.good, check.defect, check.refactor].every((value) => isMissingControl(value));
+}
+
 async function observeOne(input: Invocation): Promise<Finding> {
   const { evaluation, check, pinReused, qualified, reused } = input;
 
@@ -119,11 +127,13 @@ async function observeOne(input: Invocation): Promise<Finding> {
     subject: check.subject,
   };
 
+  const shouldQualify = !qualified && !isSlimPinCheck(check);
+
   const result = await observe({
     check,
     files: evaluation.current.runtimeFiles,
     projectRoot: evaluation.root,
-    qualify: !qualified,
+    qualify: shouldQualify,
   });
 
   if (result.passed) {

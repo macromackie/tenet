@@ -38,7 +38,7 @@ async function verifyBrownfieldLifecycle(): Promise<void> {
 
   const check = validate({ check: candidate, files: buggyFiles });
   const onBuggy = await observe({ check, files: buggyFiles, qualify: true });
-  const fixedFiles = new Map<string, string>([['app.py', check.good]]);
+  const fixedFiles = new Map<string, string>([['app.py', check.good ?? '']]);
   const revalidated = validate({ check, files: fixedFiles, fromPin: true });
   const onFixed = await observe({ check: revalidated, files: fixedFiles, qualify: true });
 

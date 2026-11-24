@@ -2,6 +2,7 @@ import { Option } from 'effect';
 import { CheckerError } from '../../checker-error.mts';
 import type { Check } from '../../types.d.mts';
 import { applyControl } from './apply-control.mts';
+import { type ControlsResult, type PinMeta, readPinMeta } from './read-pin-meta.mts';
 
 type CandidateInput = Readonly<{
   check: unknown;
@@ -17,6 +18,7 @@ type Input = Readonly<{
 type ControlInput = Readonly<{
   fields: Input['fields'];
   fromPin: boolean;
+  pinMeta: PinMeta;
   source: string;
 }>;
 
@@ -29,20 +31,8 @@ type NativeInput = Readonly<{
   base: Omit<Check, 'scriptFile' | 'scriptHash' | 'test' | 'testFile'>;
   fields: Input['fields'];
   files: Input['files'];
-  fromPin: boolean;
+  pinMeta: PinMeta;
 }>;
-
-type ScriptMetaInput = Readonly<{
-  fields: Input['fields'];
-  fromPin: boolean;
-}>;
-
-type ScriptMeta = Readonly<{
-  scriptFile?: string;
-  scriptHash?: string;
-}>;
-
-type ControlsResult = Pick<Check, 'brownfield' | 'defect' | 'good' | 'refactor'>;
 
 const MAX_FIELD_BYTES = 131_072;
 const EDIT_LIMIT_PADDING = 32_768;
@@ -96,7 +86,10 @@ function readField({ fields, key }: FieldInput): string {
   return readText(raw);
 }
 
-function readTarget({ fields, files }: Input): Omit<Check, 'defect' | 'good' | 'refactor'> {
+function readTarget({
+  fields,
+  files,
+}: Input): Pick<Check, 'expected' | 'id' | 'promise' | 'runtime' | 'subject'> {
   const id = readField({ fields, key: 'id' });
   const subject = readField({ fields, key: 'subject' });
 
@@ -117,7 +110,11 @@ function readTarget({ fields, files }: Input): Omit<Check, 'defect' | 'good' | '
   };
 }
 
-type DistinctControlsInput = Pick<Check, 'defect' | 'good' | 'refactor'>;
+type DistinctControlsInput = Readonly<{
+  defect: string;
+  good: string;
+  refactor: string;
+}>;
 
 function assertDistinctControls({ defect, good, refactor }: DistinctControlsInput): void {
   if (good === refactor && good !== defect) {
@@ -191,7 +188,13 @@ function buildControl({ control, label, source }: BuildControlInput): string {
   return applyControl({ control, label, limit, source });
 }
 
-function readControls({ fields, fromPin, source }: ControlInput): ControlsResult {
+type FullControlInput = Readonly<{
+  fields: Input['fields'];
+  fromPin: boolean;
+  source: string;
+}>;
+
+function readFullControls({ fields, fromPin, source }: FullControlInput): ControlsResult {
   const rawGood = fields.get('good');
   const rawDefect = fields.get('defect');
   const rawRefactor = fields.get('refactor');
@@ -211,53 +214,23 @@ function readControls({ fields, fromPin, source }: ControlInput): ControlsResult
   });
 }
 
-type BuildScriptMetaInput = Readonly<{
-  scriptFile: Option.Option<string>;
-  scriptHash: Option.Option<string>;
-}>;
-
-function readOptionalPinText(raw: unknown): Option.Option<string> {
-  if (typeof raw !== 'string' || raw.trim().length === 0 || Buffer.byteLength(raw) > MAX_FIELD_BYTES) {
-    return Option.none();
+function readControls({ fields, fromPin, pinMeta, source }: ControlInput): ControlsResult {
+  if (Option.isSome(pinMeta.slimControls)) {
+    return pinMeta.slimControls.value;
   }
 
-  return Option.some(raw);
+  const resolved = readFullControls({ fields, fromPin, source });
+
+  if (Option.isSome(pinMeta.controlHash)) {
+    return { ...resolved, controlHash: pinMeta.controlHash.value };
+  }
+
+  return resolved;
 }
 
-function buildScriptMeta({ scriptFile, scriptHash }: BuildScriptMetaInput): ScriptMeta {
-  if (Option.isSome(scriptFile) && Option.isSome(scriptHash)) {
-    return { scriptFile: scriptFile.value, scriptHash: scriptHash.value };
-  }
-
-  if (Option.isSome(scriptFile)) {
-    return { scriptFile: scriptFile.value };
-  }
-
-  if (Option.isSome(scriptHash)) {
-    return { scriptHash: scriptHash.value };
-  }
-
-  return {};
-}
-
-function readScriptMeta({ fields, fromPin }: ScriptMetaInput): ScriptMeta {
-  if (!fromPin) {
-    return {};
-  }
-
-  const rawScriptFile = fields.get('scriptFile');
-  const rawScriptHash = fields.get('scriptHash');
-  const scriptFile = readOptionalPinText(rawScriptFile);
-  const scriptHash = readOptionalPinText(rawScriptHash);
-
-  return buildScriptMeta({ scriptFile, scriptHash });
-}
-
-function attachEntry({ base, fields, files, fromPin }: NativeInput): Check {
+function attachEntry({ base, fields, files, pinMeta }: NativeInput): Check {
   if (!fields.has('testFile')) {
-    const scriptMeta = readScriptMeta({ fields, fromPin });
-
-    return { ...base, ...scriptMeta, test: readField({ fields, key: 'test' }) };
+    return { ...base, ...pinMeta.scriptMeta, test: readField({ fields, key: 'test' }) };
   }
 
   const testFile = readField({ fields, key: 'testFile' });
@@ -283,8 +256,9 @@ export function validate({ check, files, fromPin = false }: CandidateInput): Che
     throw new CheckerError({ message: 'the generated checker target is missing from source' });
   }
 
-  const controls = readControls({ fields, fromPin, source });
+  const pinMeta = readPinMeta({ fields, fromPin });
+  const controls = readControls({ fields, fromPin, pinMeta, source });
   const base = { ...target, ...controls };
 
-  return attachEntry({ base, fields, files, fromPin });
+  return attachEntry({ base, fields, files, pinMeta });
 }

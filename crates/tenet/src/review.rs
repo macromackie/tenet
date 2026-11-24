@@ -26,6 +26,7 @@ pub(crate) use mutations::{log, record};
 use serde_json::Value;
 pub(crate) use show::{show, show_pending};
 pub(crate) use status::{
+    OfflineReceipt,
     RepoCoverage,
     compute_coverage,
     discover_all_contracts,

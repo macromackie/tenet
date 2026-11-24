@@ -192,7 +192,7 @@ void test('patch controls report nearby lines, normalize CRLF, and advise edit a
   };
 
   const normalized = validate({ check: crlfEdit, files });
-  const hasFix = normalized.defect.includes('return 0;');
+  const hasFix = (normalized.defect ?? '').includes('return 0;');
 
   assert.ok(hasFix);
 
