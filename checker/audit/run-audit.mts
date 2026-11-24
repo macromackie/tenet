@@ -206,7 +206,7 @@ function summarizeAuditReports(reports: readonly AuditModuleReport[]): AuditResp
 
 /** Synthesize and falsify behavioral contracts across a bounded list of repository modules. */
 export async function runAudit({
-  deep = false,
+  deep = true,
   fresh = false,
   maxRequests,
   modules,

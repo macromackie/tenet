@@ -30,7 +30,7 @@ Tenet writes qualified checks into the contract folder as standalone runnable sc
       .lock.json
 ```
 
-Each script at `scripts/<check>.<ext>` runs directly in the OS sandbox, and `scripts/.lock.json` records its SHA-256 digest, materialized controls (`good`, `defect`, and `refactor`), any manual-review gaps (`open`), `contractHash`, and the governed public surface `shape`.
+Each script at `scripts/<check>.<ext>` runs directly in the OS sandbox, and `scripts/.lock.json` records its SHA-256 digest, a compact SHA-256 `controlHash` covering its qualification controls (`good`, `defect`, and `refactor`), any manual-review gaps (`open`), `contractHash`, and the governed public surface `shape` (legacy lock manifests with embedded control sources remain readable).
 
 Before adopting a generated script, Tenet qualifies it against a working control, a deliberate defect, and an equivalent refactor without observing the repository's actual source during qualification. If no candidate qualifies and request budget remains, Tenet runs one bounded repair turn using only the qualification errors. Qualified checks write to `scripts/` and `scripts/.lock.json` even when another candidate in the same bundle fails qualification. Review and commit `scripts/` to share checks across developers and CI.
 
@@ -38,9 +38,9 @@ The first generation requires Node and npm to install the pinned `libfx` package
 
 - **macOS:** `/usr/bin/sandbox-exec`.
 - **Linux:** `bubblewrap` 0.7 or later (with `--size` support to enforce the 64 MiB temporary-file limit) and `prlimit`.
-- **Language runtimes:** Node with native TypeScript support for TypeScript, Python 3 for Python (Tenet adds staged package roots including `src/` layouts to `PYTHONPATH`), or `rustc` and a linker for Rust.
+- **Language runtimes:** Node with native TypeScript support for JavaScript and TypeScript, Python 3 for Python (Tenet adds staged package roots including `src/` layouts to `PYTHONPATH`), `rustc` and a linker for Rust, or the `go` toolchain for `.go` scripts.
 
-When in-root project dependencies already exist on disk (`node_modules`, `.venv` `site-packages`, or prebuilt Rust artifacts in `target/debug/deps` from `cargo build`), Tenet canonicalizes and mounts them read-only inside the sandbox without running installs or Cargo build scripts. Discovery prioritizes manifests, flagged files, and contract-referenced modules ahead of generated (`gen/`, `generated/`), compatibility (`_future/`, `compat/`), and vendor paths up to 128 KiB per file (384 KiB per contract prompt). Isolated probes that exit non-zero surface sanitized diagnostics (`ERR_MODULE_NOT_FOUND`, `ModuleNotFoundError`, `E0432`/`E0463`). An unavailable dependency, platform, or observation produces a review item. Use a [project check](./local-checks.md) for behavior that requires the project's full environment.
+When in-root project dependencies already exist on disk (`node_modules`, `.venv` or `venv` `site-packages`, or prebuilt Rust artifacts in `target/debug/deps` from `cargo build`), Tenet canonicalizes and mounts them read-only inside the sandbox without running installs or Cargo build scripts. Discovery prioritizes manifests, flagged files, and contract-referenced modules ahead of generated (`gen/`, `generated/`), compatibility (`_future/`, `compat/`), and vendor paths up to 128 KiB per file (384 KiB per contract prompt). Isolated probes that exit non-zero surface sanitized diagnostics (`ERR_MODULE_NOT_FOUND`, `ModuleNotFoundError`, `E0432`/`E0463`). An unavailable dependency, platform, or observation produces a review item. Use a [project check](./local-checks.md) for behavior that requires the project's full environment.
 
 ## Replay offline or after a fix
 
@@ -52,7 +52,7 @@ tenet check --offline --contract timeouts
 tenet show timeouts
 ```
 
-`tenet check --offline` (alias `--replay`) executes static lint checks, declared local checks, and locked scripts in `scripts/` inside the local sandbox. `tenet show timeouts` prints the contract rule, observed evidence, diff, and the direct runnable path to each script under `.contracts/001-timeouts/scripts/`.
+`tenet check --offline` (alias `--replay`) executes static lint checks, declared local checks, and locked scripts in `scripts/` (including ephemeral contracts under `.tenet/scan/.contracts/`) inside the local sandbox, then persists a receipt at `.tenet/offline-check.json` so `tenet status` reports those results. `tenet show timeouts` prints the contract rule, observed evidence, diff, and the direct runnable path to each script under `.contracts/001-timeouts/scripts/`.
 
 When `OPENROUTER_API_KEY` and request budget are available during `tenet check`, Tenet runs one bounded `fx` pass per contract to turn raw failed and unresolved findings into situation-specific plain-English diagnostics without altering recorded outcomes. Interactive terminals stream live progress phases (`discovering source`, `generating checks`, `qualifying controls`, `repairing checks`, `replaying checks`, and `explaining findings`).
 
@@ -62,7 +62,7 @@ Run `tenet fix` to apply safe native lint fixes and repair failing runtime scrip
 
 Generated behavior checks use two cache layers and a hash guard so local edits stay safe and code changes trigger immediate replay:
 
-1. **Committed scripts and lock (`scripts/<check>.<ext>` and `scripts/.lock.json`):** Stores the runnable scripts, their SHA-256 digests, controls, open clauses, `contractHash`, and surface `shape`. Tenet invalidates and regenerates unedited checks when `CONTRACT.md` changes, when the governed public surface or manifests change, when a referenced subject file is removed, or when you run `tenet check --fresh`. If you edit a script file by hand, its SHA-256 digest no longer matches `scripts/.lock.json`; Tenet detects the hand edit, preserves your script, and refuses to overwrite it silently. Lock updates use atomic compare-and-swap writes so concurrent edits are never lost.
+1. **Committed scripts and lock (`scripts/<check>.<ext>` and `scripts/.lock.json`):** Stores the runnable scripts, their SHA-256 digests, compact SHA-256 `controlHash`, open clauses, `contractHash`, and surface `shape` (legacy lock entries with embedded control sources remain readable). Tenet invalidates and regenerates unedited checks when `CONTRACT.md` changes, when the governed public surface or manifests change, when a referenced subject file is removed, or when you run `tenet check --fresh`. If you edit a script file by hand, its SHA-256 digest no longer matches `scripts/.lock.json`; Tenet detects the hand edit, preserves your script, and refuses to overwrite it silently. Lock updates use atomic compare-and-swap writes so concurrent edits are never lost.
 2. **Local replay receipt (`.tenet/agent-checks/`):** Caches pass, fail, and unresolved observations keyed by exact governed file bytes, scoped package data, the lock digest, the comparison base commit, and the sandbox runner version. Any byte edit to a governed source file invalidates the local receipt and replays the locked scripts in the sandbox without generating new probes.
 
 ### Legacy pin compatibility

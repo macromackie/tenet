@@ -9,7 +9,7 @@ errors render with styled source snippets when stderr supports color. Diagnostic
 without backslash-escaped quotes. In interactive terminals, live progress streams both semantic file progress and
 intermediate behavior-check phases (`discovering source`, `generating checks`, `qualifying controls`, `repairing
 checks`, `replaying checks`, and `explaining findings`). All status labels and plain-text diagnostics render without ANSI escapes in
-non-TTY CI logs. Run `tenet status` to view the repository `Coverage` block and contract health offline, or run `tenet show NAME` to inspect the rule, diff, model answer, history, and direct paths to runnable scripts under `.contracts/<NNN>-<name>/scripts/`.
+non-TTY CI logs. Run `tenet status` to view the repository `Coverage` block, persisted offline check receipts from `.tenet/offline-check.json`, and contract health offline, or run `tenet show NAME` to inspect the rule, diff, model answer, history, and direct paths to runnable scripts under `.contracts/<NNN>-<name>/scripts/`.
 
 Use `--reporter verbose` for individual file judgments, model details and request counts. JSONL retains all
 intermediate evidence, including uncertainty that a later repository assessment resolves.
@@ -212,9 +212,12 @@ so a rerun sends every request again.
 
 ## Coverage
 
-`tenet status` prints a `Coverage` block before listing settled and pending contracts. The block summarizes governed
-and ungoverned scope across the repository alongside active contracts and runnable script counts, without calling a
-model. In `tenet status --json`, the same summary appears under the additive `coverage` field.
+`tenet status` prints a `Coverage` block before listing persisted offline check results (from `.tenet/offline-check.json`)
+and settled or pending contracts. The `Coverage` block summarizes governed and ungoverned scope across the repository
+alongside active contracts and runnable script counts without calling a model. When an offline check receipt exists,
+`status` renders an `Offline checks` summary (`passed`, `failed`, `unresolved`), lists non-passing script rows, and
+suggests `Next  tenet fix` on failures (or `Next  tenet check` once offline checks pass). In `tenet status --json`,
+those sections appear under the additive `coverage` and `offline_checks` fields.
 
 In a diff check, the summary's `coverage` reports how much of the selected change any contract governs, whichever
 contracts the check runs:
@@ -231,16 +234,19 @@ contracts govern the rest. A check that no contract governs still exits 0 and ne
 
 ## Check exit codes
 
-`check` and `status` share these codes:
+`check`, `check --offline`, and `status` share these codes:
 
-| Code | Meaning                                                                                                                                                      |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0    | Every contract in the check selection or current review is settled without a violation                                                                       |
-| 1    | A settled violation: a recorded failure                                                                                                                      |
-| 2    | Invalid arguments or configuration, credentials or an endpoint the provider rejected, unreadable review state, a capture failure, or another execution error |
-| 3    | A recorded `unresolved` conclusion                                                                                                                           |
-| 4    | A contract is pending, including model failures, unresolved answers, failed requests, and exhausted budgets                                                  |
-| 130  | Cancelled                                                                                                                                                    |
+| Code | Meaning                                                                                                                                                         |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Every contract in the check selection or current review is settled without a violation, or all checks in `check --offline` / `.tenet/offline-check.json` passed |
+| 1    | A settled violation: a recorded failure, or a failing check in `check --offline` / `.tenet/offline-check.json`                                                  |
+| 2    | Invalid arguments or configuration, credentials or an endpoint the provider rejected, unreadable review state, a capture failure, or another execution error    |
+| 3    | A recorded `unresolved` conclusion, or an unresolved check in `check --offline` / `.tenet/offline-check.json`                                                   |
+| 4    | A contract is pending, including model failures, unresolved answers, failed requests, and exhausted budgets, or no check has run yet                            |
+| 130  | Cancelled                                                                                                                                                       |
+
+Before any semantic review exists in `.tenet/events.jsonl`, `tenet status` derives its exit code from `.tenet/offline-check.json`
+when present (`0` when offline checks passed, `1` when any failed, `3` when any stayed unresolved, or `4` when empty).
 
 Cancellation takes precedence, then execution errors, pending contracts, violations, and recorded unresolved
 conclusions. A model's `failed` exits 4 until a record confirms it. A [failed request](#failed-requests) leaves its

@@ -16,18 +16,18 @@ Verify your environment, scan the repository into `.contracts/`, inspect coverag
 
 ```sh
 tenet doctor                       # Verify credentials, sandbox tooling, and repository setup
-tenet scan                         # Preview recommended catalog contracts and per-module checks
+tenet scan                         # Deep-scan modules by default (pass --shallow for a faster scan)
 tenet scan --apply                 # Write contracts and runnable scripts into .contracts/
-tenet scan --ephemeral             # Run a trial scan without modifying tracked files
-tenet status                       # Show repository coverage and contract health offline
+tenet scan --ephemeral             # Materialize a trial scan into .tenet/scan/.contracts/
+tenet status                       # Show repository coverage, offline check receipts, and contract health
 tenet fix                          # Apply native lint fixes and sandboxed runtime repairs
 tenet fix --severity high          # Limit repairs to findings at or above one severity level
-tenet check --offline              # Replay static checks and locked runtime scripts without an LLM
+tenet check --offline              # Replay static, local, and locked runtime scripts without an LLM
 tenet check --base origin/main     # Review a pull request diff against the base branch
 tenet show timeouts                # Inspect the rule, diff, evidence, and runnable script path
 ```
 
-With `OPENROUTER_API_KEY` set on macOS or Linux, Tenet builds qualified behavior checks in an OS sandbox, streams live progress phases in interactive terminals, and explains failed or unresolved findings through `fx`. Use `tenet check --offline` (alias `--replay`) to replay static and locked runtime checks with zero model calls. `tenet init` and `tenet audit` remain supported as backwards-compatible aliases for `tenet scan`. See [behavior checks](docs/behavior-checks.md), [local checks](docs/local-checks.md), and [final checks](docs/final-checks.md).
+With `OPENROUTER_API_KEY` set on macOS or Linux, Tenet builds qualified behavior checks in an OS sandbox, streams live progress phases in interactive terminals, and explains failed or unresolved findings through `fx`. Use `tenet check --offline` (alias `--replay`) to replay static, local, and locked runtime checks with zero model calls and persist `.tenet/offline-check.json` for `tenet status`. `tenet init` and `tenet audit` remain supported as backwards-compatible aliases for `tenet scan`. See [behavior checks](docs/behavior-checks.md), [local checks](docs/local-checks.md), and [final checks](docs/final-checks.md).
 
 ## Contracts
 
@@ -44,7 +44,7 @@ Store each contract as a self-contained folder under `.contracts/`:
 
 - **Portable specification:** `CONTRACT.md` holds the human- and agent-readable rule, scope, and examples.
 - **Runnable verification:** `scripts/` stores materialized behavior-check scripts (`<check>.<ext>`) beside `scripts/.lock.json`.
-- **Hand-edit safety:** `scripts/.lock.json` tracks SHA-256 digests so manual edits to any script are preserved and never overwritten during regeneration.
+- **Hand-edit safety:** `scripts/.lock.json` tracks script SHA-256 digests and a compact `controlHash` so manual edits to any script are preserved and never overwritten during regeneration.
 - **Format compatibility:** Catalog contracts store tool configurations under `assets/`, and Tenet continues to read legacy `agent-checks.lock.json` files beside `CONTRACT.md`.
 
 Install shared contracts from the public [tenet-contracts](https://github.com/macromackie/tenet-contracts) library:

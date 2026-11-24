@@ -77,8 +77,7 @@ confidence threshold routes the raw answer; changing it does not itself require 
 pending, so a rerun sends unanswered or changed inputs; `check --dry-run` predicts how many. A record still settles an
 input whose request failed. Use `--fresh` to sample again; resampling does not verify an answer.
 
-`tenet check` always requires a configured model; use `tenet status` to inspect current states without calling a model
-and `tenet log` to list every revision and record. Each revision keeps its `--min-confidence`, and `status`, `show`,
+Semantic `tenet check` requires a configured model; use `tenet check --offline` to replay static checks, declared local checks, and locked runtime scripts without credentials, `tenet status` to inspect current states and offline check receipts without calling a model, and `tenet log` to list every revision and record. Each revision keeps its `--min-confidence`, and `status`, `show`,
 and `log` print it when it differs from the default 0.8.
 
 Revisions also keep the context profile, so reopening a long-context review does not apply the smaller standard bound.
@@ -256,18 +255,17 @@ Tenet is built for two distinct operating modes—use the matching playbook rath
 
 Use full checks without `--base` whenever you introduce Tenet to an existing repository or add a new contract:
 
-1. **Discover high-signal rules first**: run `tenet contracts recommend` to find shared contracts backed by concrete public declarations in your repository.
-2. **Adopt incrementally**: start with one to three rules using `tenet contracts add tenet/NAME --scope DIR` instead of adopting an entire catalog at once.
-3. **Establish a real baseline**: run `tenet check --contract NAME` (with no `--base`). Tenet evaluates the full scope semantically and generates, qualifies, and freezes behavior checks into `agent-checks.lock.json` beside `CONTRACT.md`.
-4. **Triage pre-existing findings deliberately**: for each failure already in the codebase, fix the code, narrow `paths` or document a permanent exception under `## Local adaptations`, or record `failed` with evidence to acknowledge known debt while continuing to review new changes.
-5. **Commit contracts and behavior locks**: commit `.contracts/`, `.tenet.lock`, and reviewed `agent-checks.lock.json` files so every developer and CI runner replays the exact same checks. Never commit `.tenet/`.
+1. **Scan and discover rules first**: run `tenet scan` to preview recommended catalog contracts and deep per-module behavioral findings, or run `tenet scan --apply` to write consolidated module contracts and runnable scripts into `.contracts/`. You can also add individual catalog rules incrementally with `tenet contracts add tenet/NAME --scope DIR`.
+2. **Establish a real baseline**: run `tenet check --contract NAME` (with no `--base`) for any new or edited rule. Tenet evaluates the full scope semantically and writes qualified behavior checks into `scripts/` alongside `scripts/.lock.json` inside each contract folder under `.contracts/`.
+3. **Triage pre-existing findings deliberately**: for each failure already in the codebase, fix the code (or run `tenet fix`), narrow `paths`, document a permanent exception under `## Local adaptations`, or record `failed` with evidence to acknowledge known debt while continuing to review new changes.
+4. **Commit contracts and locked scripts**: commit `.contracts/` (including each contract's `scripts/` and `scripts/.lock.json`) and `.tenet.lock` so every developer and CI runner replays the exact same checks. Never commit `.tenet/`.
 
 ### PR reviewer bot (diff review)
 
 Use diff checks against the merge base so reviews stay fast and focus strictly on what the PR changes:
 
 1. **Pin the merge base**: in GitHub Actions with `fetch-depth: 0`, `tenet check` detects the PR merge base automatically; elsewhere run `base=$(git merge-base origin/main HEAD) && tenet check --base "$base"`.
-2. **Separate PR regressions from pre-existing debt**: diff checks assume the base complies and replay committed `agent-checks.lock.json` probes on both base and head. A defect already failing on the base is reported as pre-existing rather than blamed on the PR.
+2. **Separate PR regressions from pre-existing debt**: diff checks assume the base complies and replay committed `scripts/` and `scripts/.lock.json` checks (reading legacy `agent-checks.lock.json` pins as a fallback) on both base and head. A defect already failing on the base is reported as pre-existing rather than blamed on the PR.
 3. **Inspect pending items**: run `tenet status` and `tenet show --pending` (or `--json`) to read every flagged contract, its evidence, and its ready-to-run `record` command.
 4. **Resolve reviewer disagreements explicitly**:
    - **One-off false positive or context the model missed**: verify in source, then run `tenet record NAME --conclusion preserved|unaffected --evidence PATH:START-END -m "why"`. The record stays bound to that exact input hash in `.tenet/events.jsonl` and automatically becomes outdated (`inputs_changed`) if any governed file or contract text changes.
@@ -299,8 +297,8 @@ no lines. `record` instead requires the full check of the same contract text to 
 and `contracts list --base ... --json` includes every changed contract path. Inspect those changes; a removed
 requirement leaves the review with its contract.
 
-The outer agent owns baseline validity, follow-up, and concerns outside the contracts. Tenet has no internal agent loop
-or automatic escalation to a larger model.
+The outer agent owns baseline validity, follow-up, and concerns outside the contracts. Semantic `tenet check` has no
+internal agent loop or automatic escalation to a larger model.
 
 ## Adopt requirements incrementally
 

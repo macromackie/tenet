@@ -132,9 +132,10 @@ pub(super) fn run(root: &Path, state: &Path, args: &Audit) -> Result<ExitStatus,
     }
     require_openrouter_key("tenet audit")?;
     let budget = usize::try_from(args.max_requests).context("convert audit request budget")?;
+    let deep = args.is_deep();
     let params = AuditRunParams {
         base: args.base.as_deref(),
-        deep: args.deep,
+        deep,
         fresh: args.fresh,
         json: args.json,
         max_requests: budget,
@@ -144,7 +145,7 @@ pub(super) fn run(root: &Path, state: &Path, args: &Audit) -> Result<ExitStatus,
     if !found_modules {
         if args.base.is_some() {
             let mut out = output::open_stdout().lock();
-            write_report(&mut out, args.deep, &[], &[], &BTreeMap::new(), args.json)?;
+            write_report(&mut out, deep, &[], &[], &BTreeMap::new(), args.json)?;
             return Ok(ExitStatus::Passed);
         }
         return Err(anyhow!("no supported production source files were found to audit").into());
@@ -191,7 +192,7 @@ fn finish_audit(
     let mut out = output::open_stdout().lock();
     write_report(
         &mut out,
-        args.deep,
+        args.is_deep(),
         selected_reports,
         &saved,
         &repro_paths,

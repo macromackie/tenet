@@ -45,3 +45,39 @@ fn read_existing_loads_saved_queue_without_mutating_file() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn read_upgrades_shallow_queue_when_deep_is_requested() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let state = dir.path().join(".tenet");
+    let mut shallow_queue = AuditQueue::new(false);
+    shallow_queue.upsert(AuditModuleReport {
+        contracts: Vec::new(),
+        cost_usd: Some(0.01_f64),
+        findings: Vec::new(),
+        name: String::from("src"),
+        requests: 1,
+    });
+    shallow_queue.save(&state)?;
+
+    let resumed_shallow = AuditQueue::read(&state, false, false)?;
+    anyhow::ensure!(
+        !resumed_shallow.deep,
+        "expected shallow queue to stay shallow"
+    );
+    anyhow::ensure!(
+        resumed_shallow.has_module("src"),
+        "expected shallow run to resume saved shallow module"
+    );
+
+    let upgraded_deep = AuditQueue::read(&state, true, false)?;
+    anyhow::ensure!(
+        upgraded_deep.deep,
+        "expected deep request to upgrade saved shallow queue"
+    );
+    anyhow::ensure!(
+        !upgraded_deep.has_module("src"),
+        "expected shallow modules to reset when upgrading to deep"
+    );
+    Ok(())
+}

@@ -11,11 +11,11 @@ applies to any stack; `ui-react-interaction-ownership` applies only to React cod
 
 ## Find relevant contracts
 
-Run `tenet contracts recommend` in a project, including a project with no contracts yet. Each
+Run `tenet contracts recommend` in a project, including a project with no contracts yet, or run [`tenet scan`](./cli.md#scan) to combine catalog recommendations with deep per-module contract synthesis. Each
 suggestion names a rule from the latest tagged catalog, cites a public declaration in this checkout
 and gives the released rule's description. To adopt one, run `tenet contracts add tenet/NAME@REF --scope DIR` using the reported release. Recommendation leaves the project unchanged.
 
-Tenet samples up to 256 JavaScript, TypeScript, Python and Rust source files, reading the first 64
+Tenet samples up to 256 JavaScript, TypeScript, Python, Rust, and Go source files, reading the first 64
 KiB of each. It uses top-level declarations, repository structure, and a few recognizable expressions, including default
 lookups and in-place collection edits. It skips tooling, tests, examples and installed dependencies, and omits domain-prefixed contracts whose area is absent from the repository. Installed rules that already
 govern the matching source are excluded. With `OPENROUTER_API_KEY`, one batched Jev decision
@@ -149,7 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          curl -fsSL https://tenet-contracts.com/v0.35.1/install.sh | bash
+          curl -fsSL https://tenet-contracts.com/v0.36.0/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - id: update
         run: |

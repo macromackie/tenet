@@ -155,7 +155,7 @@ fn write_saved_section(out: &mut impl Write, saved: &[SavedContract]) -> Result<
 }
 
 fn write_terminal(out: &mut impl Write, rendered: &RenderedAudit<'_>) -> Result<(), CommandError> {
-    let mode_label = if rendered.deep { "deep" } else { "standard" };
+    let mode_label = if rendered.deep { "deep" } else { "shallow" };
     writeln!(
         out,
         "{}  {}\n",

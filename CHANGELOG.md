@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.36.0
+
+- Made deep adversarial edge-case synthesis the default mode for `tenet scan` and `tenet audit` (and the embedded checker's `runAudit`), adding `--shallow` to opt into the lighter, faster pass while retaining `--deep` as a compatibility no-op (`--deep` and `--shallow` conflict; `tenet audit --replay` also rejects `--shallow`).
+- Updated `tenet audit` terminal headers to display `shallow` instead of `standard` when `--shallow` is passed, and kept `tenet scan` offline-capable for catalog and `--starter` workflows unless `--ephemeral`, `--deep`, `--shallow`, or `--fresh` forces synthesis.
+- Aligned core product contracts `024`, `025`, and `026` (and `.contracts/index.md`) with `scripts/` + slim `scripts/.lock.json` (`controlHash`), `tenet check --offline`, module-level consolidation, and default-deep `tenet scan`/`tenet audit`.
+
 ## v0.35.1
 
 - Fixed `tenet fix --severity` severity resolution for consolidated module contracts (`commands/fix/contracts.rs`): enriches pinned checks from `.tenet/audit.json` by `(check, subject)` in addition to `(contract, check)` and deduplicates consolidated checks against legacy audit targets so `--severity high` / `--severity critical` reliably targets all matching checks inside consolidated module contracts.

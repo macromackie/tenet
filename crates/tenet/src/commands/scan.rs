@@ -119,7 +119,7 @@ fn run_behavior_scan(
     state: &Path,
     args: &Scan,
 ) -> Result<(Vec<AuditModuleReport>, Option<String>), CommandError> {
-    let forced = args.ephemeral || args.deep || args.fresh;
+    let forced = args.ephemeral || args.deep || args.shallow || args.fresh;
     if !audit::has_openrouter_key() && !forced {
         return Ok((
             Vec::new(),
@@ -131,7 +131,7 @@ fn run_behavior_scan(
     audit::require_openrouter_key("tenet scan")?;
     let params = audit::AuditRunParams {
         base: args.base.as_deref(),
-        deep: args.deep,
+        deep: args.is_deep(),
         fresh: args.fresh,
         json: args.json,
         max_requests: args.max_requests,

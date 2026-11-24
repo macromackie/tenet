@@ -13,7 +13,7 @@ tenet scan --apply
 tenet scan --ephemeral
 ```
 
-`tenet scan` inspects production modules, recommends catalog contracts, and synthesizes per-module behavioral contracts that Tenet falsifies inside a local OS sandbox. Pass `--apply` (or `--yes`) to write contracts and runnable scripts into `.contracts/`. Pass `--ephemeral` to run a trial scan without touching tracked repository files. `tenet init` and `tenet audit` remain supported as compatibility aliases.
+`tenet scan` inspects production modules, recommends catalog contracts, and runs deep adversarial edge-case synthesis by default to build per-module behavioral contracts that Tenet falsifies inside a local OS sandbox. Pass `--shallow` for a lighter, faster scan without adversarial edge-case synthesis. Pass `--apply` (or `--yes`) to write contracts and runnable scripts into `.contracts/`, or `--ephemeral` to materialize them into `.tenet/scan/.contracts/` without touching tracked repository files. `tenet init` and `tenet audit` remain supported as compatibility aliases.
 
 ## Check the repository or a change
 
@@ -24,7 +24,7 @@ tenet check --base origin/main
 ```
 
 - `tenet check` runs semantic review, static checks, and locked runtime scripts across the repository without assuming existing code complies.
-- `tenet check --offline` (alias `--replay`) replays static checks, declared local checks, and locked runtime scripts in the sandbox without calling an LLM or requiring provider credentials.
+- `tenet check --offline` (alias `--replay`) replays static checks, declared local checks, and locked runtime scripts in the sandbox without calling an LLM or requiring provider credentials, and saves the receipt to `.tenet/offline-check.json`.
 - `tenet check --base origin/main` compares staged, unstaged, and untracked changes against the base revision, assuming the base complies.
 
 Each contract finishes with one semantic conclusion:
@@ -55,7 +55,7 @@ tenet show database-failures
 tenet record database-failures --conclusion failed --evidence src/storage/query.ts:40-52 -m "returns [] when the query fails"
 ```
 
-`tenet status` prints a repository `Coverage` block alongside settled and pending contract health without calling a model. `tenet show NAME` prints the rule, diff, model answer, history, and direct path to any runnable script under `.contracts/<NNN>-<name>/scripts/`.
+`tenet status` prints a repository `Coverage` block, any persisted offline check receipt from `.tenet/offline-check.json`, and settled or pending contract health without calling a model. `tenet show NAME` prints the rule, diff, model answer, history, and direct path to any runnable script under `.contracts/<NNN>-<name>/scripts/`.
 
 `tenet check` stores review state in `.tenet/`, keyed by the exact code it assessed. A [reviewing agent](./reviews.md) settles each pending contract by recording a conclusion with evidence. Editing a scoped file marks earlier records outdated. Model checks send selected code and contract rules to Jev through OpenRouter or TypeSafe.
 

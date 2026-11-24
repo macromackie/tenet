@@ -5,6 +5,43 @@ use super::SeverityArg;
 use crate::cli::{Cli, Command};
 
 #[test]
+fn parse_audit_default_deep_shallow_and_conflicts() -> Result<()> {
+    let default_parsed = Cli::try_parse_from(["tenet", "audit"])?;
+    let Command::Audit(default_args) = default_parsed.command else {
+        anyhow::bail!("expected audit subcommand");
+    };
+    anyhow::ensure!(
+        !default_args.deep && !default_args.shallow && default_args.is_deep(),
+        "expected audit to default to deep mode"
+    );
+
+    let shallow_parsed = Cli::try_parse_from(["tenet", "audit", "--shallow"])?;
+    let Command::Audit(shallow_args) = shallow_parsed.command else {
+        anyhow::bail!("expected audit subcommand");
+    };
+    anyhow::ensure!(
+        shallow_args.shallow && !shallow_args.is_deep(),
+        "expected audit --shallow to disable deep mode"
+    );
+
+    let deep_parsed = Cli::try_parse_from(["tenet", "audit", "--deep"])?;
+    let Command::Audit(deep_args) = deep_parsed.command else {
+        anyhow::bail!("expected audit subcommand");
+    };
+    anyhow::ensure!(
+        deep_args.deep && !deep_args.shallow && deep_args.is_deep(),
+        "expected audit --deep to remain accepted in deep mode"
+    );
+
+    let conflict = Cli::try_parse_from(["tenet", "audit", "--deep", "--shallow"]);
+    anyhow::ensure!(
+        conflict.is_err(),
+        "expected audit --deep to conflict with --shallow"
+    );
+    Ok(())
+}
+
+#[test]
 fn parse_audit_replay_flag_and_conflicts() -> Result<()> {
     let parsed = Cli::try_parse_from(["tenet", "audit", "--replay", "src/app.py"])?;
     let Command::Audit(args) = parsed.command else {
@@ -13,7 +50,7 @@ fn parse_audit_replay_flag_and_conflicts() -> Result<()> {
     anyhow::ensure!(args.replay, "expected --replay to be set");
     anyhow::ensure!(args.paths.len() == 1);
 
-    for conflicting in ["--fresh", "--deep", "--save"] {
+    for conflicting in ["--fresh", "--deep", "--shallow", "--save"] {
         let result = Cli::try_parse_from(["tenet", "audit", "--replay", conflicting]);
         anyhow::ensure!(
             result.is_err(),
@@ -89,6 +126,43 @@ fn parse_fix_flags_severity_and_conflicts() -> Result<()> {
     anyhow::ensure!(
         conflict.is_err(),
         "expected --from-audit to conflict with --base"
+    );
+    Ok(())
+}
+
+#[test]
+fn parse_scan_default_deep_shallow_and_conflicts() -> Result<()> {
+    let default_parsed = Cli::try_parse_from(["tenet", "scan"])?;
+    let Command::Scan(default_args) = default_parsed.command else {
+        anyhow::bail!("expected scan subcommand");
+    };
+    anyhow::ensure!(
+        !default_args.deep && !default_args.shallow && default_args.is_deep(),
+        "expected scan to default to deep mode"
+    );
+
+    let shallow_parsed = Cli::try_parse_from(["tenet", "scan", "--shallow"])?;
+    let Command::Scan(shallow_args) = shallow_parsed.command else {
+        anyhow::bail!("expected scan subcommand");
+    };
+    anyhow::ensure!(
+        shallow_args.shallow && !shallow_args.is_deep(),
+        "expected scan --shallow to disable deep mode"
+    );
+
+    let deep_parsed = Cli::try_parse_from(["tenet", "scan", "--deep"])?;
+    let Command::Scan(deep_args) = deep_parsed.command else {
+        anyhow::bail!("expected scan subcommand");
+    };
+    anyhow::ensure!(
+        deep_args.deep && !deep_args.shallow && deep_args.is_deep(),
+        "expected scan --deep to remain accepted in deep mode"
+    );
+
+    let conflict = Cli::try_parse_from(["tenet", "scan", "--deep", "--shallow"]);
+    anyhow::ensure!(
+        conflict.is_err(),
+        "expected scan --deep to conflict with --shallow"
     );
     Ok(())
 }

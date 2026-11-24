@@ -21,9 +21,12 @@ pub(crate) struct Audit {
     /// Limit audit to modules containing files changed since this Git commit.
     #[arg(long)]
     pub base: Option<String>,
-    /// Synthesize adversarial edge-case contracts in addition to API and doc guarantees.
-    #[arg(long)]
+    /// Synthesize adversarial edge-case contracts (default; accepted for compatibility).
+    #[arg(long, conflicts_with = "shallow")]
     pub deep: bool,
+    /// Skip deep adversarial edge-case synthesis and run a lighter, faster audit.
+    #[arg(long, conflicts_with = "deep")]
+    pub shallow: bool,
     /// Save contracts with verified checks into `.contracts/`.
     #[arg(long)]
     pub save: bool,
@@ -35,7 +38,7 @@ pub(crate) struct Audit {
     pub fresh: bool,
     /// Re-run saved failing witnesses from `.tenet/audit.json` against the current checkout
     /// without calling a model.
-    #[arg(long, conflicts_with_all = ["fresh", "deep", "save"])]
+    #[arg(long, conflicts_with_all = ["fresh", "deep", "shallow", "save"])]
     pub replay: bool,
     /// Maximum model requests across synthesis and behavior checks.
     #[arg(long, default_value_t = 120)]
@@ -43,6 +46,12 @@ pub(crate) struct Audit {
     /// Print the audit report as a JSON document.
     #[arg(long)]
     pub json: bool,
+}
+
+impl Audit {
+    pub(crate) const fn is_deep(&self) -> bool {
+        !self.shallow
+    }
 }
 
 #[derive(Args)]
@@ -113,8 +122,8 @@ pub(crate) struct Scan {
     /// Limit module scanning to files changed since this Git commit.
     #[arg(long)]
     pub base: Option<String>,
-    /// Synthesize adversarial edge-case contracts in addition to API and doc guarantees.
-    #[arg(long)]
+    /// Synthesize adversarial edge-case contracts (default; accepted for compatibility).
+    #[arg(long, conflicts_with = "shallow")]
     pub deep: bool,
     /// Materialize synthesized contracts into `.tenet/scan/.contracts/` without modifying tracked
     /// files.
@@ -141,6 +150,9 @@ pub(crate) struct Scan {
     /// Directory whose .contracts receives newly created or installed contracts.
     #[arg(long, default_value = ".")]
     pub scope: PathBuf,
+    /// Skip deep adversarial edge-case synthesis and run a lighter, faster scan.
+    #[arg(long, conflicts_with = "deep")]
+    pub shallow: bool,
     /// Scaffold a local starter CONTRACT.md instead of scanning (optional kebab-case name).
     #[arg(long, value_name = "NAME", conflicts_with = "library")]
     #[expect(
@@ -148,6 +160,12 @@ pub(crate) struct Scan {
         reason = "Clap distinguishes absent `--starter`, bare `--starter`, and `--starter NAME`."
     )]
     pub starter: Option<Option<String>>,
+}
+
+impl Scan {
+    pub(crate) const fn is_deep(&self) -> bool {
+        !self.shallow
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]

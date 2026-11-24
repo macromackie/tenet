@@ -13,7 +13,7 @@ warnings go to stderr. Each format numbers its versions independently:
 | `check --qualify CONTRACT/NAME --json`                      | One checker qualification report                                              | 1       |
 | `check --final --json`                                      | One [final check report](./final-checks.md)                                   | 1       |
 | `fix --json`                                                | One native lint and sandboxed runtime repair report                           | 1       |
-| `status --json`                                             | One object (with additive `coverage`)                                         | 1       |
+| `status --json`                                             | One object (with additive `coverage` and `offline_checks`)                    | 1       |
 | `show NAME --json`, `show --pending --json`                 | One object                                                                    | 2       |
 | `record NAME ... --json`                                    | One object with `record`, `replaces`, and `exit_code`                         | 1       |
 | `log --json`                                                | One review log entry per line                                                 | 2       |
@@ -65,11 +65,12 @@ Each row in `checks` names the `contract` and `check`. Read `freshness` alongsid
 
 ## Scan
 
-`tenet scan --json` writes one version 1 object summarizing repository onboarding and module audit results. Depending on
-the selected mode (`--starter`, catalog recommendations, `--apply`, or `--ephemeral`), the document reports recommended
-or installed contracts, scaffolded paths, discovered modules, synthesized contracts and materialized script paths,
-observed findings (with optional `severity`), and `exit_code`. `tenet init --json` and `tenet audit --json` remain
-supported as compatibility aliases.
+`tenet scan --json` writes one version 1 object summarizing repository onboarding and module audit results. Scans run
+deep adversarial edge-case synthesis by default; pass `--shallow` for a lighter, faster scan. Depending on the selected
+mode (`--starter`, catalog recommendations, `--apply`, or `--ephemeral`), the document reports recommended or installed
+contracts, scaffolded paths, discovered modules, synthesized contracts and materialized script paths (under
+`.contracts/` or `.tenet/scan/.contracts/`), observed findings (with optional `severity`), and `exit_code`. `tenet init
+--json` and `tenet audit --json` remain supported as compatibility aliases.
 
 ## Check
 
@@ -136,9 +137,11 @@ listed when its lines took the place of contents left out to fit.
 ## Status
 
 `status --json` prints the `review` label, the `base` commit, the latest `revision`, `unchanged` when the working tree
-matches the base, additive `coverage`, `contracts`, `deleted_contracts`, and `exit_code`. The additive `coverage` object
-summarizes governed and ungoverned repository scope alongside active contracts and materialized scripts without breaking
-version 1 consumers. Each contract has:
+matches the base, additive `coverage` and `offline_checks` (when `.tenet/offline-check.json` exists), `contracts`,
+`deleted_contracts`, and `exit_code`. The additive `coverage` object summarizes governed and ungoverned repository scope
+alongside active contracts and materialized scripts, and `offline_checks` carries the latest `tenet check --offline`
+receipt (`behavior`, `local_count`, `native_passed`, `native_failed`, `recorded_at`, and `version`), both without
+breaking version 1 consumers. Each contract has:
 
 | Field                                      | Meaning                                                                                                                  |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
@@ -150,8 +153,10 @@ version 1 consumers. Each contract has:
 | `model`, `model_violation`, `model_answer` | That assessment's conclusion, violation probability, and raw answer                                                      |
 | `min_confidence`                           | The threshold that check used                                                                                            |
 
-When no check compares the working tree with the base, the object has `revision: null`, empty `contracts`,
-`exit_code: 4`, and a `message`.
+When no semantic check compares the working tree with the base, the object has `revision: null`, empty `contracts`, and
+a `message`. If `.tenet/offline-check.json` exists, `offline_checks` is included and `exit_code` reflects that receipt
+(`0` when offline checks passed, `1` when any failed, `3` when any stayed unresolved, or `4` when empty/pending);
+otherwise `exit_code` is `4`.
 
 ## Show
 

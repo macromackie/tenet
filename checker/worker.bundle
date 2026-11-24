@@ -29921,7 +29921,7 @@ function summarizeAuditReports(reports) {
   return { costUsd: totalCost, modules: reports, requests: totalRequests };
 }
 async function runAudit({
-  deep = false,
+  deep = true,
   fresh = false,
   maxRequests,
   modules,

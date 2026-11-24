@@ -2,11 +2,11 @@
 
 ```sh
 tenet doctor [--json]
-tenet scan [PATHS...] [--apply|--yes] [--ephemeral] [--base REF] [--deep] [--starter [NAME]] [--library DIR] [--scope DIR] [--repros-dir DIR] [--fresh] [--max-requests N] [--json]
+tenet scan [PATHS...] [--apply|--yes] [--ephemeral] [--base REF] [--shallow] [--starter [NAME]] [--library DIR] [--scope DIR] [--repros-dir DIR] [--fresh] [--max-requests N] [--json]
 tenet check [PATHS...] [--base REF] [--offline|--replay] [--full] [--contract NAME] [--json]
 tenet check --qualify CONTRACT/NAME [--json]
 tenet check --final [--evidence PATH] [--json]
-tenet fix [PATHS...] [--contract NAME] [--base REF] [--severity LEVEL] [--max-requests N] [--from-audit] [--json]
+tenet fix [PATHS...] [--contract NAME] [--base REF] [--severity LEVEL] [--max-requests N] [--json]
 tenet status [--base REF] [--evidence PATH] [--json] [--prune-cache]
 tenet show NAME [PATH ...] [--json]
 tenet show --pending [--json]
@@ -15,6 +15,7 @@ tenet log [NAME] [--json]
 tenet export src/ --base origin/main > evidence.json
 tenet validate [--strict-adaptations]
 tenet contracts list [--for FILE] [--base REF] [--json]
+tenet contracts recommend [--library DIR] [--json]
 tenet contracts show NAME
 tenet contracts add SOURCE/NAME[@REF] (--scope DIR | --path FILE)
 tenet contracts outdated | update | diff PATH | remove PATH
@@ -41,37 +42,40 @@ tenet doctor --json
 
 `tenet doctor` verifies provider credentials (`OPENROUTER_API_KEY` or `TYPESAFE_API_KEY`), Node.js/npm, local sandbox
 tooling (`/usr/bin/sandbox-exec` on macOS, or `bubblewrap >= 0.7` and `prlimit` on Linux), language runtimes (`python3`,
-`rustc`), Git status, `.contracts/` validity, `.tenet.lock` validity, locked runtime scripts in `scripts/.lock.json`
+`rustc`, `go`), Git status, `.contracts/` validity, `.tenet.lock` validity, locked runtime scripts in `scripts/.lock.json`
 (and legacy `agent-checks.lock.json` pins), and the `.tenet/` `.gitignore` guard so `.tenet/` is never tracked in Git.
 It exits `0` when all required checks pass and `1` when any required check needs attention.
 
 ## Scan
 
 ```sh
-tenet scan                                 # Preview recommended catalog contracts and module findings
-tenet scan --apply                         # Write contracts and runnable scripts into .contracts/
-tenet scan --ephemeral                     # Run a zero-commit trial scan without modifying tracked files
-tenet scan --starter api-guards            # Scaffold a local starter .contracts/001-api-guards/CONTRACT.md
-tenet scan src/ --base origin/main --deep  # Audit changed modules with adversarial edge-case synthesis
+tenet scan                                    # Preview recommended catalog contracts and deep module findings
+tenet scan --apply                            # Write consolidated module contracts and scripts into .contracts/
+tenet scan --ephemeral                        # Run a trial scan into .tenet/scan/.contracts/ without touching tracked files
+tenet scan --starter api-guards               # Scaffold a local starter .contracts/001-api-guards/CONTRACT.md
+tenet scan src/ --base origin/main --shallow  # Run a lighter, faster scan limited to changed modules
 ```
 
 `tenet scan` unifies repository onboarding and module auditing. It inspects production source modules (excluding tests,
 fixtures, vendor, and build artifacts), recommends matching catalog contracts, splits large directories into bounded
-shards, synthesizes focused behavioral contracts per module, and falsifies them inside the local OS sandbox.
+shards, and runs deep adversarial edge-case synthesis alongside API and documentation guarantees by default. Verified
+findings for each module are consolidated into one folder under `.contracts/<NNN>-<module>/` (or
+`.tenet/scan/.contracts/` with `--ephemeral`) and falsified inside the local OS sandbox. Pass `--shallow` for a lighter,
+faster scan without adversarial edge-case synthesis.
 
-| Option             | Purpose                                                                                               |
-| ------------------ | ----------------------------------------------------------------------------------------------------- |
-| `--apply`, `--yes` | Install recommended catalog contracts and write verified contracts plus `scripts/` into `.contracts/` |
-| `--ephemeral`      | Run a trial scan without writing to `.contracts/` or modifying tracked repository files               |
-| `--base REF`       | Limit module discovery to modules containing files changed since `REF`                                |
-| `--deep`           | Add adversarial edge-case synthesis alongside API and documentation guarantees                        |
-| `--starter [NAME]` | Scaffold a local starter `CONTRACT.md` offline without querying the catalog                           |
-| `--library DIR`    | Read catalog recommendations from a local catalog checkout (or set `TENET_CATALOG_DIR`)               |
-| `--scope DIR`      | Directory whose `.contracts/` receives created or installed contracts (default `.`)                   |
-| `--repros-dir DIR` | Write runnable reproducer scripts for failing witnesses into `DIR`                                    |
-| `--fresh`          | Ignore saved `.tenet/audit.json` progress and re-scan selected modules                                |
-| `--max-requests N` | Bound model requests across synthesis and behavior checks                                             |
-| `--json`           | Print the scan report as a JSON document                                                              |
+| Option             | Purpose                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `--apply`, `--yes` | Install recommended catalog contracts and write consolidated module contracts plus `scripts/` into `.contracts/<NNN>-<module>/`       |
+| `--ephemeral`      | Materialize synthesized contracts into `.tenet/scan/.contracts/` without modifying `.contracts/` or tracked repository files          |
+| `--base REF`       | Limit module discovery to modules containing files changed since `REF`                                                                |
+| `--shallow`        | Skip adversarial edge-case synthesis for a lighter, faster scan (`--deep` is accepted as a compatibility no-op since deep is default) |
+| `--starter [NAME]` | Scaffold a local starter `CONTRACT.md` offline without querying the catalog                                                           |
+| `--library DIR`    | Read catalog recommendations from a local catalog checkout (or set `TENET_CATALOG_DIR`)                                               |
+| `--scope DIR`      | Directory whose `.contracts/` receives created or installed contracts (default `.`)                                                   |
+| `--repros-dir DIR` | Write runnable reproducer scripts for failing witnesses into `DIR`                                                                    |
+| `--fresh`          | Ignore saved `.tenet/audit.json` progress and re-scan selected modules                                                                |
+| `--max-requests N` | Bound model requests across synthesis and behavior checks                                                                             |
+| `--json`           | Print the scan report as a JSON document                                                                                              |
 
 Synthesis and falsification require `OPENROUTER_API_KEY` and a local sandbox; `--starter` and local `--library` previews
 work offline. Incremental progress saves to `.tenet/audit.json` so reruns resume unless `--fresh` is passed. `tenet scan`
@@ -94,9 +98,10 @@ bounded repository assessment to check missing files and requirements that span 
 locked runtime scripts.
 
 `tenet check --offline` (alias `--replay`) replays static checks, declared local checks, and locked runtime scripts
-under `.contracts/<NNN>-<name>/scripts/` (plus legacy `agent-checks.lock.json` pins) inside the local OS sandbox without
-calling an LLM or requiring provider credentials. Use `--offline` in pre-commit hooks, air-gapped environments, or CI jobs
-that run without API keys.
+under `.contracts/<NNN>-<name>/scripts/` and ephemeral `.tenet/scan/.contracts/` folders (plus legacy
+`agent-checks.lock.json` pins) inside the local OS sandbox without calling an LLM or requiring provider credentials. It
+saves the latest offline run to `.tenet/offline-check.json` so `tenet status` can surface those results immediately. Use
+`--offline` in pre-commit hooks, air-gapped environments, or CI jobs that run without API keys.
 
 `tenet check src/` checks those paths together with explicit context. Coverage is calculated for each contract.
 Selecting every file in a nested contract can verify it. A smaller selection can conclude `clear` or `failed`;
@@ -196,20 +201,22 @@ the working tree with that commit, not with what `--base` names today.
 The directory ignores itself; if Git tracks a file in it anyway, every command below exits 2 until it is untracked.
 Each contract is settled or pending; see [Reviews](./reviews.md).
 
-| Command                  | Effect                                                                                                                      | Exit                                               |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `status`                 | Print repository coverage and each contract's settled or pending state from the working tree; never writes or calls a model | As `check`                                         |
-| `status --base REF`      | The same for the review against `REF`                                                                                       | As `check`, or 4 when no check compares with `REF` |
-| `status --prune-cache`   | First remove the cached answers this Tenet cannot reuse, and say how many on stderr; the log stays unchanged                | As `status`                                        |
-| `status --evidence PATH` | Compare [local mechanical evidence](#mechanical-evidence) with the working tree                                             | As `status`, or 2 for invalid evidence             |
-| `show NAME`              | Show the contract rule, model answer, records, changes since an outdated result, diff, and runnable paths under `scripts/`  | 0                                                  |
-| `show --pending`         | Show every pending contract, their runnable script paths, and their shared change once                                      | 0                                                  |
-| `record NAME`            | Settle the contract's current input with a conclusion, evidence, and a message                                              | 0, or 2 if refused                                 |
-| `log [NAME]`             | List revisions, assessments, and records, newest first; `--json` prints each entry in order                                 | 0                                                  |
+| Command                  | Effect                                                                                                                                                                       | Exit                                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `status`                 | Print repository coverage, persisted `.tenet/offline-check.json` receipts, and each contract's settled or pending state from the working tree; never writes or calls a model | As `check`, or from `.tenet/offline-check.json` before any semantic review |
+| `status --base REF`      | The same for the review against `REF`                                                                                                                                        | As `check`, or 4 when no check compares with `REF`                         |
+| `status --prune-cache`   | First remove the cached answers this Tenet cannot reuse, and say how many on stderr; the log stays unchanged                                                                 | As `status`                                                                |
+| `status --evidence PATH` | Compare [local mechanical evidence](#mechanical-evidence) with the working tree                                                                                              | As `status`, or 2 for invalid evidence                                     |
+| `show NAME`              | Show the contract rule, model answer, records, changes since an outdated result, diff, and runnable paths under `scripts/`                                                   | 0                                                                          |
+| `show --pending`         | Show every pending contract, their runnable script paths, and their shared change once                                                                                       | 0                                                                          |
+| `record NAME`            | Settle the contract's current input with a conclusion, evidence, and a message                                                                                               | 0, or 2 if refused                                                         |
+| `log [NAME]`             | List revisions, assessments, and records, newest first; `--json` prints each entry in order                                                                                  | 0                                                                          |
 
-`status` opens with a `Coverage` block reporting governed and ungoverned repository scope before listing settled and
-pending contract rows. `show NAME` prints the direct filesystem path for each materialized script in
-`.contracts/<NNN>-<name>/scripts/` so developers and agents can inspect or execute it directly.
+`status` opens with a `Coverage` block reporting governed and ungoverned repository scope before listing persisted
+offline check receipts from `.tenet/offline-check.json` and settled or pending contract rows. When offline checks
+recorded failures before any model review has run, `status` prints the failing rows and suggests `Next  tenet fix` (or
+`Next  tenet check` once offline checks pass). `show NAME` prints the direct filesystem path for each materialized
+script in `.contracts/<NNN>-<name>/scripts/` so developers and agents can inspect or execute it directly.
 
 `record` refuses a contract whose scoped files changed after its latest check: run `check` again first. The conclusion
 must fit the check: `verified` for a full check of the full contract, `preserved` or `unaffected` for a diff, and `clear`
