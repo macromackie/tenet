@@ -20,6 +20,7 @@ use super::super::{
         build_contract_lock_paths,
         build_replay_target,
         discover_modules,
+        format_slash_path,
         normalize_filters,
         run_with_progress,
     },
@@ -94,10 +95,8 @@ fn append_legacy_audit_targets(state: &Path, tracked: &mut Vec<ReplayedTarget>) 
     let Ok(queue) = AuditQueue::read_existing(state) else {
         return;
     };
-    let existing_keys: BTreeSet<(String, String)> = tracked
-        .iter()
-        .map(|item| (item.target.contract.clone(), item.target.check.clone()))
-        .collect();
+    update_pinned_severities(&queue, tracked);
+    let keys = collect_existing_keys(tracked);
     for report in queue.modules.values() {
         let lock_paths = build_contract_lock_paths(&report.contracts);
         let named_contracts: BTreeMap<&str, &AuditContractOutput> = report
@@ -110,7 +109,15 @@ fn append_legacy_audit_targets(state: &Path, tracked: &mut Vec<ReplayedTarget>) 
                 continue;
             }
             let key = (finding.contract.clone(), finding.check.clone());
-            if existing_keys.contains(&key) {
+            let subject_key = finding
+                .subject
+                .as_deref()
+                .map(|subject| (finding.check.clone(), format_slash_path(subject)));
+            if keys.exact_keys.contains(&key)
+                || subject_key
+                    .as_ref()
+                    .is_some_and(|pair| keys.check_subjects.contains(pair))
+            {
                 continue;
             }
             let Some(contract_doc) = named_contracts.get(finding.contract.as_str()) else {
@@ -123,6 +130,69 @@ fn append_legacy_audit_targets(state: &Path, tracked: &mut Vec<ReplayedTarget>) 
                 severity: finding.read_effective_severity().map(str::to_owned),
                 target,
             });
+        }
+    }
+}
+
+struct TrackedKeys {
+    check_subjects: BTreeSet<(String, String)>,
+    exact_keys: BTreeSet<(String, String)>,
+}
+
+fn collect_existing_keys(tracked: &[ReplayedTarget]) -> TrackedKeys {
+    let exact_keys = tracked
+        .iter()
+        .map(|item| (item.target.contract.clone(), item.target.check.clone()))
+        .collect();
+    let check_subjects = tracked
+        .iter()
+        .filter_map(|item| {
+            item.target
+                .subject
+                .as_ref()
+                .map(|subject| (item.target.check.clone(), subject.clone()))
+        })
+        .collect();
+    TrackedKeys {
+        check_subjects,
+        exact_keys,
+    }
+}
+
+fn update_pinned_severities(queue: &AuditQueue, tracked: &mut [ReplayedTarget]) {
+    let mut exact_severities = BTreeMap::new();
+    let mut subject_severities = BTreeMap::new();
+    for report in queue.modules.values() {
+        for finding in &report.findings {
+            let Some(severity) = finding.read_effective_severity() else {
+                continue;
+            };
+            let _prior = exact_severities.insert(
+                (finding.contract.clone(), finding.check.clone()),
+                severity.to_owned(),
+            );
+            if let Some(subject) = finding.subject.as_deref() {
+                let _prior_subject = subject_severities.insert(
+                    (finding.check.clone(), format_slash_path(subject)),
+                    severity.to_owned(),
+                );
+            }
+        }
+    }
+    for item in tracked {
+        if item.severity.is_some() {
+            continue;
+        }
+        let exact_key = (item.target.contract.clone(), item.target.check.clone());
+        if let Some(severity) = exact_severities.get(&exact_key) {
+            item.severity = Some(severity.clone());
+            continue;
+        }
+        if let Some(subject) = &item.target.subject
+            && let Some(severity) =
+                subject_severities.get(&(item.target.check.clone(), subject.clone()))
+        {
+            item.severity = Some(severity.clone());
         }
     }
 }

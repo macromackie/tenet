@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.35.1
+
+- Fixed `tenet fix --severity` severity resolution for consolidated module contracts (`commands/fix/contracts.rs`): enriches pinned checks from `.tenet/audit.json` by `(check, subject)` in addition to `(contract, check)` and deduplicates consolidated checks against legacy audit targets so `--severity high` / `--severity critical` reliably targets all matching checks inside consolidated module contracts.
+
 ## v0.35.0
 
 - Consolidated multi-contract module synthesis into one clean module-level `.contracts/<NNN>-<module>/CONTRACT.md` per base module with merged runnable scripts in `scripts/` and a single slim `scripts/.lock.json`, preventing per-assertion `.contracts/` folder bloat while preserving single-contract names when a module has one rule.
